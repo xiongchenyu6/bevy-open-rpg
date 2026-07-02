@@ -5,6 +5,7 @@ use super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::lighting::{self, LightingAssets};
 use super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
 use super::quest::{BondBonus, BossKind, CampBonus, Companion, QuestLog, ShrineBlessing};
+use super::roguelike::{FightRank, RunBattleMods, RunOutcome, RunState};
 use super::state::AppState;
 
 const MENU: [&str; 5] = ["攻击", "仙术", "合击", "物品", "逃跑"];
@@ -435,6 +436,8 @@ fn spawn_battle(
     mut quest: ResMut<QuestLog>,
     mut rng: ResMut<Rng>,
     encounter: Option<Res<PendingEncounter>>,
+    run: Option<Res<RunState>>,
+    mods: Option<Res<RunBattleMods>>,
 ) {
     let zone = encounter
         .as_ref()
@@ -445,7 +448,7 @@ fn spawn_battle(
         .map(|encounter| encounter.kind)
         .unwrap_or(EncounterKind::Random);
     let def = choose_enemy(zone, kind, &mut rng);
-    let enemy = EnemyInstance {
+    let mut enemy = EnemyInstance {
         name: def.name.into(),
         hp: def.max_hp,
         max_hp: def.max_hp,
@@ -454,10 +457,33 @@ fn spawn_battle(
         exp: def.exp,
     };
 
+    // Roguelike run: scale non-boss enemies by chapter/elite multipliers.
+    if let Some(mods) = mods.as_ref() {
+        if !matches!(kind, EncounterKind::Boss(_)) {
+            enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
+            enemy.hp = enemy.max_hp;
+            enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
+        }
+        if mods.rank == FightRank::Elite {
+            enemy.name = format!("精英 · {}", enemy.name);
+        }
+    }
+
     let blessing = quest.take_shrine_blessing();
     let camp_bonus = quest.take_camp_bonus();
     let bond_bonus = quest.take_bond_bonus();
     let mut message = format!("一只 {} 拦住了去路！", enemy.name);
+
+    // 雷泽鼓 opening strike (run mode only).
+    if let Some(run) = run.as_ref() {
+        let strike = run.opening_strike();
+        if strike > 0 {
+            enemy.hp = (enemy.hp - strike).max(1);
+            message.push_str(&format!(
+                "\n【雷泽鼓】开战惊雷落下,敌人受了 {strike} 点伤！"
+            ));
+        }
+    }
     if let Some(bond_bonus) = bond_bonus {
         message.push_str(&format!(
             "\n【羁绊】{}生效：{}",
@@ -873,10 +899,21 @@ fn battle_input(
     mut stats: ResMut<PlayerStats>,
     quest: Res<QuestLog>,
     mut rng: ResMut<Rng>,
+    run: Option<Res<RunState>>,
 ) {
     if state.phase != Phase::Menu {
         return;
     }
+
+    // Roguelike relic modifiers (all zero/1.0 outside run mode).
+    let relic_attack = run.as_ref().map_or(0, |r| r.attack_bonus());
+    let relic_spell = run.as_ref().map_or(0, |r| r.spell_bonus());
+    let relic_spell_cost = run.as_ref().map_or(0, |r| r.spell_cost_delta());
+    let relic_potion = run.as_ref().map_or(0, |r| r.potion_bonus());
+    let relic_flee = run.as_ref().is_some_and(|r| r.flee_always());
+    let hunter_mul = run.as_ref().map_or(1.0, |r| {
+        r.hunter_multiplier(r.current_fight.unwrap_or(FightRank::Normal))
+    });
 
     if intent.up {
         state.menu_index = (state.menu_index + MENU.len() - 1) % MENU.len();
@@ -899,12 +936,19 @@ fn battle_input(
             let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Attack);
             let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Attack);
             let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Attack);
-            let dmg = base + blessing_bonus + camp_damage + bond_damage;
+            let dmg = (((base + blessing_bonus + camp_damage + bond_damage + relic_attack) as f32)
+                * hunter_mul)
+                .round() as i32;
             state.enemy.hp -= dmg;
             state.message = format!(
                 "李逍遥 挥剑而上，对 {} 造成 {} 点伤害！",
                 state.enemy.name, dmg
             );
+            if relic_attack > 0 {
+                state
+                    .message
+                    .push_str(&format!("\n【青锋剑穗】剑势更利,伤害 +{relic_attack}。"));
+            }
             append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
             append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
             append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
@@ -931,7 +975,7 @@ fn battle_input(
         }
         1 => {
             // 仙术：御剑术 / 万剑诀
-            let spell_cost = quest.spell_cost();
+            let spell_cost = (quest.spell_cost() + relic_spell_cost).max(1);
             let spell_name = quest.spell_name();
             if stats.mp < spell_cost {
                 state.message = format!("灵力不足，无法施展{spell_name}！");
@@ -947,7 +991,10 @@ fn battle_input(
                 let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Spell);
                 let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Spell);
                 let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Spell);
-                let dmg = base + blessing_bonus + camp_damage + bond_damage;
+                let dmg = (((base + blessing_bonus + camp_damage + bond_damage + relic_spell)
+                    as f32)
+                    * hunter_mul)
+                    .round() as i32;
                 state.enemy.hp -= dmg;
                 let flavor = if quest.has_late_spell() {
                     "剑光如雨"
@@ -955,6 +1002,11 @@ fn battle_input(
                     "剑气纵横"
                 };
                 state.message = format!("李逍遥 施展{spell_name}，{flavor}，造成 {dmg} 点伤害！");
+                if relic_spell > 0 {
+                    state
+                        .message
+                        .push_str(&format!("\n【御剑心诀】术随心动,伤害 +{relic_spell}。"));
+                }
                 append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
                 append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
                 append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
@@ -997,7 +1049,9 @@ fn battle_input(
                 let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Combo);
                 let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Combo);
                 let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Combo);
-                let dmg = base + blessing_bonus + camp_damage + bond_damage;
+                let dmg = (((base + blessing_bonus + camp_damage + bond_damage) as f32)
+                    * hunter_mul)
+                    .round() as i32;
                 state.enemy.hp -= dmg;
                 state.message =
                     format!("李逍遥、赵灵儿、林月衡 心念相合，剑光与灵息齐落，造成 {dmg} 点伤害！");
@@ -1022,7 +1076,7 @@ fn battle_input(
             } else {
                 stats.potions -= 1;
                 let before = stats.hp;
-                stats.hp = (stats.hp + PlayerStats::POTION_HEAL).min(stats.max_hp);
+                stats.hp = (stats.hp + PlayerStats::POTION_HEAL + relic_potion).min(stats.max_hp);
                 let healed = stats.hp - before;
                 state.message = format!("李逍遥 饮下药水，恢复了 {} 点气血。", healed);
                 spawn_heal_text(
@@ -1035,9 +1089,20 @@ fn battle_input(
             }
         }
         _ => {
-            // 逃跑
-            if rng.chance(0.5) {
-                state.message = "李逍遥 觑得空隙，抽身逃走了……".into();
+            // 逃跑(首领战避无可避)
+            if run
+                .as_ref()
+                .is_some_and(|r| matches!(r.current_fight, Some(FightRank::Boss)))
+            {
+                state.message = "此战避无可避——首领拦住了所有退路！".into();
+                return;
+            }
+            if relic_flee || rng.chance(0.5) {
+                state.message = if relic_flee {
+                    "【云袖】袖里乾坤一转，李逍遥 从容抽身而去。".into()
+                } else {
+                    "李逍遥 觑得空隙，抽身逃走了……".into()
+                };
                 state.phase = Phase::Fled;
                 state.timer = 1.4;
                 state.player_action = Some(PlayerAction::Flee);
@@ -1526,12 +1591,15 @@ fn battle_tick(
     encounter: Option<Res<PendingEncounter>>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<AppState>>,
+    mut run: Option<ResMut<RunState>>,
 ) {
     if state.phase == Phase::Menu {
         return;
     }
 
-    state.timer -= time.delta_secs();
+    // Roguelike runs play at a brisker tempo.
+    let tempo = if run.is_some() { 1.6 } else { 1.0 };
+    state.timer -= time.delta_secs() * tempo;
     if state.timer > 0.0 {
         return;
     }
@@ -1541,7 +1609,30 @@ fn battle_tick(
             if state.enemy.hp <= 0 {
                 let exp = state.enemy.exp;
                 let kind = encounter.as_ref().map(|encounter| encounter.kind);
-                let gold = battle_gold_reward(exp, matches!(kind, Some(EncounterKind::Boss(_))));
+                let boss = matches!(kind, Some(EncounterKind::Boss(_)));
+
+                // Roguelike run: no experience — gold, relic heals, then the
+                // Reward screen (via Phase::Won) does the rest.
+                if let Some(run) = run.as_mut() {
+                    run.fights_won += 1;
+                    let gold = (battle_gold_reward(exp, boss) as f32 * run.gold_multiplier())
+                        .round() as u32;
+                    stats.gold += gold;
+                    state.message = format!("{} 被击败了！拾得 {} 文钱。", state.enemy.name, gold);
+                    let heal = run.on_kill_heal();
+                    if heal > 0 && stats.hp < stats.max_hp {
+                        let healed = heal.min(stats.max_hp - stats.hp);
+                        stats.hp += healed;
+                        state
+                            .message
+                            .push_str(&format!("\n【嗜血珠】吸纳妖气，回复 {healed} 点气血。"));
+                    }
+                    state.phase = Phase::Won;
+                    state.timer = 1.2;
+                    return;
+                }
+
+                let gold = battle_gold_reward(exp, boss);
                 let levels = stats.gain_exp(exp);
                 stats.gold += gold;
                 state.message = if levels > 0 {
@@ -1581,7 +1672,8 @@ fn battle_tick(
                 state.phase = Phase::Won;
                 state.timer = 1.6;
             } else {
-                let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng);
+                let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
+                let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, relic_guard);
                 spawn_enemy_strike_impact(&mut commands, &anims, &lights, attack.strong);
                 spawn_damage_text(
                     &mut commands,
@@ -1593,8 +1685,24 @@ fn battle_tick(
         }
         Phase::EnemyActing => {
             if stats.hp <= 0 {
+                // 檀木符:一次原地复活。
+                if let Some(run) = run.as_mut() {
+                    if run.try_revive() {
+                        stats.hp = stats.max_hp / 2;
+                        state.message =
+                            "【檀木符】符纸燃尽,一缕暖意把你从鬼门关拽了回来!\n你的回合，请选择行动。"
+                                .into();
+                        state.phase = Phase::Menu;
+                        state.player_action = None;
+                        return;
+                    }
+                }
                 stats.hp = 0;
-                state.message = "李逍遥 力竭倒地……\n（灵气护体，气血已被恢复）".into();
+                state.message = if run.is_some() {
+                    "李逍遥 力竭倒地……此世轮回，到此为止。".into()
+                } else {
+                    "李逍遥 力竭倒地……\n（灵气护体，气血已被恢复）".into()
+                };
                 state.phase = Phase::Lost;
                 state.timer = 1.6;
             } else {
@@ -1617,14 +1725,35 @@ fn battle_tick(
                 state.player_action = None;
             }
         }
-        Phase::Won | Phase::Fled => {
+        Phase::Won => {
             commands.remove_resource::<PendingEncounter>();
-            next.set(AppState::Explore);
+            if run.is_some() {
+                next.set(AppState::Reward);
+            } else {
+                next.set(AppState::Explore);
+            }
+        }
+        Phase::Fled => {
+            commands.remove_resource::<PendingEncounter>();
+            if let Some(run) = run.as_mut() {
+                run.current_fight = None;
+                commands.remove_resource::<RunBattleMods>();
+                next.set(AppState::NodeMap);
+            } else {
+                next.set(AppState::Explore);
+            }
         }
         Phase::Lost => {
             commands.remove_resource::<PendingEncounter>();
-            stats.full_restore();
-            next.set(AppState::Explore);
+            if let Some(run) = run.as_mut() {
+                run.outcome = Some(RunOutcome::Defeat);
+                run.current_fight = None;
+                commands.remove_resource::<RunBattleMods>();
+                next.set(AppState::Ending);
+            } else {
+                stats.full_restore();
+                next.set(AppState::Explore);
+            }
         }
         Phase::Menu => {}
     }
@@ -1765,6 +1894,7 @@ fn begin_enemy_turn(
     state: &mut BattleState,
     stats: &mut PlayerStats,
     rng: &mut Rng,
+    relic_guard: i32,
 ) -> EnemyAttackResult {
     let turn_index = state.enemy_turns;
     state.enemy_turns += 1;
@@ -1780,7 +1910,7 @@ fn begin_enemy_turn(
         let blocked = blessing_guard_block(state.blessing, raw);
         let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
         let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-        let dmg = raw - blocked - camp_blocked - bond_blocked;
+        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard).max(0);
         state.message = format!(
             "{} 困兽犹斗，凶猛一击！造成 {} 点伤害！",
             state.enemy.name, dmg
@@ -1788,13 +1918,14 @@ fn begin_enemy_turn(
         append_blessing_guard_line(&mut state.message, blocked);
         append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
         append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
+        append_relic_guard_line(&mut state.message, relic_guard);
         (dmg, true)
     } else {
         let raw = (state.enemy.atk - stats.def + rng.range(-2, 3)).max(1);
         let blocked = blessing_guard_block(state.blessing, raw);
         let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
         let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-        let dmg = raw - blocked - camp_blocked - bond_blocked;
+        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard).max(0);
         state.message = format!(
             "{} 张牙舞爪，对 李逍遥 造成 {} 点伤害！",
             state.enemy.name, dmg
@@ -1802,6 +1933,7 @@ fn begin_enemy_turn(
         append_blessing_guard_line(&mut state.message, blocked);
         append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
         append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
+        append_relic_guard_line(&mut state.message, relic_guard);
         (dmg, false)
     };
     stats.hp -= dmg;
@@ -1952,6 +2084,13 @@ fn append_camp_guard_line(message: &mut String, bonus: Option<CampBonus>, blocke
             bonus.name()
         ));
     }
+}
+
+fn append_relic_guard_line(message: &mut String, blocked: i32) {
+    if blocked <= 0 {
+        return;
+    }
+    message.push_str(&format!("\n【龟灵甲】护住要害，减免 {blocked} 点伤害。"));
 }
 
 fn append_bond_guard_line(message: &mut String, bonus: Option<BondBonus>, blocked: i32) {
@@ -2783,7 +2922,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
 
         assert!(attack.damage > 0);
         assert!(!attack.strong);
@@ -2818,7 +2957,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
 
         assert!(attack.damage > 0);
         assert!(attack.damage < 7);
@@ -2853,7 +2992,7 @@ mod tests {
         let before_hp = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("月影噬灵"));
@@ -2888,7 +3027,7 @@ mod tests {
         let mut stats = PlayerStats::default();
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("旧梦潮声"));

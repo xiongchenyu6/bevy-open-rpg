@@ -1,33 +1,74 @@
-# PLAN — love-rpg (仙剑-style demo)
+# PLAN — love-rpg 肉鸽回合制改造(御剑行·轮回)
 
-## Verification criteria (what "done" means)
-- App launches on desktop with no errors/`B0004`/missing-asset warnings.
-- Overworld: player walks 4 directions, blocked by trees/water, Chinese HUD renders.
-- NPC dialogue box opens on Space and advances through lines.
-- Stepping into grass can trigger a battle (state switch).
-- Battle: command menu (攻击/仙术/物品/逃跑) navigable; damage, MP cost, healing,
-  enemy AI turn, HP bars, win/lose/flee all function and return to the map.
-- Chinese text renders correctly (bundled unifont).
-- A `screenshots/result/N/` bundle (video.mp4 + raw frames) proves the loop.
+## 设计目标(用户诉求)
 
-## Risk
-- **R1 Bevy 0.19 API correctness** — RESOLVED via bevy-help; compiles clean.
-- **R2 Native build deps (alsa/udev/wayland pkg-config)** — RESOLVED by trimming
-  audio/gamepad deps and providing Wayland/pkg-config deps in `flake.nix`.
-- **R3 CJK text rendering** — bundled unifont.otf; verify on screenshot.
-- **R4 Offscreen capture path** — to build for the proof bundle.
+- **快节奏**:不练级、不刷经验、不跑图;一局 20–40 分钟通关或阵亡。
+- **重随机**:随机节点路线、随机遭遇、随机三选一奖励、随机奇遇事件。
+- **重剧情**:保留仙侠主线,每章固定剧情节点推进故事;结局收束。
+- **完整闭环**:标题 → 开局祝福 → 章节节点图 → 战斗/奇遇/剧情/休息 → 章 boss
+  → 下一章 → 终章 boss → 结局 → 可再来一局(每局随机)。
 
-## Stages
-1. Scaffold (Cargo.toml, lib, state, core) — **Complete**
-2. Overworld explore (map/movement/NPC/dialogue/encounter) — **Complete**
-3. Turn-based battle (menu/HP-MP/AI/exp) — **Complete**
-4. Build + runtime verification — **Complete** (headless lavapipe render)
-5. Offscreen capture binary + proof bundle — **Complete**
+## 核心设计
 
-## Status — DONE
-- `cargo fmt`/`check`/`build` clean.
-- Visually verified via offscreen capture (lavapipe): overworld map + HUD,
-  NPC dialogue box, and turn-based battle (menu/HP bars/log) all render with
-  correct Chinese text (bundled unifont).
-- Proof bundle: `screenshots/result/1/` (450 frames + `video.mp4`, 30 fps / 15s).
-- See MEMORY.md for the exact env needed to run the capture binary.
+### 一局(Run)结构
+
+- 3 个章节 + 终章,每章一张随机生成的**节点图**(类杀戮尖塔:6–8 层 DAG,
+  每层 2–4 个节点,玩家沿边向上选路)。
+- 节点类型:普通战斗 ⚔ / 精英战 ✦ / 奇遇 ? / 剧情 卷 / 休息 灯 / 章 boss。
+- 剧情节点每章固定 1–2 个(必经层),复用现有章节故事文本改写为
+  短对话场景;章节开场有章节卡。
+
+### 成长(无等级)
+
+- `PlayerStats` 基础值固定,删除 exp/升级路径。
+- 成长来源:**法宝(遗物,被动)**、**祝福(强化/新技能)**、**丹药(消耗品)**、
+  休息节点(回血或小强化,二选一)。
+- 战斗胜利 → 三选一奖励;精英/boss 掉法宝。
+
+### 随机性
+
+- 现有 xorshift `Rng` 驱动:节点图拓扑、敌人组合、奖励池抽取、
+  奇遇事件抽取及概率结果。每局重掷。
+
+### 快节奏战斗
+
+- 复用现有回合制战斗(菜单:攻击/仙术/物品/逃跑→改为撤退代价),数值重调:
+  普通战 2–4 回合内结束;敌人血条短、伤害高,决策重于消耗。
+
+### 剧情与结局
+
+- 主线:压缩现有 7 幕仙侠故事为 3 章(村誓/水月洞天 → 江城疫村 → 京城/南疆)
+  + 终章(心魔/宿命 boss)。
+- 结局:根据一局中的剧情选择与"道心/情缘"计数,双结局文本。
+
+## 风险
+
+- **R1 状态机重构**:新增 `Title/NodeMap/Event/Reward/Ending` 等状态,现有
+  Explore/Battle 大文件耦合度未知 —— 先由代码勘察确定切入点,再动手。
+- **R2 capture 兼容**:`src/bin/capture.rs` 的 Intent 脚本依赖现状态机;
+  改造后需新增肉鸽路径的 preset 以产出证明视频。
+- **R3 平衡性**:无练级后数值全靠设计;用固定种子快速模拟/试玩校准。
+
+## 阶段
+
+1. **代码勘察 + 设计定稿** — In Progress(3 个勘察 agent 运行中)
+2. **Run 骨架**:新状态机 + `RunState`/节点图生成 + 节点图 UI(可点选走通
+   一张图,节点暂以占位行为进入/返回)— Not Started
+3. **战斗改造**:去 exp;法宝/祝福修正钩子;战后三选一奖励界面;数值提速
+   — Not Started
+4. **奇遇与剧情节点**:事件池(文本+选项+概率结果);章节剧情场景;章节卡
+   — Not Started
+5. **闭环与结局**:章 boss → 过章;终章 boss;胜利/阵亡结算;双结局;
+   标题界面重开一局 — Not Started
+6. **验证与证明**:fmt/check/build、桌面试玩、capture 新 preset、
+   `screenshots/result/{N}/` 证明包、更新 STRUCTURE.md — Not Started
+
+## 验证标准(what "done" means)
+
+- 标题画面可开新局;开局三选一祝福。
+- 节点图随机生成且每局不同;可沿边选路;六类节点行为齐全。
+- 战斗无经验/等级;胜利出三选一奖励;法宝/祝福对战斗数值有可见影响。
+- 每章剧情节点与章节卡推进主线;终章 boss 后进入结局文本(依选择分歧)。
+- 阵亡进入结算并可立刻重开;新一局路线/敌人/奖励与上局不同。
+- 全程中文渲染正常;`cargo fmt/check/build` 干净;desktop `cargo run` 可玩。
+- 新 capture preset 产出 `screenshots/result/{N}/`(video.mp4 + 帧)证明闭环。

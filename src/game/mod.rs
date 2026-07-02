@@ -8,6 +8,7 @@ pub mod fog;
 pub mod lighting;
 pub mod paperdoll;
 pub mod quest;
+pub mod roguelike;
 pub mod state;
 
 pub use core::{EncounterRate, Intent, PlayerStats, Rng};
@@ -53,7 +54,8 @@ impl Plugin for GamePlugin {
             .add_plugins(paperdoll::PaperdollRuntimePlugin)
             .add_plugins(explore::ExplorePlugin)
             .add_plugins(battle::BattlePlugin)
-            .add_plugins(fog::FogPlugin);
+            .add_plugins(fog::FogPlugin)
+            .add_plugins(roguelike::RoguelikePlugin);
     }
 }
 
