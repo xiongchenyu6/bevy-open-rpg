@@ -1,0 +1,7 @@
+/target
+/screenshots
+.bevy-help.log
+.direnv/
+/tmp/
+.claude/
+CLAUDE.md

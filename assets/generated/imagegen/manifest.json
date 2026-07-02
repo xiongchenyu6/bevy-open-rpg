@@ -1,0 +1,48 @@
+{
+  "method": "codex imagegen built-in, flat #00ff00 chroma key, ImageMagick alpha extraction",
+  "generatedAt": "2026-07-02",
+  "assets": [
+    {
+      "id": "ai_plague_elder",
+      "out": "assets/npcs/ai_plague_elder.png",
+      "raw": "assets/generated/imagegen/raw/ai_plague_elder.png",
+      "promptSummary": "plague village elder, moss green rain cloak, wooden cane, medicine tally slips"
+    },
+    {
+      "id": "ai_shrine_keeper",
+      "out": "assets/npcs/ai_shrine_keeper.png",
+      "raw": "assets/generated/imagegen/raw/ai_shrine_keeper.png",
+      "promptSummary": "plague shrine keeper, pale ritual robe, bronze cleansing bell, ash pouch"
+    },
+    {
+      "id": "ai_capital_envoy",
+      "out": "assets/npcs/ai_capital_envoy.png",
+      "raw": "assets/generated/imagegen/raw/ai_capital_envoy.png",
+      "promptSummary": "capital envoy, blue and ivory official robes, jade city writ scroll"
+    },
+    {
+      "id": "ai_mansion_spy",
+      "out": "assets/npcs/ai_mansion_spy.png",
+      "raw": "assets/generated/imagegen/raw/ai_mansion_spy.png",
+      "promptSummary": "mansion informant, dark violet robes, face veil, cipher slip, mirror talisman"
+    },
+    {
+      "id": "ai_spirit_guide",
+      "out": "assets/npcs/ai_spirit_guide.png",
+      "raw": "assets/generated/imagegen/raw/ai_spirit_guide.png",
+      "promptSummary": "southern spirit-road guide, feathered cloak, compass charm, bamboo staff"
+    },
+    {
+      "id": "ai_tribal_chief",
+      "out": "assets/npcs/ai_tribal_chief.png",
+      "raw": "assets/generated/imagegen/raw/ai_tribal_chief.png",
+      "promptSummary": "Baiyue tribal chief, indigo bronze armor, thunder totem charm, carved staff"
+    },
+    {
+      "id": "ai_final_oracle",
+      "out": "assets/npcs/ai_final_oracle.png",
+      "raw": "assets/generated/imagegen/raw/ai_final_oracle.png",
+      "promptSummary": "spirit abyss lamp keeper, black-white-blue robes, memory pearl lantern"
+    }
+  ]
+}

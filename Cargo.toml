@@ -1,0 +1,58 @@
+[package]
+name = "love-rpg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# default-features disabled to avoid native system deps we don't need:
+# bevy_audio -> alsa-sys, bevy_gilrs -> libudev-sys. This is a 2D sprite+UI game.
+# Windowing is Wayland-only, following ../protect-carrot's native setup.
+bevy = { version = "0.19.0", default-features = false, features = [
+  "std",
+  "async_executor",
+  "bevy_asset",
+  "bevy_log",
+  "bevy_state",
+  "reflect_auto_register",
+
+  "bevy_winit",
+  "wayland",
+
+  "bevy_render",
+  "bevy_core_pipeline",
+
+  "bevy_sprite",
+  "bevy_sprite_render",
+
+  "bevy_ui",
+  "bevy_ui_render",
+
+  "bevy_text",
+  "default_font",
+
+  "bevy_color",
+  "bevy_image",
+  "bevy_camera",
+  "bevy_mesh",
+  "bevy_shader",
+  "bevy_material",
+
+  "png",
+  "hdr",
+
+  "multi_threaded",
+] }
+bevy-paperdoll = "0.9.1"
+bevy_firefly = { version = "0.19.0", default-features = false }
+bevy_fog_of_war = { version = "0.4.0", default-features = false, features = [
+  "format-json",
+] }
+
+[patch.crates-io]
+bevy_firefly = { path = "vendor/bevy_firefly" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
