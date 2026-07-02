@@ -127,32 +127,32 @@ pub const CHAPTERS: [ChapterDef; CHAPTER_COUNT] = [
         title: "第一卷 · 桃溪村誓",
         zones: &[EncounterZone::Village, EncounterZone::Bamboo],
         bosses: &[BossKind::MoonWraith],
-        enemy_hp_mul: 1.0,
-        enemy_atk_mul: 1.0,
+        enemy_hp_mul: 0.75,
+        enemy_atk_mul: 0.70,
         depth: 4,
     },
     ChapterDef {
         title: "第二卷 · 江雾疫火",
         zones: &[EncounterZone::RiverTown, EncounterZone::PlagueVillage],
         bosses: &[BossKind::RiverDemon, BossKind::MiasmaRoot],
-        enemy_hp_mul: 1.45,
-        enemy_atk_mul: 1.30,
+        enemy_hp_mul: 1.10,
+        enemy_atk_mul: 1.00,
         depth: 4,
     },
     ChapterDef {
         title: "第三卷 · 京华南疆",
         zones: &[EncounterZone::Capital, EncounterZone::SouthernRoad],
         bosses: &[BossKind::MirrorMinister, BossKind::ThunderQilin],
-        enemy_hp_mul: 1.95,
-        enemy_atk_mul: 1.60,
+        enemy_hp_mul: 1.50,
+        enemy_atk_mul: 1.30,
         depth: 4,
     },
     ChapterDef {
         title: "终卷 · 心渊照影",
         zones: &[EncounterZone::FinalSanctum],
         bosses: &[BossKind::DreamEclipse],
-        enemy_hp_mul: 2.35,
-        enemy_atk_mul: 1.85,
+        enemy_hp_mul: 1.85,
+        enemy_atk_mul: 1.50,
         depth: 3,
     },
 ];
@@ -377,15 +377,24 @@ pub struct RunBattleMods {
 /// Build the encounter parameters for a node fight and remember its rank.
 pub fn battle_mods_for(run: &RunState, rank: FightRank) -> RunBattleMods {
     let def = run.chapter_def();
-    let (hp_e, atk_e) = match rank {
-        FightRank::Normal => (1.0, 1.0),
-        FightRank::Elite => (1.55, 1.25),
-        FightRank::Boss => (1.0, 1.0), // boss defs are already tuned
-    };
-    RunBattleMods {
-        hp_mul: def.enemy_hp_mul * hp_e,
-        atk_mul: def.enemy_atk_mul * atk_e,
-        rank,
+    match rank {
+        // Boss defs were tuned for the levelled legacy campaign; the run mode
+        // has no levels, so bosses fight at a flat discount instead.
+        FightRank::Boss => RunBattleMods {
+            hp_mul: 0.72,
+            atk_mul: 0.68,
+            rank,
+        },
+        FightRank::Elite => RunBattleMods {
+            hp_mul: def.enemy_hp_mul * 1.40,
+            atk_mul: def.enemy_atk_mul * 1.15,
+            rank,
+        },
+        FightRank::Normal => RunBattleMods {
+            hp_mul: def.enemy_hp_mul,
+            atk_mul: def.enemy_atk_mul,
+            rank,
+        },
     }
 }
 

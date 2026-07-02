@@ -457,13 +457,11 @@ fn spawn_battle(
         exp: def.exp,
     };
 
-    // Roguelike run: scale non-boss enemies by chapter/elite multipliers.
+    // Roguelike run: scale enemies by chapter/elite/boss multipliers.
     if let Some(mods) = mods.as_ref() {
-        if !matches!(kind, EncounterKind::Boss(_)) {
-            enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
-            enemy.hp = enemy.max_hp;
-            enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
-        }
+        enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
+        enemy.hp = enemy.max_hp;
+        enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
         if mods.rank == FightRank::Elite {
             enemy.name = format!("精英 · {}", enemy.name);
         }

@@ -57,3 +57,16 @@ Key discoveries and decisions for resuming work.
 - Grid-step movement with a 0.14s cooldown. Encounters only on grass tiles (16%).
 - Player position persists across battles via `PlayerPos` resource; scenes fully
   despawn/respawn on state change.
+
+## 肉鸽改造 (2026-07)
+- 主循环换成 roguelike run:`AppState` 默认 `Title`;旧 capture preset 依赖
+  Explore 起始,capture.rs 里对非 rogue preset 显式 `NextState::set(Explore)`。
+- battle.rs 以 `Option<Res<RunState>>` 门控双流:有 RunState=肉鸽(无经验、
+  法宝钩子、Reward/Ending 路由),无=旧线性战役,老逻辑零改动。
+- 平衡:boss 定义按练级战役调的,run 模式统一打 0.72/0.68 折;第一章普通敌
+  0.75/0.70 倍,否则开局竹林敌(21 atk)会灭掉 80 血新角色(实测 2/80 险胜)。
+- `DespawnOnExit<AppState>` 不是 Copy——多实体共用作用域时写
+  `let scope = || DespawnOnExit(...)` 闭包。
+- rogue capture preset 用节奏脚本(非魔法帧号):非战斗每 18 帧 confirm、
+  每 90 帧 down;战斗内每 14 帧 confirm(1.6x tempo 下 timer≈15 帧)。
+  title_input 会用墙钟异或 Rng,故 rogue 捕获非严格确定,但足够出证明视频。

@@ -81,6 +81,11 @@ pub fn title_input(
     // desktop launch rolls a different world (capture presets re-seed after
     // this for determinism).
     *stats = PlayerStats::default();
+    // Run-mode baseline: a touch sturdier than the levelled campaign's Lv.1,
+    // since there is no grinding to fall back on.
+    stats.atk += 2;
+    stats.def += 1;
+    stats.potions += 1;
     *quest = QuestLog::default();
     if let Ok(elapsed) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         rng.0 ^= u64::from(elapsed.subsec_nanos()) << 16 | 1;
@@ -336,7 +341,6 @@ pub fn spawn_ending(
     mut commands: Commands,
     font: Res<GameFont>,
     run: Option<Res<RunState>>,
-    stats: Res<PlayerStats>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     let Some(run) = run else {
@@ -388,7 +392,6 @@ pub fn spawn_ending(
                 font.text_font(18.0),
                 TextColor(Color::srgba(0.75, 0.8, 0.9, 0.85)),
             ));
-            let _ = &stats;
             parent.spawn((
                 Text::new("—— 按 空格 回到轮回之初 ——"),
                 font.text_font(22.0),

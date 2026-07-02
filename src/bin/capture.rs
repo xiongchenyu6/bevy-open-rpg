@@ -42,6 +42,7 @@
 //!   final-waterway start directly on the Finale old-dream waterway route map
 //!   final-lamp start at the Finale memory-lamp puzzle
 //!   final-epilogue start after the final boss by the gatekeeper ending scene
+//!   rogue         roguelike run mode: title → node map → battles/events/rewards
 
 use bevy::{
     camera::RenderTarget,
@@ -129,6 +130,9 @@ struct CaptureFinalEpilogue(bool);
 #[derive(Resource, Default)]
 struct CaptureFinalLamp(bool);
 
+#[derive(Resource, Default)]
+struct CaptureRogue(bool);
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = args
@@ -181,7 +185,35 @@ fn main() {
     app.init_resource::<CaptureThunderDrum>();
     app.init_resource::<CaptureFinalEpilogue>();
     app.init_resource::<CaptureFinalLamp>();
+    app.init_resource::<CaptureRogue>();
     match preset {
+        "rogue" => {
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            // Deterministic-ish start (the title screen still mixes in wall
+            // clock; the script is cadence-based, not frame-exact).
+            app.world_mut().resource_mut::<love_rpg::game::Rng>().0 = 0xC0FFEE_5EED;
+        }
+        "rogue-ending" | "rogue-ending-defeat" => {
+            use love_rpg::game::roguelike::{RunOutcome, RunState};
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xC0FFEE_5EED;
+                RunState::new(&mut rng)
+            };
+            run.outcome = Some(if preset == "rogue-ending-defeat" {
+                RunOutcome::Defeat
+            } else {
+                RunOutcome::VictoryLove
+            });
+            run.qingyuan = 7;
+            run.daoxin = 3;
+            run.fights_won = 12;
+            app.world_mut().insert_resource(run);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::Ending);
+        }
         "chapter-card" => prepare_chapter_card_preset(&mut app),
         "task-board" => prepare_task_board_preset(&mut app),
         "task-board-next" => prepare_task_board_next_preset(&mut app),
@@ -224,6 +256,13 @@ fn main() {
         "final-epilogue" => prepare_final_epilogue_preset(&mut app),
         "battle-final" => prepare_battle_final_preset(&mut app),
         _ => {}
+    }
+    // Legacy presets predate the roguelike Title state and expect to start on
+    // the free-roam overworld.
+    if !preset.starts_with("rogue") {
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::Explore);
     }
     app.finish();
     app.cleanup();
@@ -1047,6 +1086,37 @@ fn set_intent(app: &mut App, f: u32) {
             None
         }
     };
+
+    // Roguelike run: cadence-driven confirms walk the whole loop (title →
+    // chapter card → node picks → battles → rewards → events), with periodic
+    // cursor-down presses to vary node/option choices.
+    if app.world().resource::<CaptureRogue>().0 {
+        let in_reward = *app.world().resource::<State<AppState>>().get() == AppState::Reward;
+        let mut intent = app.world_mut().resource_mut::<Intent>();
+        intent.clear();
+        if let Some(battle_frame) = battle_frame {
+            if battle_frame % 14 == 4 {
+                intent.confirm = true;
+            }
+        } else if in_reward {
+            // Let the three-choice loot screen breathe: browse, then take.
+            if f % 44 == 20 {
+                intent.down = true;
+            }
+            if f % 44 == 42 {
+                intent.confirm = true;
+            }
+        } else if f >= 30 {
+            // Hold the title screen for a second, then walk the run.
+            if f % 18 == 12 {
+                intent.confirm = true;
+            }
+            if f % 90 == 48 {
+                intent.down = true;
+            }
+        }
+        return;
+    }
 
     let use_combo = app.world().resource::<CaptureUseCombo>().0;
     let task_board = app.world().resource::<CaptureTaskBoard>().0;
