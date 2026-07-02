@@ -293,7 +293,10 @@ pub fn reward_input(
         run.current_fight = None;
         if was_boss {
             if run.chapter + 1 >= CHAPTER_COUNT {
-                run.outcome = Some(if run.qingyuan >= run.daoxin {
+                // 道心情缘双高解锁隐藏结局。
+                run.outcome = Some(if run.daoxin >= 5 && run.qingyuan >= 5 {
+                    RunOutcome::VictoryBoth
+                } else if run.qingyuan >= run.daoxin {
                     RunOutcome::VictoryLove
                 } else {
                     RunOutcome::VictoryResolve
@@ -350,6 +353,7 @@ pub fn spawn_ending(
     let lines: &[&str] = match run.outcome {
         Some(RunOutcome::VictoryLove) => content::ENDING_LOVE,
         Some(RunOutcome::VictoryResolve) => content::ENDING_RESOLVE,
+        Some(RunOutcome::VictoryBoth) => content::ENDING_BOTH,
         _ => content::ENDING_DEFEAT,
     };
     let scope = || DespawnOnExit(AppState::Ending);

@@ -42,9 +42,17 @@ pub enum Relic {
     PeachHairpin,  // 桃木钗:拾取时情缘 +2、气血上限 +15
     HeavenScroll,  // 无字天书:拾取时道心 +2、术法上限 +10
     DrunkenBrew,   // 醉仙酿:休息时回复翻倍
+    ChixiaoCore,   // 赤霄剑胆:普攻伤害 +4(可与剑穗叠加)
+    StarSand,      // 星辰砂:仙术伤害 +5,拾取时术法上限 +12
+    VajraPestle,   // 韦陀杵:受到的伤害 -2(可与龟灵甲叠加)
+    BreathSoil,    // 息壤袋:每场战斗开始回复 10 点气血
+    YinYangMirror, // 阴阳镜:开战时敌人攻击 -3
+    SoulLantern,   // 引魂灯:击杀敌人回复 4 点灵力
+    GinsengRoot,   // 千年参:拾取时气血上限 +20
+    TigerTalisman, // 虎啸符:敌人凶猛强击的伤害额外 -5
 }
 
-pub const ALL_RELICS: [Relic; 14] = [
+pub const ALL_RELICS: [Relic; 22] = [
     Relic::SwordTassel,
     Relic::SwordSutra,
     Relic::JadeVial,
@@ -59,6 +67,14 @@ pub const ALL_RELICS: [Relic; 14] = [
     Relic::PeachHairpin,
     Relic::HeavenScroll,
     Relic::DrunkenBrew,
+    Relic::ChixiaoCore,
+    Relic::StarSand,
+    Relic::VajraPestle,
+    Relic::BreathSoil,
+    Relic::YinYangMirror,
+    Relic::SoulLantern,
+    Relic::GinsengRoot,
+    Relic::TigerTalisman,
 ];
 
 impl Relic {
@@ -78,6 +94,14 @@ impl Relic {
             Relic::PeachHairpin => "桃木钗",
             Relic::HeavenScroll => "无字天书",
             Relic::DrunkenBrew => "醉仙酿",
+            Relic::ChixiaoCore => "赤霄剑胆",
+            Relic::StarSand => "星辰砂",
+            Relic::VajraPestle => "韦陀杵",
+            Relic::BreathSoil => "息壤袋",
+            Relic::YinYangMirror => "阴阳镜",
+            Relic::SoulLantern => "引魂灯",
+            Relic::GinsengRoot => "千年参",
+            Relic::TigerTalisman => "虎啸符",
         }
     }
 
@@ -97,6 +121,14 @@ impl Relic {
             Relic::PeachHairpin => "情缘 +2,气血上限 +15",
             Relic::HeavenScroll => "道心 +2,术法上限 +10",
             Relic::DrunkenBrew => "休息回复翻倍",
+            Relic::ChixiaoCore => "普攻伤害 +4",
+            Relic::StarSand => "仙术伤害 +5,术法上限 +12",
+            Relic::VajraPestle => "受到的伤害 -2",
+            Relic::BreathSoil => "开战回复 10 点气血",
+            Relic::YinYangMirror => "开战时敌人攻击 -3",
+            Relic::SoulLantern => "击杀敌人回复 4 点灵力",
+            Relic::GinsengRoot => "气血上限 +20",
+            Relic::TigerTalisman => "敌人强击伤害额外 -5",
         }
     }
 }
@@ -183,6 +215,7 @@ pub enum RunOutcome {
     Defeat,
     VictoryLove,    // 情缘 ending
     VictoryResolve, // 道心 ending
+    VictoryBoth,    // 道心情缘双全的隐藏结局
 }
 
 /// The whole roguelike run. Present ⇔ a run is active (battle systems use
@@ -203,6 +236,8 @@ pub struct RunState {
     pub current_fight: Option<FightRank>,
     /// The chapter card has been shown for the current chapter.
     pub card_shown: bool,
+    /// Event-pool indices already drawn this run (no repeats until exhausted).
+    pub seen_events: Vec<usize>,
     /// Set when the run ends; read by the Ending screen.
     pub outcome: Option<RunOutcome>,
     /// Totals for the ending screen.
@@ -227,6 +262,7 @@ impl RunState {
             qingyuan: 0,
             current_fight: None,
             card_shown: false,
+            seen_events: Vec::new(),
             outcome: None,
             fights_won: 0,
             revive_used: false,
@@ -257,6 +293,23 @@ impl RunState {
         zones[rng.range(0, zones.len() as i32 - 1) as usize]
     }
 
+    /// Draw a random event index the player has not seen this run; the pool
+    /// resets once exhausted.
+    pub fn draw_event(&mut self, rng: &mut Rng) -> usize {
+        let unseen: Vec<usize> = (0..content::EVENTS.len())
+            .filter(|i| !self.seen_events.contains(i))
+            .collect();
+        let pool = if unseen.is_empty() {
+            self.seen_events.clear();
+            (0..content::EVENTS.len()).collect()
+        } else {
+            unseen
+        };
+        let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
+        self.seen_events.push(index);
+        index
+    }
+
     /// Nodes reachable from the current position (entry layer if none).
     pub fn reachable(&self) -> Vec<usize> {
         if self.position == usize::MAX {
@@ -268,44 +321,54 @@ impl RunState {
 
     // --- relic-driven battle modifiers, summed over owned relics ---
 
+    fn sum_relics(&self, f: impl Fn(Relic) -> i32) -> i32 {
+        self.relics.iter().copied().map(f).sum()
+    }
+
     pub fn attack_bonus(&self) -> i32 {
-        if self.has_relic(Relic::SwordTassel) {
-            5
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::SwordTassel => 5,
+            Relic::ChixiaoCore => 4,
+            _ => 0,
+        })
     }
 
     pub fn spell_bonus(&self) -> i32 {
-        if self.has_relic(Relic::SwordSutra) {
-            9
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::SwordSutra => 9,
+            Relic::StarSand => 5,
+            _ => 0,
+        })
     }
 
     pub fn spell_cost_delta(&self) -> i32 {
-        if self.has_relic(Relic::SpiritPendant) {
-            -2
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::SpiritPendant => -2,
+            _ => 0,
+        })
     }
 
     pub fn potion_bonus(&self) -> i32 {
-        if self.has_relic(Relic::JadeVial) {
-            25
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::JadeVial => 25,
+            _ => 0,
+        })
     }
 
     pub fn incoming_reduction(&self) -> i32 {
-        if self.has_relic(Relic::TortoiseArmor) {
-            3
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::TortoiseArmor => 3,
+            Relic::VajraPestle => 2,
+            _ => 0,
+        })
+    }
+
+    /// Extra reduction that only applies to an enemy's凶猛强击.
+    pub fn strong_hit_guard(&self) -> i32 {
+        self.sum_relics(|r| match r {
+            Relic::TigerTalisman => 5,
+            _ => 0,
+        })
     }
 
     pub fn flee_always(&self) -> bool {
@@ -313,19 +376,40 @@ impl RunState {
     }
 
     pub fn on_kill_heal(&self) -> i32 {
-        if self.has_relic(Relic::BloodBead) {
-            12
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::BloodBead => 12,
+            _ => 0,
+        })
+    }
+
+    pub fn on_kill_mana(&self) -> i32 {
+        self.sum_relics(|r| match r {
+            Relic::SoulLantern => 4,
+            _ => 0,
+        })
     }
 
     pub fn opening_strike(&self) -> i32 {
-        if self.has_relic(Relic::ThunderDrum) {
-            15
-        } else {
-            0
-        }
+        self.sum_relics(|r| match r {
+            Relic::ThunderDrum => 15,
+            _ => 0,
+        })
+    }
+
+    /// Heal applied to the player at the start of every battle.
+    pub fn battle_start_heal(&self) -> i32 {
+        self.sum_relics(|r| match r {
+            Relic::BreathSoil => 10,
+            _ => 0,
+        })
+    }
+
+    /// Flat debuff applied to the enemy's attack at spawn.
+    pub fn enemy_atk_debuff(&self) -> i32 {
+        self.sum_relics(|r| match r {
+            Relic::YinYangMirror => 3,
+            _ => 0,
+        })
     }
 
     pub fn gold_multiplier(&self) -> f32 {

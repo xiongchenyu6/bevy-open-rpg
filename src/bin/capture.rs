@@ -193,6 +193,23 @@ fn main() {
             // clock; the script is cadence-based, not frame-exact).
             app.world_mut().resource_mut::<love_rpg::game::Rng>().0 = 0xC0FFEE_5EED;
         }
+        "rogue-market" => {
+            use love_rpg::game::roguelike::{RunState, graph::NodeKind};
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xC0FFEE_5EED;
+                RunState::new(&mut rng)
+            };
+            run.card_shown = true; // skip the chapter card, go straight to the stalls
+            for node in run.graph.nodes.iter_mut().filter(|n| n.layer == 0) {
+                node.kind = NodeKind::Market;
+            }
+            app.world_mut().insert_resource(run);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::NodeMap);
+        }
         "rogue-ending" | "rogue-ending-defeat" => {
             use love_rpg::game::roguelike::{RunOutcome, RunState};
             app.world_mut().resource_mut::<CaptureRogue>().0 = true;

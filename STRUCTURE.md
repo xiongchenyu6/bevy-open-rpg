@@ -33,7 +33,7 @@ for legacy capture presets but is no longer the main loop.
 
 - **`mod.rs`** — `RoguelikePlugin` (system registration for all run screens);
   `RunState` (chapter, node graph, position, relics, 道心/情缘 counters,
-  outcome, revive flag); `Relic` enum (14 法宝) with battle-modifier query
+  outcome, revive flag); `Relic` enum (22 法宝,加成按持有求和叠加) with battle-modifier query
   methods; `CHAPTERS: [ChapterDef; 4]` (title, encounter zones, boss pool,
   enemy hp/atk multipliers); `RunBattleMods` + `battle_mods_for` (normal /
   elite ×1.4/×1.15 / boss flat ×0.72/×0.68 discounts); breakthrough constants
@@ -41,13 +41,13 @@ for legacy capture presets but is no longer the main loop.
 - **`graph.rs`** — `NodeGraph::generate`: layered DAG per chapter (entry 2–3
   wide → depth random layers with one single-node Story bottleneck → rest →
   boss), non-crossing links, full reachability. `NodeKind`:
-  Fight战/Elite袭/Event遇/Story缘/Rest歇/Boss魔.
-- **`content.rs`** — all narrative data: 4 chapter cards, 4 story scenes (each
-  a 道心-vs-情缘 choice with mechanical effects), 10 random events (options
-  with success chance + outcome effects), rest options, 3 endings (情缘 /
-  道心 / defeat). `Effect` enum applied by `event::apply_effect`.
+  Fight战/Elite袭/Event遇/Story缘/Rest歇/Market市/Boss魔.
+- **`content.rs`** — all narrative data: 4 chapter cards, 11 story scenes(每章一个池,「缘」节点随机抽取), 22 random events (options
+  with success chance + outcome effects; run 内不重复抽取), market prices,
+  rest options, 4 endings (情缘 / 道心 / 双全隐藏 / defeat). `Effect` enum applied by `event::apply_effect`.
 - **`event.rs`** — `RunDialogue` overlay resource (chapter cards, story,
-  events, rests all render through it); `run_dialogue_input` (line advance +
+  events, rests, markets all render through it; market purchases keep the
+  stall open until离开); `run_dialogue_input` (line advance +
   option pick + probabilistic resolution); relic granting; overlay UI.
 - **`map_ui.rs`** — node-map scene (edge sprites, node sprites + `Text2d`
   glyphs, pulsing cursor ring, run HUD with relics/道心/情缘), `node_map_input`
@@ -120,4 +120,4 @@ Explore-only).
   lavapipe (`VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`);
   the `rogue` preset walks title → card → nodes → battles → rewards on a
   cadence script. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/2/` (900 frames + video.mp4, 30s).
+- Latest proof bundle: `screenshots/result/3/` (900 frames + video.mp4, 30s).

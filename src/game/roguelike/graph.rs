@@ -8,12 +8,13 @@ use super::ChapterDef;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
-    Fight, // 遭遇
-    Elite, // 强袭
-    Event, // 奇遇
-    Story, // 情缘 / 剧情
-    Rest,  // 歇脚
-    Boss,  // 首领
+    Fight,  // 遭遇
+    Elite,  // 强袭
+    Event,  // 奇遇
+    Story,  // 情缘 / 剧情
+    Rest,   // 歇脚
+    Market, // 集市
+    Boss,   // 首领
 }
 
 impl NodeKind {
@@ -25,6 +26,7 @@ impl NodeKind {
             NodeKind::Event => "遇",
             NodeKind::Story => "缘",
             NodeKind::Rest => "歇",
+            NodeKind::Market => "市",
             NodeKind::Boss => "魔",
         }
     }
@@ -36,6 +38,7 @@ impl NodeKind {
             NodeKind::Event => "奇遇",
             NodeKind::Story => "剧情",
             NodeKind::Rest => "歇脚",
+            NodeKind::Market => "集市",
             NodeKind::Boss => "章末首领",
         }
     }
@@ -163,14 +166,16 @@ impl NodeGraph {
 /// fresh chapter never opens with a spike.
 fn roll_kind(rng: &mut Rng, layer: usize) -> NodeKind {
     let roll = rng.unit();
-    if layer >= 2 && roll < 0.18 {
+    if layer >= 2 && roll < 0.16 {
         NodeKind::Elite
-    } else if roll < 0.48 {
+    } else if roll < 0.46 {
         NodeKind::Fight
-    } else if roll < 0.72 {
+    } else if roll < 0.68 {
         NodeKind::Event
-    } else if roll < 0.84 {
+    } else if roll < 0.79 {
         NodeKind::Rest
+    } else if roll < 0.88 {
+        NodeKind::Market
     } else {
         NodeKind::Fight
     }

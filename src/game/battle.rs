@@ -435,6 +435,7 @@ fn spawn_battle(
     dolls: Res<PaperdollAssets>,
     mut quest: ResMut<QuestLog>,
     mut rng: ResMut<Rng>,
+    mut stats: ResMut<PlayerStats>,
     encounter: Option<Res<PendingEncounter>>,
     run: Option<Res<RunState>>,
     mods: Option<Res<RunBattleMods>>,
@@ -457,13 +458,29 @@ fn spawn_battle(
         exp: def.exp,
     };
 
-    // Roguelike run: scale enemies by chapter/elite/boss multipliers.
+    // Roguelike run: scale enemies by chapter/elite/boss multipliers, and
+    // give elites a random affix so repeat fights feel different.
     if let Some(mods) = mods.as_ref() {
         enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
         enemy.hp = enemy.max_hp;
         enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
         if mods.rank == FightRank::Elite {
-            enemy.name = format!("精英 · {}", enemy.name);
+            let affix = match rng.range(0, 2) {
+                0 => {
+                    enemy.atk = (enemy.atk as f32 * 1.25).round() as i32;
+                    "狂暴"
+                }
+                1 => {
+                    enemy.def += 3;
+                    "坚鳞"
+                }
+                _ => {
+                    enemy.max_hp = (enemy.max_hp as f32 * 1.25).round() as i32;
+                    enemy.hp = enemy.max_hp;
+                    "嗜血"
+                }
+            };
+            enemy.name = format!("精英 · {affix} · {}", enemy.name);
         }
     }
 
@@ -472,7 +489,7 @@ fn spawn_battle(
     let bond_bonus = quest.take_bond_bonus();
     let mut message = format!("一只 {} 拦住了去路！", enemy.name);
 
-    // 雷泽鼓 opening strike (run mode only).
+    // Relic effects that trigger at battle start (run mode only).
     if let Some(run) = run.as_ref() {
         let strike = run.opening_strike();
         if strike > 0 {
@@ -480,6 +497,17 @@ fn spawn_battle(
             message.push_str(&format!(
                 "\n【雷泽鼓】开战惊雷落下,敌人受了 {strike} 点伤！"
             ));
+        }
+        let debuff = run.enemy_atk_debuff();
+        if debuff > 0 {
+            enemy.atk = (enemy.atk - debuff).max(1);
+            message.push_str(&format!("\n【阴阳镜】镜光一晃,敌人攻势弱了 {debuff} 分。"));
+        }
+        let start_heal = run.battle_start_heal();
+        if start_heal > 0 && stats.hp < stats.max_hp {
+            let healed = start_heal.min(stats.max_hp - stats.hp);
+            stats.hp += healed;
+            message.push_str(&format!("\n【息壤袋】土息养身,回复 {healed} 点气血。"));
         }
     }
     if let Some(bond_bonus) = bond_bonus {
@@ -1625,6 +1653,14 @@ fn battle_tick(
                             .message
                             .push_str(&format!("\n【嗜血珠】吸纳妖气，回复 {healed} 点气血。"));
                     }
+                    let mana = run.on_kill_mana();
+                    if mana > 0 && stats.mp < stats.max_mp {
+                        let restored = mana.min(stats.max_mp - stats.mp);
+                        stats.mp += restored;
+                        state
+                            .message
+                            .push_str(&format!("\n【引魂灯】灯芯一亮，回复 {restored} 点灵力。"));
+                    }
                     state.phase = Phase::Won;
                     state.timer = 1.2;
                     return;
@@ -1671,7 +1707,9 @@ fn battle_tick(
                 state.timer = 1.6;
             } else {
                 let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
-                let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, relic_guard);
+                let strong_guard = run.as_ref().map_or(0, |r| r.strong_hit_guard());
+                let attack =
+                    begin_enemy_turn(&mut state, &mut stats, &mut rng, relic_guard, strong_guard);
                 spawn_enemy_strike_impact(&mut commands, &anims, &lights, attack.strong);
                 spawn_damage_text(
                     &mut commands,
@@ -1893,6 +1931,7 @@ fn begin_enemy_turn(
     stats: &mut PlayerStats,
     rng: &mut Rng,
     relic_guard: i32,
+    strong_guard: i32,
 ) -> EnemyAttackResult {
     let turn_index = state.enemy_turns;
     state.enemy_turns += 1;
@@ -1908,7 +1947,7 @@ fn begin_enemy_turn(
         let blocked = blessing_guard_block(state.blessing, raw);
         let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
         let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard).max(0);
+        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard - strong_guard).max(0);
         state.message = format!(
             "{} 困兽犹斗，凶猛一击！造成 {} 点伤害！",
             state.enemy.name, dmg
@@ -2920,7 +2959,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
 
         assert!(attack.damage > 0);
         assert!(!attack.strong);
@@ -2955,7 +2994,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
 
         assert!(attack.damage > 0);
         assert!(attack.damage < 7);
@@ -2990,7 +3029,7 @@ mod tests {
         let before_hp = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("月影噬灵"));
@@ -3025,7 +3064,7 @@ mod tests {
         let mut stats = PlayerStats::default();
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("旧梦潮声"));

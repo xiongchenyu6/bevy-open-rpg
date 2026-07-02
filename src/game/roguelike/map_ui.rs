@@ -48,6 +48,7 @@ fn kind_color(kind: NodeKind, cleared: bool) -> Color {
         NodeKind::Event => Color::srgb(0.28, 0.48, 0.66),
         NodeKind::Story => Color::srgb(0.78, 0.58, 0.24),
         NodeKind::Rest => Color::srgb(0.30, 0.56, 0.36),
+        NodeKind::Market => Color::srgb(0.62, 0.48, 0.20),
         NodeKind::Boss => Color::srgb(0.55, 0.20, 0.62),
     };
     if cleared { c.with_alpha(0.35) } else { c }
@@ -282,14 +283,19 @@ pub fn node_map_input(
                 next.set(AppState::Battle);
             }
             NodeKind::Event => {
-                let index = rng.range(0, super::content::EVENTS.len() as i32 - 1) as usize;
+                let index = run.draw_event(&mut rng);
                 dialogue.open_event(index);
             }
             NodeKind::Story => {
-                dialogue.open_story(run.chapter);
+                let roll =
+                    rng.range(0, super::content::story_count(run.chapter) as i32 - 1) as usize;
+                dialogue.open_story(run.chapter, roll);
             }
             NodeKind::Rest => {
                 dialogue.open_rest();
+            }
+            NodeKind::Market => {
+                dialogue.open_market();
             }
         }
     }

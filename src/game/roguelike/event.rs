@@ -20,9 +20,13 @@ pub enum DialogueSource {
     Plain,
     /// Index into [`content::EVENTS`].
     Event(usize),
-    /// Story scene of the current chapter.
-    Story,
+    /// Story scene of the current chapter (roll picks from the pool).
+    Story {
+        chapter: usize,
+        roll: usize,
+    },
     Rest,
+    Market,
 }
 
 #[derive(Resource, Default)]
@@ -63,8 +67,8 @@ impl RunDialogue {
         };
     }
 
-    pub fn open_story(&mut self, chapter: usize) {
-        let scene = &content::STORY_SCENES[chapter.min(content::STORY_SCENES.len() - 1)];
+    pub fn open_story(&mut self, chapter: usize, roll: usize) {
+        let scene = content::pick_story(chapter, roll);
         let mut lines: Vec<String> = scene.lines.iter().map(|s| s.to_string()).collect();
         lines.push(scene.prompt.to_string());
         *self = Self {
@@ -72,7 +76,7 @@ impl RunDialogue {
             title: "剧情 · 缘".to_string(),
             lines,
             options: scene.options.iter().map(|o| o.label.to_string()).collect(),
-            source: DialogueSource::Story,
+            source: DialogueSource::Story { chapter, roll },
             ..default()
         };
     }
@@ -85,8 +89,28 @@ impl RunDialogue {
             options: vec![
                 content::REST_MEDITATE.to_string(),
                 content::REST_SPAR.to_string(),
+                content::REST_TALK.to_string(),
             ],
             source: DialogueSource::Rest,
+            ..default()
+        };
+    }
+
+    pub fn open_market(&mut self) {
+        *self = Self {
+            active: true,
+            title: "集市".to_string(),
+            lines: content::MARKET_INTRO
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            options: vec![
+                content::MARKET_POTION.to_string(),
+                content::MARKET_TONIC.to_string(),
+                content::MARKET_WHETSTONE.to_string(),
+                content::MARKET_LEAVE.to_string(),
+            ],
+            source: DialogueSource::Market,
             ..default()
         };
     }
@@ -197,6 +221,14 @@ pub fn grant_relic(relic: super::Relic, stats: &mut PlayerStats, run: &mut RunSt
             stats.max_mp += 10;
             stats.mp += 10;
         }
+        Relic::StarSand => {
+            stats.max_mp += 12;
+            stats.mp += 12;
+        }
+        Relic::GinsengRoot => {
+            stats.max_hp += 20;
+            stats.hp += 20;
+        }
         _ => {}
     }
     format!("获得法宝【{}】:{}", relic.name(), relic.desc())
@@ -263,30 +295,90 @@ fn resolve_choice(
                 option.failure.unwrap_or(option.success)
             }
         }
-        DialogueSource::Story => {
-            let chapter = run.chapter.min(content::STORY_SCENES.len() - 1);
-            content::STORY_SCENES[chapter].options[pick].outcome
+        DialogueSource::Story { chapter, roll } => {
+            content::pick_story(chapter, roll).options[pick].outcome
         }
         DialogueSource::Rest => {
-            // Resolved fully in code: index 0 = meditate, 1 = spar.
+            // Resolved fully in code: 0 = meditate, 1 = spar, 2 = heart-to-heart.
             let mult = run.rest_multiplier();
-            if pick == 0 {
-                let amount = stats.max_hp * 50 * mult / 100;
-                stats.hp = (stats.hp + amount).min(stats.max_hp);
-                dialogue
-                    .lines
-                    .push(format!("一夜吐纳,气血回复了 {amount} 点。"));
-            } else {
-                stats.atk += 2;
-                let amount = stats.max_hp * 10 * mult / 100;
-                stats.hp = (stats.hp + amount).min(stats.max_hp);
-                dialogue
-                    .lines
-                    .push("以火光为敌手拆招至深夜,剑势又利了几分。(攻击 +2)".to_string());
+            match pick {
+                0 => {
+                    let amount = stats.max_hp * 50 * mult / 100;
+                    stats.hp = (stats.hp + amount).min(stats.max_hp);
+                    dialogue
+                        .lines
+                        .push(format!("一夜吐纳,气血回复了 {amount} 点。"));
+                }
+                1 => {
+                    stats.atk += 2;
+                    let amount = stats.max_hp * 10 * mult / 100;
+                    stats.hp = (stats.hp + amount).min(stats.max_hp);
+                    dialogue
+                        .lines
+                        .push("以火光为敌手拆招至深夜,剑势又利了几分。(攻击 +2)".to_string());
+                }
+                _ => {
+                    run.qingyuan += 1;
+                    let amount = stats.max_hp * 30 * mult / 100;
+                    stats.hp = (stats.hp + amount).min(stats.max_hp);
+                    dialogue.lines.push(
+                        "灵儿讲起小时候偷摘桃子被追着跑的糗事,火堆边的夜忽然就不冷了。(情缘 +1)"
+                            .to_string(),
+                    );
+                }
             }
             dialogue.resolved = true;
             dialogue.options.clear();
             dialogue.idx += 1;
+            return;
+        }
+        DialogueSource::Market => {
+            // Purchases keep the stall open; leaving closes it.
+            let line = match pick {
+                0 => {
+                    if stats.spend_gold(40) {
+                        stats.potions += 1;
+                        format!(
+                            "摊主麻利地包好一瓶药水。(药水 ×{},余 {} 文)",
+                            stats.potions, stats.gold
+                        )
+                    } else {
+                        "钱袋一抖,铜板不够。摊主笑而不语。".to_string()
+                    }
+                }
+                1 => {
+                    if stats.spend_gold(70) {
+                        stats.max_hp += 12;
+                        stats.hp += 12;
+                        format!("淬体丹入腹,筋骨微热。(气血上限 +12,余 {} 文)", stats.gold)
+                    } else {
+                        "淬体丹好是好,就是买不起。".to_string()
+                    }
+                }
+                2 => {
+                    if stats.spend_gold(60) {
+                        stats.atk += 2;
+                        format!(
+                            "就着摊边的水槽把剑磨利了三分。(攻击 +2,余 {} 文)",
+                            stats.gold
+                        )
+                    } else {
+                        "砺剑石沉手,钱袋更轻,还是算了。".to_string()
+                    }
+                }
+                _ => {
+                    dialogue
+                        .lines
+                        .push("摊主们拱手相送:「剑客慢走,前路顺风。」".to_string());
+                    dialogue.resolved = true;
+                    dialogue.options.clear();
+                    dialogue.idx += 1;
+                    return;
+                }
+            };
+            // Stay in choice mode: append feedback and keep the options up.
+            dialogue.lines.push(line);
+            dialogue.idx = dialogue.lines.len() - 1;
             return;
         }
         DialogueSource::Plain => return,

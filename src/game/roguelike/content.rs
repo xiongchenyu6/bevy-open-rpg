@@ -243,11 +243,292 @@ pub const STORY_SCENES: [StoryScene; 4] = [
     },
 ];
 
+// Additional story scenes per chapter — the 「缘」 node rolls one scene from
+// { STORY_SCENES[chapter] } ∪ STORY_EXTRA[chapter], so repeat runs see
+// different beats.
+
+const SCENE_EAVES: StoryScene = StoryScene {
+    lines: &[
+        "夜雨骤至,你与灵儿躲进一处旧屋檐,火折子的光只照亮彼此的脸。",
+        "灵儿数着檐角滴下的雨:「我娘说,雨夜里说的愿望,山神听得最清。」",
+        "她偏过头看你:「你许一个,我便也许一个。」",
+    ],
+    prompt: "你许的愿是——",
+    options: &[
+        StoryOption {
+            label: "「愿身边这个人,岁岁平安。」",
+            outcome: Outcome {
+                lines: &[
+                    "灵儿的耳尖红了,她小声说了自己的愿,却死活不肯讲给你听。",
+                    "只是那晚之后,你的伤总好得格外快。",
+                    "(情缘 +2,恢复两成五气血)",
+                ],
+                effect: Effect::HealPct(25),
+                daoxin: 0,
+                qingyuan: 2,
+            },
+        },
+        StoryOption {
+            label: "「愿此剑所指,再无枉死之人。」",
+            outcome: Outcome {
+                lines: &[
+                    "檐外雷声轻轻应了一声。灵儿望着你的侧脸,忽然觉得陌生,又忽然觉得安心。",
+                    "(道心 +2,防御 +2)",
+                ],
+                effect: Effect::GainDef(2),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_OPERA: StoryScene = StoryScene {
+    lines: &[
+        "途经的小村正唱社戏,台上演的是斩妖人斩尽心魔、白日飞升的老戏文。",
+        "台下孩童学着挥剑,笑闹声撞进锣鼓里。灵儿买了两串糖葫芦,递给你一串。",
+        "戏至高潮,斩妖人却在飞升前回了头——台下有人喝倒彩,有人抹眼泪。",
+    ],
+    prompt: "你觉得他该不该回头?",
+    options: &[
+        StoryOption {
+            label: "「该。成仙有什么好,人间烟火才是真的。」",
+            outcome: Outcome {
+                lines: &[
+                    "灵儿咬着糖葫芦笑弯了眼:「那你到时候,也记得回头。」",
+                    "(情缘 +2,获得一枚药水)",
+                ],
+                effect: Effect::GainPotions(1),
+                daoxin: 0,
+                qingyuan: 2,
+            },
+        },
+        StoryOption {
+            label: "「不该。既起了誓,回头便是负了所有人。」",
+            outcome: Outcome {
+                lines: &[
+                    "邻座的老者闻言看了你一眼,朝你举了举酒碗:「后生,是个走得远的。」",
+                    "(道心 +2,攻击 +2)",
+                ],
+                effect: Effect::GainAtk(2),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_LANTERNS: StoryScene = StoryScene {
+    lines: &[
+        "疫气稍歇的夜里,江城幸存的人们在渡口放河灯,为逝者引路。",
+        "一个失了双亲的小女孩折不好灯纸,急得直掉眼泪。",
+        "灵儿蹲下去帮她,回头看你:「再折一盏么?给……将来的我们。」",
+    ],
+    prompt: "河灯放与不放?",
+    options: &[
+        StoryOption {
+            label: "折一盏双生灯,与她并肩放进江里。",
+            outcome: Outcome {
+                lines: &[
+                    "两盏灯在江心靠在一起,顺流而下,久久不散。",
+                    "小女孩破涕为笑:「灯挨着灯,人就不会走散。」",
+                    "(情缘 +2,恢复两成气血)",
+                ],
+                effect: Effect::HealPct(20),
+                daoxin: 0,
+                qingyuan: 2,
+            },
+        },
+        StoryOption {
+            label: "只放一盏无名灯,祭这一城亡魂。",
+            outcome: Outcome {
+                lines: &[
+                    "灯入江心,你在心里把三千户的名字都念了一遍——念不出名字的,就记住灯影。",
+                    "(道心 +2,气血上限 +10)",
+                ],
+                effect: Effect::GainMaxHp(10),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_QIN: StoryScene = StoryScene {
+    lines: &[
+        "废驿站里有位盲眼琴师,守着一张断了两根弦的旧琴,不肯随难民南逃。",
+        "「琴是内子的陪嫁。她走在疫里,我走了,谁给她弹《归雁》?」",
+        "琴声残缺,却稳得像多年未改的心跳。",
+    ],
+    prompt: "你——",
+    options: &[
+        StoryOption {
+            label: "以剑代弦,为他补全一曲《归雁》。",
+            outcome: Outcome {
+                lines: &[
+                    "剑鸣清越,续上断弦的空处。曲终,琴师朝虚空一揖:「夫人,有客到。」",
+                    "灵儿在门边听完了整曲,眼睛亮亮的没说话。",
+                    "(情缘 +2,术法上限 +8)",
+                ],
+                effect: Effect::GainMaxMp(8),
+                daoxin: 0,
+                qingyuan: 2,
+            },
+        },
+        StoryOption {
+            label: "留下盘缠,劝他随人流南去。",
+            outcome: Outcome {
+                lines: &[
+                    "琴师收了钱,却只买了三炷香。你走出很远,还听见那支残曲跟了一路。",
+                    "有些执念劝不动,就像你自己的。",
+                    "(道心 +2,损失 30 文)",
+                ],
+                effect: Effect::LoseGold(30),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_PALACE: StoryScene = StoryScene {
+    lines: &[
+        "京城夜宴,国师隔着满席歌舞举杯敬你:「斩妖人,你剑上妖血未干。」",
+        "「我锁妖养煞,是为社稷;你逢妖便斩,又为的什么?说来听听。」",
+        "满殿烛火摇了摇。灵儿的手在案下轻轻按住你的手背。",
+    ],
+    prompt: "你如何作答?",
+    options: &[
+        StoryOption {
+            label: "反手握住灵儿:「为身后之人不必学会握剑。」",
+            outcome: Outcome {
+                lines: &[
+                    "国师盯着你们交握的手看了很久,忽然笑了,笑意却不达眼底。",
+                    "「好答案。可惜本座……早已没有身后之人。」",
+                    "(情缘 +2,防御 +2)",
+                ],
+                effect: Effect::GainDef(2),
+                daoxin: 0,
+                qingyuan: 2,
+            },
+        },
+        StoryOption {
+            label: "举杯饮尽:「剑问的是心,不是妖。国师心里有妖。」",
+            outcome: Outcome {
+                lines: &[
+                    "殿内死寂。国师缓缓鼓掌,烛火齐齐矮了三分。",
+                    "「今夜之后,京城没有你的容身处了。——但本座敬你这句话。」",
+                    "(道心 +2,攻击 +3)",
+                ],
+                effect: Effect::GainAtk(3),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_BONFIRE: StoryScene = StoryScene {
+    lines: &[
+        "南疆部族的篝火祭上,祭司请远客共舞一曲,说舞给雷神看的人不会说谎。",
+        "鼓点如雨。灵儿被姑娘们拉进火光里,笑着朝你伸出手。",
+        "祭司低声道:「跳,便把心跳给她看;不跳,便把心留给山看。」",
+    ],
+    prompt: "鼓点催了三巡,你——",
+    options: &[
+        StoryOption {
+            label: "踏进火光,握住那只手。",
+            outcome: Outcome {
+                lines: &[
+                    "你舞得笨拙,她笑得直不起腰,火星升上夜空像一场倒下的星雨。",
+                    "祭司朝雷云举杯:「雷神看见了。」",
+                    "(情缘 +3,恢复三成气血)",
+                ],
+                effect: Effect::HealPct(30),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "静坐火外,以剑击节为她伴奏。",
+            outcome: Outcome {
+                lines: &[
+                    "剑鸣与鼓点相和,火光里的身影旋得更轻快了。",
+                    "祭司看看你,又看看剑:「也好。山也看见了。」",
+                    "(道心 +2,攻击 +2)",
+                ],
+                effect: Effect::GainAtk(2),
+                daoxin: 2,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_CORRIDOR: StoryScene = StoryScene {
+    lines: &[
+        "心渊深处有一条回廊,两侧水幕重演着你们的初遇:溪边、木剑、桃木铃。",
+        "水幕里的灵儿朝水幕外的你招手,声音隔着一层旧梦:「这次,别走那么快。」",
+        "回廊尽头有两扇门:一扇写着「留」,一扇写着「行」。",
+    ],
+    prompt: "旧梦当前,你推开——",
+    options: &[
+        StoryOption {
+            label: "「行」。梦里多留一刻,现实便多险一分。",
+            outcome: Outcome {
+                lines: &[
+                    "你穿梦而过,不曾回头。身后的水幕轻轻叹了口气,散作满廊星光。",
+                    "(道心 +3,攻击 +2)",
+                ],
+                effect: Effect::GainAtk(2),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+        StoryOption {
+            label: "「留」。在梦里陪她把那条溪走完。",
+            outcome: Outcome {
+                lines: &[
+                    "梦里的溪很长,长到你想起了每一件差点忘记的小事。",
+                    "走出门时,掌心多了一道温热的铃印。",
+                    "(情缘 +3,恢复三成五气血)",
+                ],
+                effect: Effect::HealPct(35),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+    ],
+};
+
+/// Extra 「缘」 scenes rolled alongside the primary `STORY_SCENES` entry.
+pub const STORY_EXTRA: [&[StoryScene]; 4] = [
+    &[SCENE_EAVES, SCENE_OPERA],
+    &[SCENE_LANTERNS, SCENE_QIN],
+    &[SCENE_PALACE, SCENE_BONFIRE],
+    &[SCENE_CORRIDOR],
+];
+
+/// Number of story scenes available to a chapter's 「缘」 node.
+pub fn story_count(chapter: usize) -> usize {
+    1 + STORY_EXTRA[chapter.min(3)].len()
+}
+
+/// Roll index 0 → the primary scene, 1.. → extras.
+pub fn pick_story(chapter: usize, roll: usize) -> &'static StoryScene {
+    let chapter = chapter.min(3);
+    if roll == 0 {
+        &STORY_SCENES[chapter]
+    } else {
+        &STORY_EXTRA[chapter][(roll - 1).min(STORY_EXTRA[chapter].len() - 1)]
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Random events (「遇」 nodes) — drawn from this pool with the run RNG
 // ---------------------------------------------------------------------------
 
-pub const EVENTS: [RandomEvent; 10] = [
+pub const EVENTS: [RandomEvent; 22] = [
     RandomEvent {
         title: "山间酒肆",
         lines: &[
@@ -666,7 +947,568 @@ pub const EVENTS: [RandomEvent; 10] = [
             },
         ],
     },
+    RandomEvent {
+        title: "走蛟渡河",
+        lines: &[
+            "渡口无船,只有一头老蛟浮在河心,背上驮着半塌的凉亭。",
+            "「渡河十文,」老蛟打了个哈欠,「骑背上抄近路,免钱——抓稳便是。」",
+        ],
+        options: &[
+            EventOption {
+                label: "付十文,坐亭中稳稳过河",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "河风拂面,老蛟讲了一路水底的旧闻,末了送你一片能安神的老鳞。",
+                        "(恢复两成气血)",
+                    ],
+                    effect: Effect::HealPct(20),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "免钱!骑蛟背冲过去",
+                chance: 0.55,
+                success: Outcome {
+                    lines: &[
+                        "老蛟兴起,浪里三沉三浮,把你甩上对岸时喝彩:「好胆色!赏!」",
+                        "(获得 55 文)",
+                    ],
+                    effect: Effect::GainGold(55),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "半途一个浪头把你拍进河里,呛得七荤八素,老蛟笑得亭子直晃。",
+                        "(损失一成五气血)",
+                    ],
+                    effect: Effect::DamagePct(15),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "山神庙求签",
+        lines: &[
+            "小小山神庙,签筒擦得锃亮。庙祝是个打瞌睡的老猴儿,尾巴卷着蒲扇。",
+            "「求签十文,灵不灵看缘分。」它眼也不睁地说。",
+        ],
+        options: &[
+            EventOption {
+                label: "诚心求一签(付 10 文)",
+                chance: 0.6,
+                success: Outcome {
+                    lines: &[
+                        "上上签:「剑下留情,身后有灯。」老猴儿难得睁眼:「好签,沾点仙气去。」",
+                        "(术法上限 +6,恢复一成五气血)",
+                    ],
+                    effect: Effect::GainMaxMp(6),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "下下签:「前路见血。」老猴儿把十文钱退给你一半:「签凶,半价。」",
+                        "(退回 5 文,无事发生……大概)",
+                    ],
+                    effect: Effect::GainGold(5),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "不求签,给山神像掸掸灰",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "老猴儿的蒲扇停了停:「比求签的强。」它从供桌下摸出一枚野果丹递给你。",
+                        "(获得一枚药水)",
+                    ],
+                    effect: Effect::GainPotions(1),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    RandomEvent {
+        title: "「仙丹」贩子",
+        lines: &[
+            "路边小贩神神秘秘掀开布:「九转还魂丹!吃一粒多活十年!三十文!」",
+            "丹药红得发亮,香气扑鼻——香得有点像糖炒山楂。",
+        ],
+        options: &[
+            EventOption {
+                label: "将信将疑买一粒(付 30 文)",
+                chance: 0.35,
+                success: Outcome {
+                    lines: &[
+                        "竟真有药力!暖流走遍四肢百骸——虽然多半没有十年,三五天是有的。",
+                        "(气血上限 +12)",
+                    ],
+                    effect: Effect::GainMaxHp(12),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &["……就是糖炒山楂。还挺好吃。", "(白花三十文,心情复杂)"],
+                    effect: Effect::LoseGold(30),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "拆穿他:「山楂就说山楂。」",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "小贩讪讪一笑,改口吆喝「祖传山楂丸」,生意反而好了,硬塞你两串谢礼。",
+                        "(恢复一成气血,道心 +1)",
+                    ],
+                    effect: Effect::HealPct(10),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    RandomEvent {
+        title: "迷路的书生",
+        lines: &[
+            "书生抱着一摞书在岔路口打转,已经把同一棵歪脖子树路过了四回。",
+            "「在下进京赶考……敢问侠士,哪条路向北?」他的干粮早吃完了。",
+        ],
+        options: &[
+            EventOption {
+                label: "分他干粮,送他一程",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "书生千恩万谢,临别写了一幅字相赠:「侠之大者」。字真不错。",
+                        "(道心 +1,情缘 +1)",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 1,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "指个方向,顺便请教兵法韬略",
+                chance: 0.7,
+                success: Outcome {
+                    lines: &[
+                        "书生眼睛一亮,就着树影讲了半个时辰的攻守之道,竟颇有见地。",
+                        "(防御 +2)",
+                    ],
+                    effect: Effect::GainDef(2),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "书生讲得兴起,从孙子讲到棋谱,天黑了才放你走。",
+                        "(耽搁半日,无事发生)",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "雨夜狐宅",
+        lines: &[
+            "暴雨夜,荒山里竟有座亮着灯的宅子。开门的妇人狐眼微挑:「借宿?」",
+            "「饭菜管够,只一条规矩——天亮前,莫回头看厨房。」",
+        ],
+        options: &[
+            EventOption {
+                label: "守规矩,吃饱睡好",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "一夜无梦。晨起宅子已化雾散去,你躺在干爽的草坡上,怀里多了个食盒。",
+                        "(恢复三成气血,获得一枚药水)",
+                    ],
+                    effect: Effect::HealPct(30),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "半夜偏要回头看一眼",
+                chance: 0.5,
+                success: Outcome {
+                    lines: &[
+                        "厨房里,九条雪白的尾巴正在颠勺。狐妇人叹气:「罢了,看都看了,搭把手。」",
+                        "你帮忙烧了半夜火,学了一手药膳。(气血上限 +10)",
+                    ],
+                    effect: Effect::GainMaxHp(10),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "「说了莫回头。」宅子连人带床把你请了出去,暴雨浇了个透心凉。",
+                        "(损失一成五气血)",
+                    ],
+                    effect: Effect::DamagePct(15),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "溪心磨剑石",
+        lines: &[
+            "溪心卧着一块青黑巨石,水流过处铮铮作响,竟是块天生的磨剑石。",
+            "石上刻着前人留言:「磨剑者,留下三滴血;取石者,留下一身伤。」",
+        ],
+        options: &[
+            EventOption {
+                label: "依言刺指,以血磨剑",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &["三滴血入水,剑锋映出的溪光都锐利了几分。", "(攻击 +2)"],
+                    effect: Effect::GainAtk(2),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "凿一块石芯带走",
+                chance: 0.45,
+                success: Outcome {
+                    lines: &[
+                        "石芯温润如玉,贴身藏好,行路时总觉得筋骨沉稳。",
+                        "(气血上限 +14)",
+                    ],
+                    effect: Effect::GainMaxHp(14),
+                    daoxin: -1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "凿到一半,溪水陡涨,把你冲出十几丈远,石屑崩了满脸。",
+                        "(损失两成气血,道心 -1)",
+                    ],
+                    effect: Effect::DamagePct(20),
+                    daoxin: -1,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "岩蜂酿蜜",
+        lines: &[
+            "峭壁上垂着一巢金红色的岩蜜,蜂群嗡鸣如雷,蜜香隔着十步都闻得到。",
+            "崖下有蜂螫落的野兽白骨——但也有前人搭到一半的采蜜木架。",
+        ],
+        options: &[
+            EventOption {
+                label: "借木架攀上去取蜜",
+                chance: 0.6,
+                success: Outcome {
+                    lines: &["得手!岩蜜入口,伤处的钝痛竟一点点化开了。", "(恢复四成气血)"],
+                    effect: Effect::HealPct(40),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "蜂群炸了窝!你抱头滚下木架,肿着半边脸落荒而逃。",
+                        "(损失两成气血)",
+                    ],
+                    effect: Effect::DamagePct(20),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "在崖下拾些落蜜便走",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "石缝里的落蜜混着草屑,味道差些,胜在安稳。",
+                        "(恢复一成五气血)",
+                    ],
+                    effect: Effect::HealPct(15),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    RandomEvent {
+        title: "峭壁灵芝",
+        lines: &[
+            "断崖石缝里生着一株千年灵芝,紫盖金边,在风里轻轻发亮。",
+            "崖高百丈,唯一的落脚处是几蓬看起来不太牢靠的枯藤。",
+        ],
+        options: &[
+            EventOption {
+                label: "攀藤采芝",
+                chance: 0.5,
+                success: Outcome {
+                    lines: &[
+                        "枯藤晃而未断!灵芝到手,药香沁脾,只嗅一嗅便觉神清气足。",
+                        "(气血上限 +16)",
+                    ],
+                    effect: Effect::GainMaxHp(16),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "藤断了。多亏半山的松枝接了你一把,灵芝没到手,摔得不轻。",
+                        "(损失两成五气血)",
+                    ],
+                    effect: Effect::DamagePct(25),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "以剑气隔空削下芝盖",
+                chance: 0.4,
+                success: Outcome {
+                    lines: &[
+                        "一道剑气恰到好处,芝盖打着旋儿落进你掌心——这一手连你自己都想喝彩。",
+                        "(攻击 +2,恢复两成气血)",
+                    ],
+                    effect: Effect::HealPct(20),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "剑气偏了半寸,灵芝连石屑一起崩进深谷,悔得你直跺脚。",
+                        "(无事发生,但很心疼)",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "古战场遗骸",
+        lines: &[
+            "荒草掩着一片古战场,断戟锈甲间,尚有几具无人收敛的骸骨。",
+            "一柄断刀插在土里,刀柄上系着褪色的红绳——像是谁的定情之物。",
+        ],
+        options: &[
+            EventOption {
+                label: "收敛骸骨,立冢焚香",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "三座小冢立起时,荒草间的阴风忽然停了。",
+                        "夜里你梦见一队卸甲的兵,朝你抱拳而去。(道心 +2)",
+                    ],
+                    effect: Effect::GainDef(1),
+                    daoxin: 2,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "翻检遗物,寻些还能用的",
+                chance: 0.65,
+                success: Outcome {
+                    lines: &[
+                        "锈甲下压着一只未曾腐烂的军囊,里头是半袋军饷。",
+                        "你把红绳断刀留在了原地。(获得 65 文,道心 -1)",
+                    ],
+                    effect: Effect::GainGold(65),
+                    daoxin: -1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "指尖刚触到军囊,锈甲哗啦一声塌了,惊起满地磷火燎了你一下。",
+                        "(损失一成气血,道心 -1)",
+                    ],
+                    effect: Effect::DamagePct(10),
+                    daoxin: -1,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "琴音辨路",
+        lines: &[
+            "雾锁山径,岔路口隐约飘来两缕琴音:左边的曲子欢快,右边的曲子哀婉。",
+            "樵夫说过,山里的琴音会引路,也会引人——就看你耳朵信哪边。",
+        ],
+        options: &[
+            EventOption {
+                label: "循欢快的琴音走左路",
+                chance: 0.6,
+                success: Outcome {
+                    lines: &[
+                        "琴音尽头是一场山民的婚宴,你被拉着喝了三碗喜酒,满袖都是花瓣。",
+                        "(恢复两成五气血,情缘 +1)",
+                    ],
+                    effect: Effect::HealPct(25),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "琴音是山魈学的!它笑着敲了你一闷棍,抢走了几个铜板。",
+                        "(损失 25 文)",
+                    ],
+                    effect: Effect::LoseGold(25),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "循哀婉的琴音走右路",
+                chance: 0.6,
+                success: Outcome {
+                    lines: &[
+                        "琴音来自一位守墓的老琴师,他见有人肯听完整曲,赠了你一瓶祭余的药酒。",
+                        "(获得一枚药水,道心 +1)",
+                    ],
+                    effect: Effect::GainPotions(1),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "曲子越听越冷,回过神来已站在断崖边缘,惊出一身冷汗,急急退回岔口。",
+                        "(损失一成气血)",
+                    ],
+                    effect: Effect::DamagePct(10),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+        ],
+    },
+    RandomEvent {
+        title: "悬赏皇榜",
+        lines: &[
+            "驿亭墙上贴着一张皇榜:重金悬赏「妖首」,不问妖之善恶,以头计赏。",
+            "榜下围着几个磨刀霍霍的赏金客,正高声谈论昨日斩的「妖」——听着倒像个山民。",
+        ],
+        options: &[
+            EventOption {
+                label: "撕了这张榜",
+                chance: 0.7,
+                success: Outcome {
+                    lines: &[
+                        "赏金客们一哄而上,又在你按剑的目光里一哄而散。",
+                        "亭角躲雨的狸妖朝你深深一揖,留下一小袋谢礼。(获得 40 文,道心 +1)",
+                    ],
+                    effect: Effect::GainGold(40),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "赏金客里有硬茬,一场混战虽赶跑了他们,你也挂了彩。",
+                        "(损失一成五气血,道心 +1)",
+                    ],
+                    effect: Effect::DamagePct(15),
+                    daoxin: 1,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "抄下榜文线索,自去查证真伪",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "按图索骥,所谓「妖巢」不过是个山洞药圃。你在榜文背面写下「查无此妖」四字寄回官府。",
+                        "(防御 +1,道心 +1)",
+                    ],
+                    effect: Effect::GainDef(1),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    RandomEvent {
+        title: "虎口樵夫",
+        lines: &[
+            "林中传来呼救——一只吊睛白虎把樵夫逼上了树,树干已经开始咔咔作响。",
+            "怪的是,白虎并不扑咬,只围着树打转,喉咙里呜呜作声,似有冤屈。",
+        ],
+        options: &[
+            EventOption {
+                label: "拔剑逼退白虎",
+                chance: 0.75,
+                success: Outcome {
+                    lines: &[
+                        "白虎与你对峙片刻,竟衔起树下一只被夹伤的虎崽,一瘸一拐地走了。",
+                        "樵夫下树后面红耳赤:「那夹子……是俺下的。」(道心 +1,获得 30 文谢礼)",
+                    ],
+                    effect: Effect::GainGold(30),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &[
+                        "白虎虚晃一爪,劲风扫过肩头,火辣辣地疼——但它终究只是护崽,并未下死手。",
+                        "(损失一成气血)",
+                    ],
+                    effect: Effect::DamagePct(10),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "先看清再动手——顺着虎的目光找",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "你在草丛里找到被兽夹夹住的虎崽,撬开铁夹。白虎伏低了头,樵夫在树上大气不敢出。",
+                        "母虎衔崽离去前,回头长啸一声,山鸣谷应。(道心 +1,攻击 +1)",
+                    ],
+                    effect: Effect::GainAtk(1),
+                    daoxin: 1,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+        ],
+    },
 ];
+
+// ---------------------------------------------------------------------------
+// Market node (「市」) — priced picks resolved in code
+// ---------------------------------------------------------------------------
+
+pub const MARKET_INTRO: &[&str] = &[
+    "山道旁支着几顶货摊,南来北往的行商与妖客在此各摆各的货。",
+    "摊主们瞧见你腰间的剑,都热情了三分——斩妖人的钱最好赚。",
+];
+
+pub const MARKET_POTION: &str = "买药水(40 文)";
+pub const MARKET_TONIC: &str = "买淬体丹(70 文,气血上限 +12)";
+pub const MARKET_WHETSTONE: &str = "买砺剑石(60 文,攻击 +2)";
+pub const MARKET_LEAVE: &str = "什么都不买,逛逛就走";
 
 // ---------------------------------------------------------------------------
 // Rest node (「歇」) options
@@ -680,6 +1522,7 @@ pub const REST_INTRO: &[&str] = &[
 // Rest is resolved in code (heal amount depends on 醉仙酿), so only labels here.
 pub const REST_MEDITATE: &str = "打坐调息(回复五成气血)";
 pub const REST_SPAR: &str = "温酒论剑(攻击 +2,回复一成气血)";
+pub const REST_TALK: &str = "与灵儿谈心(情缘 +1,回复三成气血)";
 
 // ---------------------------------------------------------------------------
 // Endings
@@ -701,6 +1544,15 @@ pub const ENDING_RESOLVE: &[&str] = &[
     "下山时,你把桃木铃留在了祠堂——有些牵挂,供起来比带走更妥帖。",
     "此后江湖传闻:有位无名剑客,斩妖不留名,过村不饮酒,",
     "只在每年雾起之夜,回桃溪村替人守一晚渡口。",
+];
+
+pub const ENDING_BOTH: &[&str] = &[
+    "【结局 · 执剑逐月】",
+    "水影散尽,心渊里升起一轮从未有人见过的月亮。",
+    "你没有留在山上,也没有收起剑——道心与情缘,原来从不必二选其一。",
+    "灵儿在渡口等到了你:一手牵她,一手仗剑,便是往后余生。",
+    "多年后,南疆到桃溪的山道太平无事。夜里赶路的人说,",
+    "总有一对剑侣踏月而行:剑光为灯,铃声为路。",
 ];
 
 pub const ENDING_DEFEAT: &[&str] = &[
