@@ -10,7 +10,7 @@
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 
-use super::super::animation::{self, AnimationAssets, AnimationClip};
+use super::super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::super::battle::{EncounterZone, PendingEncounter};
 use super::super::core::{GameFont, Intent, MAP_H, MAP_W, PlayerStats, Rng, TILE, tile_to_world};
 use super::super::explore::{ExploreAssets, MapData, MapKind, Tile, tile_sprite};
@@ -625,7 +625,6 @@ pub fn run_scene_movement(
     mut dialogue: ResMut<RunDialogue>,
     inventory: Res<InventoryOpen>,
     mut next: ResMut<NextState<AppState>>,
-    mut hero: Query<(&mut Transform, &mut Sprite), With<SceneHero>>,
     visuals: Query<(Entity, &SceneMarkerVisual)>,
 ) {
     let (Some(mut scene), Some(map), Some(mut run)) = (scene, map, run) else {
@@ -647,12 +646,6 @@ pub fn run_scene_movement(
                 moved = true;
                 if dir.x != 0 {
                     scene.facing_left = dir.x < 0;
-                }
-                if let Ok((mut transform, mut sprite)) = hero.single_mut() {
-                    let p = tile_to_world(nc, nr);
-                    transform.translation.x = p.x;
-                    transform.translation.y = p.y;
-                    sprite.flip_x = scene.facing_left;
                 }
             } else {
                 scene.cooldown = 0.05;
@@ -734,6 +727,43 @@ pub fn run_scene_movement(
             );
         }
     }
+}
+
+/// Glide the hero sprite toward its logical tile and swap between the walk
+/// and idle sheets, so movement reads as animation instead of a sliding
+/// still image.
+pub fn animate_hero(
+    time: Res<Time>,
+    anims: Res<AnimationAssets>,
+    scene: Option<Res<RunSceneState>>,
+    mut hero: Query<(&mut Transform, &mut Sprite, &mut SpriteAnimation), With<SceneHero>>,
+) {
+    let Some(scene) = scene else { return };
+    if scene.col < 0 {
+        return;
+    }
+    let Ok((mut transform, mut sprite, mut animation)) = hero.single_mut() else {
+        return;
+    };
+    let target = tile_to_world(scene.col, scene.row);
+    let pos = transform.translation.truncate();
+    let delta = Vec2::new(target.x, target.y) - pos;
+    let distance = delta.length();
+    // Match the grid cadence: one tile (40u) per 0.14s cooldown.
+    let step = (TILE / 0.14) * time.delta_secs();
+    if distance > step {
+        let next = pos + delta.normalize_or_zero() * step;
+        transform.translation.x = next.x;
+        transform.translation.y = next.y;
+        animation::set_clip(&anims, &mut sprite, &mut animation, AnimationClip::HeroWalk);
+    } else {
+        transform.translation.x = target.x;
+        transform.translation.y = target.y;
+        if distance <= f32::EPSILON {
+            animation::set_clip(&anims, &mut sprite, &mut animation, AnimationClip::HeroIdle);
+        }
+    }
+    sprite.flip_x = scene.facing_left;
 }
 
 /// Gentle bob on marker glyphs so they read as interactive.

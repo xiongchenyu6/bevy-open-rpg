@@ -562,6 +562,7 @@ impl Plugin for RoguelikePlugin {
                     event::run_dialogue_input,
                     scene::inventory_toggle,
                     scene::run_scene_movement,
+                    scene::animate_hero,
                     scene::camera_follow,
                     scene::animate_marker_glyph,
                     scene::update_run_hud,
