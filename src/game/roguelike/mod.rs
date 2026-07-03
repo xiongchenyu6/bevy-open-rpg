@@ -542,6 +542,7 @@ impl Plugin for RoguelikePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<event::RunDialogue>()
             .init_resource::<screens::RewardChoices>()
+            .init_resource::<scene::InventoryOpen>()
             .add_systems(OnEnter(AppState::Title), screens::spawn_title)
             .add_systems(
                 Update,
@@ -550,12 +551,18 @@ impl Plugin for RoguelikePlugin {
             // `NodeMap` is a zero-frame hop: it rolls the next stage's map
             // and markers into `RunSceneState`, then enters the scene.
             .add_systems(OnEnter(AppState::NodeMap), scene::advance_stage)
-            .add_systems(OnEnter(AppState::RunScene), scene::spawn_run_scene)
+            .add_systems(
+                OnEnter(AppState::RunScene),
+                (scene::zoom_camera_in, scene::spawn_run_scene).chain(),
+            )
+            .add_systems(OnExit(AppState::RunScene), scene::zoom_camera_out)
             .add_systems(
                 Update,
                 (
                     event::run_dialogue_input,
+                    scene::inventory_toggle,
                     scene::run_scene_movement,
+                    scene::camera_follow,
                     scene::animate_marker_glyph,
                     scene::update_run_hud,
                     event::update_run_dialogue_ui,

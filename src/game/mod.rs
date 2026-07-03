@@ -70,7 +70,19 @@ impl Plugin for DesktopInputPlugin {
 }
 
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, lighting::camera_config()));
+    // Fixed 1280x720 world view scaled to the window, so the game fills any
+    // window size instead of floating in a black frame.
+    commands.spawn((
+        Camera2d,
+        Projection::from(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::Fixed {
+                width: 1280.0,
+                height: 720.0,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+        lighting::camera_config(),
+    ));
 }
 
 fn gather_keyboard_intent(keys: Res<ButtonInput<KeyCode>>, mut intent: ResMut<Intent>) {
@@ -89,6 +101,7 @@ fn gather_keyboard_intent(keys: Res<ButtonInput<KeyCode>>, mut intent: ResMut<In
     };
 
     intent.confirm = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter);
+    intent.cancel = keys.just_pressed(KeyCode::Escape);
     intent.up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
     intent.down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
 }

@@ -7,6 +7,7 @@
 //! the boss map: a single demon gate. Battles hop out to `AppState::Battle`
 //! and return here through the Reward screen.
 
+use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 
 use super::super::animation::{self, AnimationAssets, AnimationClip};
@@ -14,7 +15,7 @@ use super::super::battle::{EncounterZone, PendingEncounter};
 use super::super::core::{GameFont, Intent, MAP_H, MAP_W, PlayerStats, Rng, TILE, tile_to_world};
 use super::super::explore::{ExploreAssets, MapData, MapKind, Tile, tile_sprite};
 use super::super::lighting::{self, LightingAssets};
-use super::super::paperdoll::PaperdollAssets;
+use super::super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
 use super::event::{self, RunDialogue};
 use super::graph::NodeKind;
 use super::{FightRank, RunState, battle_mods_for, encounter_kind_for};
@@ -66,7 +67,20 @@ pub struct SceneMarkerGlyph {
 }
 
 #[derive(Component)]
-pub struct RunHudText;
+pub struct HudHpFill;
+
+#[derive(Component)]
+pub struct HudMpFill;
+
+#[derive(Component)]
+pub struct HudSubText;
+
+/// The Esc inventory (行囊/纸娃娃) overlay is open; movement pauses.
+#[derive(Resource, Default)]
+pub struct InventoryOpen(pub bool);
+
+#[derive(Component)]
+pub struct InventoryUi;
 
 fn map_zone(map: MapKind) -> EncounterZone {
     match map {
@@ -300,6 +314,20 @@ pub fn spawn_run_scene(
         }
     }
 
+    // A thick ring of wall tiles beyond the map edge, so the camera never
+    // shows a hard rectangular cutoff against black.
+    for row in -7..(MAP_H + 7) {
+        for col in -7..(MAP_W + 7) {
+            if (0..MAP_W).contains(&col) && (0..MAP_H).contains(&row) {
+                continue;
+            }
+            let p = tile_to_world(col, row);
+            let mut sprite = tile_sprite(Tile::Wall, scene.map, &assets);
+            sprite.color = sprite.color.with_alpha(0.9);
+            commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
+        }
+    }
+
     // Soft fill lights so the whole map reads clearly.
     for (fx, fy) in [(0.22, 0.28), (0.78, 0.28), (0.22, 0.74), (0.78, 0.74)] {
         let p = tile_to_world((MAP_W as f32 * fx) as i32, (MAP_H as f32 * fy) as i32);
@@ -376,21 +404,82 @@ pub fn spawn_run_scene(
         ));
     }
 
-    // HUD + stage banner.
-    commands.spawn((
-        RunHudText,
-        Text::new(""),
-        font.text_font(18.0),
-        TextColor(Color::srgb(0.9, 0.92, 0.95)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            left: Val::Px(14.0),
-            max_width: Val::Px(430.0),
-            ..default()
-        },
-        scope(),
-    ));
+    // HUD: hero avatar + HP/MP bars (details live in the Esc inventory).
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                left: Val::Px(12.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(10.0),
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.6)),
+            scope(),
+        ))
+        .with_children(|hud| {
+            hud.spawn((
+                ImageNode::new(asset_server.load("npcs/ai_hero.png")),
+                Node {
+                    width: Val::Px(72.0),
+                    height: Val::Px(72.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ));
+            hud.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(5.0),
+                ..default()
+            })
+            .with_children(|col| {
+                for (marker, back, front) in [
+                    (
+                        true,
+                        Color::srgba(0.25, 0.06, 0.06, 0.9),
+                        Color::srgb(0.85, 0.25, 0.2),
+                    ),
+                    (
+                        false,
+                        Color::srgba(0.06, 0.10, 0.25, 0.9),
+                        Color::srgb(0.3, 0.55, 0.95),
+                    ),
+                ] {
+                    col.spawn((
+                        Node {
+                            width: Val::Px(180.0),
+                            height: Val::Px(13.0),
+                            ..default()
+                        },
+                        BackgroundColor(back),
+                    ))
+                    .with_children(|bar| {
+                        let fill = (
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(front),
+                        );
+                        if marker {
+                            bar.spawn((HudHpFill, fill));
+                        } else {
+                            bar.spawn((HudMpFill, fill));
+                        }
+                    });
+                }
+                col.spawn((
+                    HudSubText,
+                    Text::new(""),
+                    font.text_font(15.0),
+                    TextColor(Color::srgba(0.9, 0.92, 0.95, 0.9)),
+                ));
+            });
+        });
     commands.spawn((
         Text::new(format!(
             "{} · {} (第 {}/{} 程)",
@@ -410,7 +499,7 @@ pub fn spawn_run_scene(
         scope(),
     ));
     commands.spawn((
-        Text::new("方向键 移动 · 探明所有「?」迷雾后从「门」离开 · 草丛有妖"),
+        Text::new("方向键 移动 · 探明「?」后走「门」 · 草丛有妖 · ESC 行囊"),
         font.text_font(16.0),
         TextColor(Color::srgba(0.9, 0.92, 0.95, 0.75)),
         Node {
@@ -534,6 +623,7 @@ pub fn run_scene_movement(
     run: Option<ResMut<RunState>>,
     mut rng: ResMut<Rng>,
     mut dialogue: ResMut<RunDialogue>,
+    inventory: Res<InventoryOpen>,
     mut next: ResMut<NextState<AppState>>,
     mut hero: Query<(&mut Transform, &mut Sprite), With<SceneHero>>,
     visuals: Query<(Entity, &SceneMarkerVisual)>,
@@ -541,8 +631,8 @@ pub fn run_scene_movement(
     let (Some(mut scene), Some(map), Some(mut run)) = (scene, map, run) else {
         return;
     };
-    if dialogue.active {
-        return; // overlay swallows input in run_dialogue_input
+    if dialogue.active || inventory.0 {
+        return; // an overlay (dialogue / inventory) owns the input
     }
 
     scene.cooldown -= time.delta_secs();
@@ -658,33 +748,216 @@ pub fn animate_marker_glyph(
 
 pub fn update_run_hud(
     stats: Res<PlayerStats>,
-    run: Option<Res<RunState>>,
-    mut hud: Query<&mut Text, With<RunHudText>>,
+    mut fills: ParamSet<(
+        Query<&mut Node, With<HudHpFill>>,
+        Query<&mut Node, With<HudMpFill>>,
+    )>,
+    mut sub: Query<&mut Text, With<HudSubText>>,
 ) {
-    let Some(run) = run else { return };
-    let Ok(mut text) = hud.single_mut() else {
+    if let Ok(mut node) = fills.p0().single_mut() {
+        node.width = Val::Percent((stats.hp.max(0) as f32 / stats.max_hp.max(1) as f32) * 100.0);
+    }
+    if let Ok(mut node) = fills.p1().single_mut() {
+        node.width = Val::Percent((stats.mp.max(0) as f32 / stats.max_mp.max(1) as f32) * 100.0);
+    }
+    if let Ok(mut text) = sub.single_mut() {
+        text.0 = format!("药水 ×{} · {} 文", stats.potions, stats.gold);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Camera: zoomed-in follow view while walking
+// ---------------------------------------------------------------------------
+
+/// View height in world units while exploring (14 tiles); the camera follows
+/// the hero, clamped so the view stays on the bordered map.
+const VIEW_HEIGHT: f32 = 560.0;
+
+pub fn zoom_camera_in(
+    mut cameras: Query<&mut Projection, With<Camera2d>>,
+    mut inventory: ResMut<InventoryOpen>,
+) {
+    inventory.0 = false;
+    for mut projection in &mut cameras {
+        if let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scaling_mode = ScalingMode::FixedVertical {
+                viewport_height: VIEW_HEIGHT,
+            };
+        }
+    }
+}
+
+pub fn zoom_camera_out(mut cameras: Query<(&mut Projection, &mut Transform), With<Camera2d>>) {
+    for (mut projection, mut transform) in &mut cameras {
+        if let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scaling_mode = ScalingMode::Fixed {
+                width: 1280.0,
+                height: 720.0,
+            };
+        }
+        transform.translation.x = 0.0;
+        transform.translation.y = 0.0;
+    }
+}
+
+pub fn camera_follow(
+    scene: Option<Res<RunSceneState>>,
+    mut cameras: Query<&mut Transform, With<Camera2d>>,
+) {
+    let Some(scene) = scene else { return };
+    if scene.col < 0 {
         return;
-    };
+    }
+    let target = tile_to_world(scene.col, scene.row);
+    // Clamp for a 16:9 view of VIEW_HEIGHT: half-extents 497x280 vs the
+    // map's 600x320; the wall border covers wider aspect ratios.
+    let cx = target.x.clamp(-103.0, 103.0);
+    let cy = target.y.clamp(-40.0, 40.0);
+    for mut transform in &mut cameras {
+        transform.translation.x += (cx - transform.translation.x) * 0.12;
+        transform.translation.y += (cy - transform.translation.y) * 0.12;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Esc inventory (行囊 · 纸娃娃)
+// ---------------------------------------------------------------------------
+
+pub fn inventory_toggle(
+    mut commands: Commands,
+    mut intent: ResMut<Intent>,
+    mut inventory: ResMut<InventoryOpen>,
+    dialogue: Res<RunDialogue>,
+    font: Res<GameFont>,
+    dolls: Res<PaperdollAssets>,
+    stats: Res<PlayerStats>,
+    run: Option<Res<RunState>>,
+    cameras: Query<&Transform, With<Camera2d>>,
+    open_ui: Query<Entity, With<InventoryUi>>,
+) {
+    if !intent.cancel || dialogue.active {
+        return;
+    }
+    intent.cancel = false;
+    let Some(run) = run else { return };
+
+    if inventory.0 {
+        for entity in &open_ui {
+            commands.entity(entity).despawn();
+        }
+        inventory.0 = false;
+        return;
+    }
+    inventory.0 = true;
+
+    // World-space dim + the hero paperdoll, anchored to the camera view.
+    let cam = cameras
+        .iter()
+        .next()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
+    commands.spawn((
+        InventoryUi,
+        Sprite::from_color(
+            Color::srgba(0.01, 0.02, 0.05, 0.82),
+            Vec2::new(2400.0, 1400.0),
+        ),
+        Transform::from_xyz(cam.x, cam.y, 40.0),
+        DespawnOnExit(AppState::RunScene),
+    ));
+    let doll = paperdoll::spawn_paperdoll(
+        &mut commands,
+        &dolls,
+        PaperdollStyle::Hero,
+        Vec3::new(cam.x - 235.0, cam.y - 10.0, 50.0),
+        250.0,
+        AppState::RunScene,
+    );
+    commands.entity(doll).insert(InventoryUi);
+    commands.spawn((
+        InventoryUi,
+        Text2d::new(stats.name.clone()),
+        font.text_font(24.0),
+        TextColor(Color::srgb(0.95, 0.88, 0.65)),
+        Transform::from_xyz(cam.x - 235.0, cam.y - 160.0, 50.0),
+        DespawnOnExit(AppState::RunScene),
+    ));
+
+    // Right panel: stats + relics.
     let relics = if run.relics.is_empty() {
-        "无".to_string()
+        "(尚未寻得法宝)".to_string()
     } else {
         run.relics
             .iter()
-            .map(|r| r.name())
+            .map(|r| format!("【{}】{}", r.name(), r.desc()))
             .collect::<Vec<_>>()
-            .join("、")
+            .join(
+                "
+",
+            )
     };
-    text.0 = format!(
-        "{}\n气血 {}/{} · 灵力 {}/{}\n药水 ×{} · 钱财 {} 文\n道心 {} · 情缘 {}\n法宝:{}",
-        stats.name,
-        stats.hp,
-        stats.max_hp,
-        stats.mp,
-        stats.max_mp,
-        stats.potions,
-        stats.gold,
-        run.daoxin,
-        run.qingyuan,
-        relics,
-    );
+    commands
+        .spawn((
+            InventoryUi,
+            DespawnOnExit(AppState::RunScene),
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Percent(6.0),
+                top: Val::Percent(8.0),
+                bottom: Val::Percent(8.0),
+                width: Val::Percent(46.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(22.0)),
+                overflow: Overflow::clip_y(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.03, 0.04, 0.09, 0.9)),
+            GlobalZIndex(80),
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new("行囊 · 纸娃娃"),
+                font.text_font(28.0),
+                TextColor(Color::srgb(0.95, 0.85, 0.55)),
+            ));
+            panel.spawn((
+                Text::new(format!(
+                    "气血 {}/{}    灵力 {}/{}
+攻击 {}    防御 {}
+药水 ×{}    钱财 {} 文
+道心 {}    情缘 {}",
+                    stats.hp,
+                    stats.max_hp,
+                    stats.mp,
+                    stats.max_mp,
+                    stats.atk,
+                    stats.def,
+                    stats.potions,
+                    stats.gold,
+                    run.daoxin,
+                    run.qingyuan,
+                )),
+                font.text_font(20.0),
+                TextColor(Color::srgb(0.9, 0.92, 0.95)),
+            ));
+            panel.spawn((
+                Text::new(format!("法宝({}):", run.relics.len())),
+                font.text_font(20.0),
+                TextColor(Color::srgb(0.95, 0.85, 0.55)),
+            ));
+            panel.spawn((
+                Text::new(relics),
+                font.text_font(17.0),
+                TextColor(Color::srgb(0.82, 0.86, 0.94)),
+            ));
+            panel.spawn((
+                Text::new(
+                    "
+ESC 关闭",
+                ),
+                font.text_font(15.0),
+                TextColor(Color::srgba(0.8, 0.85, 0.9, 0.7)),
+            ));
+        });
 }

@@ -81,8 +81,11 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
 Registers fonts/paperdoll/lighting/animation assets, `AppState`, persistent
 resources (`PlayerStats`, `Rng`, `Intent`, `EncounterRate`, `QuestLog`), and
 plugins: animation, paperdoll runtime, explore, battle, fog, roguelike.
-Deliberately no camera/input — `DesktopInputPlugin` (keyboard → `Intent`,
-spawns `Camera2d`) and the capture binary wire those separately.
+Deliberately no camera/input — `DesktopInputPlugin` (keyboard → `Intent`
+incl. Esc→cancel; spawns `Camera2d` with `ScalingMode::Fixed` 1280×720 so the
+game fills any window) and the capture binary wire those separately. While in
+`RunScene` the camera switches to a zoomed `FixedVertical(560)` follow-view
+clamped to the bordered map (`scene::zoom_camera_in/out`, `camera_follow`).
 
 ### `battle.rs` — `BattlePlugin` (shared by run + legacy)
 - `ENEMIES[9]` zone pools + 6 boss defs; `PendingEncounter{zone, kind}` is the
@@ -122,6 +125,7 @@ Explore-only).
 ## Controls
 
 - 地图: 方向键/WASD 移动 · 走到「?」迷雾揭晓内容 · 清完标记走「门」过图
+- ESC: 打开/关闭行囊(纸娃娃、属性、法宝、道心/情缘)
 - 对话/选项: 上/下 选择 · 空格 确认
 - 战斗: 上/下 选指令 · 空格/Enter 确认(攻击/仙术/合击/物品/逃跑)
 - 标题/奖励/结局: 上/下 + 空格
@@ -133,9 +137,11 @@ Explore-only).
   `WAYLAND_DISPLAY`)
 - Headless proof: `cargo run --bin capture -- <out> <frames> rogue` with
   lavapipe (`VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`);
-  the `rogue` preset walks title → card → nodes on a cadence script and
-  auto-paths through walkable scenes via `RunSceneState.flow`. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/6/` (900 frames + video.mp4, 30s).
+  the `rogue` preset walks title → card → maps on a cadence script and
+  auto-paths through walkable scenes via `RunSceneState.flow`;
+  `rogue-inventory` opens the Esc inventory for a still. Legacy presets still work (capture sets `Explore` for them).
+- Latest proof bundle: `screenshots/result/7/` (900 frames + video.mp4, 30s;
+  `inventory_still.png` shows the Esc inventory).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 

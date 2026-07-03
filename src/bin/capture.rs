@@ -133,6 +133,9 @@ struct CaptureFinalLamp(bool);
 #[derive(Resource, Default)]
 struct CaptureRogue(bool);
 
+#[derive(Resource, Default)]
+struct CaptureInventory(bool);
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = args
@@ -186,12 +189,53 @@ fn main() {
     app.init_resource::<CaptureFinalEpilogue>();
     app.init_resource::<CaptureFinalLamp>();
     app.init_resource::<CaptureRogue>();
+    app.init_resource::<CaptureInventory>();
     match preset {
         "rogue" => {
             app.world_mut().resource_mut::<CaptureRogue>().0 = true;
             // Deterministic-ish start (the title screen still mixes in wall
             // clock; the script is cadence-based, not frame-exact).
             app.world_mut().resource_mut::<love_rpg::game::Rng>().0 = 0xC0FFEE_5EED;
+        }
+        "rogue-inventory" => {
+            use love_rpg::game::explore::MapKind;
+            use love_rpg::game::roguelike::{
+                Relic, RunState,
+                graph::NodeKind,
+                scene::{RunSceneState, SceneMarker},
+            };
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            app.world_mut().resource_mut::<CaptureInventory>().0 = true;
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xC0FFEE_5EED;
+                RunState::new(&mut rng)
+            };
+            run.card_shown = true;
+            run.relics = vec![Relic::SwordTassel, Relic::SandalCharm, Relic::PixiuPouch];
+            run.daoxin = 2;
+            run.qingyuan = 3;
+            app.world_mut().insert_resource(run);
+            let mut scene = RunSceneState {
+                map: MapKind::Village,
+                col: -1,
+                row: -1,
+                facing_left: false,
+                markers: vec![SceneMarker {
+                    kind: NodeKind::Fight,
+                    col: 24,
+                    row: 12,
+                    cleared: false,
+                }],
+                portals: Vec::new(),
+                flow: Vec::new(),
+                cooldown: 0.0,
+            };
+            love_rpg::game::roguelike::scene::seed_flow(&mut scene);
+            app.world_mut().insert_resource(scene);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::RunScene);
         }
         "rogue-market" => {
             use love_rpg::game::explore::MapKind;
@@ -312,6 +356,13 @@ fn main() {
     let render_target: RenderTarget = handle.clone().into();
     app.world_mut().spawn((
         Camera2d,
+        Projection::from(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::Fixed {
+                width: 1280.0,
+                height: 720.0,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
         render_target,
         IsDefaultUiCamera,
         lighting::camera_config(),
@@ -1135,6 +1186,17 @@ fn set_intent(app: &mut App, f: u32) {
         // Walkable node scene: steer the hero along the BFS flow field
         // toward the objective; confirms advance any overlay that opens.
         if ui_state == AppState::RunScene && battle_frame.is_none() {
+            if app.world().resource::<CaptureInventory>().0 {
+                // Walk a little, then open the Esc inventory and hold it.
+                let mut intent = app.world_mut().resource_mut::<Intent>();
+                intent.clear();
+                if f < 40 {
+                    intent.move_dir = Some(R);
+                } else if f == 46 {
+                    intent.cancel = true;
+                }
+                return;
+            }
             use love_rpg::game::core::{MAP_H, MAP_W};
             use love_rpg::game::roguelike::scene::RunSceneState;
             let step = app

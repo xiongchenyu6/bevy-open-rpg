@@ -51,6 +51,8 @@ pub struct Intent {
     pub up: bool,
     /// Edge: menu cursor down.
     pub down: bool,
+    /// Edge: open/close the inventory (Esc).
+    pub cancel: bool,
 }
 
 impl Intent {
@@ -59,6 +61,7 @@ impl Intent {
         self.confirm = false;
         self.up = false;
         self.down = false;
+        self.cancel = false;
     }
 }
 

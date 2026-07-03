@@ -84,6 +84,18 @@
 - 证明包 screenshots/result/6(900 帧+30s):青竹山径三「?」→ 集市购物
   → 战斗 → 奖励 → 过门 → 第 2/4 程余杭村郊,循环完整。
 
+## 全屏地图与界面重做(第六轮,用户截图反馈)
+
+- 相机:全局 `ScalingMode::Fixed(1280×720)` 随窗口等比放大(任何窗口尺寸
+  都满屏);RunScene 内切 `FixedVertical(560)` 缩放跟随主角,视野钳制在
+  地图内——满屏都是地图,看不到矩形边界(图外再铺 7 圈延伸墙体地砖)。
+- HUD:头像(ComfyUI 生成 ai_hero.png)+ 气血/灵力双条 + 药水/钱一行;
+  道心/情缘/法宝明细移入背包。
+- ESC 行囊:bevy_paperdoll 纸娃娃 + 属性面板 + 法宝列表(名称+效果);
+  打开时移动暂停,世界压暗;`Intent.cancel`(Esc)接入桌面输入。
+- capture 新增 rogue-inventory preset;证明包 screenshots/result/7
+  (900 帧 + 行囊静帧)。
+
 ## 已知限制 / 后续可做
 
 - 本机无 `WAYLAND_DISPLAY`,桌面交互试玩未执行;运行时验证走 lavapipe
