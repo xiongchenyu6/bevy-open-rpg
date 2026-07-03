@@ -344,10 +344,13 @@ pub fn reward_input(
                 stats.def += BREAKTHROUGH_DEF;
                 stats.full_restore();
                 run.next_chapter(&mut rng);
+                // Fresh chapter: drop the old stage so the hop rebuilds it.
+                commands.remove_resource::<super::scene::RunSceneState>();
                 next.set(AppState::NodeMap);
             }
         } else {
-            next.set(AppState::NodeMap);
+            // Back to the same map, standing where the fight started.
+            next.set(AppState::RunScene);
         }
         commands.remove_resource::<super::RunBattleMods>();
     }

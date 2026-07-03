@@ -1,8 +1,11 @@
 # 御剑行 · 轮回 (love-rpg)
 
 A 仙侠-flavoured **roguelike turn-based RPG** built code-first in Bevy. One run
-= one life: Title → random chapter node map → battles / events / story / rests
-→ chapter boss → next chapter → final boss → one of two endings. No levels or
+= one life, played entirely on real walkable tile maps: Title → chapter map
+chain (each stage scatters unknown「?」mist markers that reveal battles /
+events / story / rest / market on contact; grass tiles roll random
+encounters) → portal to the next map → chapter boss gate → next chapter →
+final boss → one of four endings. No levels or
 grinding — growth comes from 法宝 (relics), rewards, and per-chapter
 breakthroughs. The pre-roguelike free-roam overworld (`Explore`) is retained
 for legacy capture presets but is no longer the main loop.
@@ -24,10 +27,11 @@ for legacy capture presets but is no longer the main loop.
 
 ## States (`src/game/state.rs`)
 
-`AppState`: `Title` (default) | `NodeMap` | `RunScene` | `Battle` | `Reward` |
-`Ending` | `Explore` (legacy). Run-mode dialogue/events are an overlay resource
-inside `NodeMap`/`RunScene`, not a state. `Battle` is shared by both flows —
-the presence of the `RunState` resource marks a roguelike battle.
+`AppState`: `Title` (default) | `NodeMap` (zero-frame hop that rolls the next
+stage) | `RunScene` (the walkable map — the run's main state) | `Battle` |
+`Reward` | `Ending` | `Explore` (legacy). Run-mode dialogue/events are an
+overlay resource inside `RunScene`, not a state. `Battle` is shared by both
+flows — the presence of the `RunState` resource marks a roguelike battle.
 
 ## Roguelike core (`src/game/roguelike/`)
 
@@ -38,10 +42,9 @@ the presence of the `RunState` resource marks a roguelike battle.
   enemy hp/atk multipliers); `RunBattleMods` + `battle_mods_for` (normal /
   elite ×1.4/×1.15 / boss flat ×0.72/×0.68 discounts); breakthrough constants
   (per-chapter stat gains replacing levels).
-- **`graph.rs`** — `NodeGraph::generate`: layered DAG per chapter (entry 2–3
-  wide → depth random layers with one single-node Story bottleneck → rest →
-  boss), non-crossing links, full reachability. `NodeKind`:
-  Fight战/Elite袭/Event遇/Story缘/Rest歇/Market市/Boss魔.
+- **`graph.rs`** — `NodeKind` marker kinds:
+  Fight战/Elite袭/Event遇/Story缘/Rest歇/Market市/Boss魔 (the abstract node
+  graph was removed in favour of playing directly on maps).
 - **`content.rs`** — all narrative data: 4 chapter cards, 11 story scenes(每章一个池,「缘」节点随机抽取), 22 random events (options
   with success chance + outcome effects; run 内不重复抽取), market prices,
   rest options, 4 endings (情缘 / 道心 / 双全隐藏 / defeat). `Effect` enum applied by `event::apply_effect`.
@@ -49,20 +52,22 @@ the presence of the `RunState` resource marks a roguelike battle.
   events, rests, markets all render through it; market purchases keep the
   stall open until离开); `run_dialogue_input` (line advance +
   option pick + probabilistic resolution); relic granting; overlay UI.
-- **`map_ui.rs`** — node-map scene (edge sprites, node sprites + `Text2d`
+- **`scene.rs`** — node-map scene (edge sprites, node sprites + `Text2d`
   glyphs, pulsing cursor ring, run HUD with relics/道心/情缘), `node_map_input`
   (up/down picks a reachable node, confirm travels & dispatches: battles set
   `PendingEncounter`+`RunBattleMods`+`AppState::Battle`; other kinds open the
   overlay). Chapter card opens on first map entry per chapter.
-- **`scene.rs`** — walkable node scenes(实景节点): picking any node drops the
-  hero onto a real tile map (random `MapKind` from the chapter's `maps` pool,
-  rendered via explore's `tile_sprite`); grid movement reads `Intent`;
-  reaching the marked objective (BFS-farthest walkable tile; marker art per
-  kind — 灵儿 paperdoll for 缘, gate for 魔, lantern/board/orb otherwise)
-  fires the payload: battles set `PendingEncounter`+mods, other kinds open
-  the `RunDialogue` overlay in place; overlay close → back to `NodeMap`.
-  `RunSceneState` exposes col/row/objective/BFS `flow` for the capture
-  driver's auto-pathing. Four soft fill lights keep the map readable.
+- **`scene.rs`** — the run's core: `advance_stage` (on the `NodeMap` hop)
+  rolls a chapter map (no immediate repeats) and scatters 2–3 markers
+  (pairwise-spread walkable tiles, story beat guaranteed before the boss
+  map; boss stage = single demon gate); `spawn_run_scene` renders tiles via
+  explore's `tile_sprite`, hero, mist markers (unknown「?」until touched),
+  portal glow, fill lights, HUD, and rebuilds losslessly after battles
+  (`RunSceneState` persists). `run_scene_movement`: grid movement, marker
+  contact fires the payload (battle → `AppState::Battle`; others open the
+  overlay in place), grass tiles roll 8% random encounters, portal advances
+  the stage once all markers are cleared (`run.stage += 1` → hop). BFS
+  multi-source `flow` steers the capture driver.
 - **`screens.rs`** — Title (starts a run: resets `PlayerStats` [+2 atk/+1 def/
   +1 potion baseline], reseeds `Rng` with wall clock, inserts `RunState`);
   Reward (three-choice loot post-battle, relics guaranteed on elite/boss;
@@ -116,8 +121,8 @@ Explore-only).
 
 ## Controls
 
-- 节点图: 上/下 选路 · 空格 前进/继续对话/确认选项
-- 实景节点: 方向键/WASD 移动,走到发光标记处触发战斗或事件
+- 地图: 方向键/WASD 移动 · 走到「?」迷雾揭晓内容 · 清完标记走「门」过图
+- 对话/选项: 上/下 选择 · 空格 确认
 - 战斗: 上/下 选指令 · 空格/Enter 确认(攻击/仙术/合击/物品/逃跑)
 - 标题/奖励/结局: 上/下 + 空格
 
@@ -130,7 +135,7 @@ Explore-only).
   lavapipe (`VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`);
   the `rogue` preset walks title → card → nodes on a cadence script and
   auto-paths through walkable scenes via `RunSceneState.flow`. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/5/` (900 frames + video.mp4, 30s).
+- Latest proof bundle: `screenshots/result/6/` (900 frames + video.mp4, 30s).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 

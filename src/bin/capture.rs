@@ -194,7 +194,12 @@ fn main() {
             app.world_mut().resource_mut::<love_rpg::game::Rng>().0 = 0xC0FFEE_5EED;
         }
         "rogue-market" => {
-            use love_rpg::game::roguelike::{RunState, graph::NodeKind};
+            use love_rpg::game::explore::MapKind;
+            use love_rpg::game::roguelike::{
+                RunState,
+                graph::NodeKind,
+                scene::{RunSceneState, SceneMarker},
+            };
             app.world_mut().resource_mut::<CaptureRogue>().0 = true;
             let mut run = {
                 let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
@@ -202,13 +207,30 @@ fn main() {
                 RunState::new(&mut rng)
             };
             run.card_shown = true; // skip the chapter card, go straight to the stalls
-            for node in run.graph.nodes.iter_mut().filter(|n| n.layer == 0) {
-                node.kind = NodeKind::Market;
-            }
             app.world_mut().insert_resource(run);
+            // A hand-built Village stage with a single market marker; the
+            // scene spawner fills in hero position and the flow field is
+            // recomputed by the driver as it steers.
+            let mut scene = RunSceneState {
+                map: MapKind::Village,
+                col: -1,
+                row: -1,
+                facing_left: false,
+                markers: vec![SceneMarker {
+                    kind: NodeKind::Market,
+                    col: 15,
+                    row: 8,
+                    cleared: false,
+                }],
+                portals: Vec::new(),
+                flow: Vec::new(),
+                cooldown: 0.0,
+            };
+            love_rpg::game::roguelike::scene::seed_flow(&mut scene);
+            app.world_mut().insert_resource(scene);
             app.world_mut()
                 .resource_mut::<NextState<AppState>>()
-                .set(AppState::NodeMap);
+                .set(AppState::RunScene);
         }
         "rogue-ending" | "rogue-ending-defeat" => {
             use love_rpg::game::roguelike::{RunOutcome, RunState};
@@ -1143,6 +1165,11 @@ fn set_intent(app: &mut App, f: u32) {
             intent.move_dir = step;
             if f % 18 == 12 {
                 intent.confirm = true;
+            }
+            // Walk option lists downward over time so multi-option overlays
+            // (e.g. the market's "leave" entry) always terminate.
+            if f % 36 == 0 {
+                intent.down = true;
             }
             return;
         }

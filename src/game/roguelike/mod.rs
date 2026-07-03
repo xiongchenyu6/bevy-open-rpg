@@ -13,7 +13,6 @@ use bevy::prelude::*;
 pub mod content;
 pub mod event;
 pub mod graph;
-pub mod map_ui;
 pub mod scene;
 pub mod screens;
 
@@ -22,7 +21,7 @@ use super::core::Rng;
 use super::explore::MapKind;
 use super::quest::BossKind;
 use super::state::AppState;
-use graph::{NodeGraph, NodeKind};
+use graph::NodeKind;
 
 // ---------------------------------------------------------------------------
 // Relics (法宝) — persistent passive items collected during a run
@@ -247,9 +246,13 @@ pub enum RunOutcome {
 #[derive(Resource)]
 pub struct RunState {
     pub chapter: usize,
-    pub graph: NodeGraph,
-    /// Node the player currently stands on (index into `graph.nodes`).
-    pub position: usize,
+    /// Map index within the chapter: 0..depth-1 are normal stages, the last
+    /// stage is the boss map.
+    pub stage: usize,
+    /// Map used for the previous stage (avoid immediate repeats).
+    pub last_map: Option<MapKind>,
+    /// The chapter's 「缘」 story beat still needs to be placed on a map.
+    pub story_pending: bool,
     /// Boss rolled for this chapter.
     pub boss: BossKind,
     pub relics: Vec<Relic>,
@@ -274,12 +277,12 @@ impl RunState {
     pub fn new(rng: &mut Rng) -> Self {
         let chapter = 0;
         let def = &CHAPTERS[chapter];
-        let graph = NodeGraph::generate(def, rng);
         let boss = def.bosses[rng.range(0, def.bosses.len() as i32 - 1) as usize];
         Self {
             chapter,
-            graph,
-            position: usize::MAX, // not on any node yet: pick from entry layer
+            stage: 0,
+            last_map: None,
+            story_pending: true,
             boss,
             relics: Vec::new(),
             daoxin: 0,
@@ -293,14 +296,24 @@ impl RunState {
         }
     }
 
-    /// Advance to the next chapter, regenerating the node graph.
+    /// Advance to the next chapter.
     pub fn next_chapter(&mut self, rng: &mut Rng) {
         self.chapter += 1;
         let def = &CHAPTERS[self.chapter];
-        self.graph = NodeGraph::generate(def, rng);
         self.boss = def.bosses[rng.range(0, def.bosses.len() as i32 - 1) as usize];
-        self.position = usize::MAX;
+        self.stage = 0;
+        self.last_map = None;
+        self.story_pending = true;
         self.card_shown = false;
+    }
+
+    /// Total maps in the current chapter (the last one is the boss map).
+    pub fn stage_count(&self) -> usize {
+        self.chapter_def().depth
+    }
+
+    pub fn is_boss_stage(&self) -> bool {
+        self.stage + 1 >= self.stage_count()
     }
 
     pub fn chapter_def(&self) -> &'static ChapterDef {
@@ -311,10 +324,18 @@ impl RunState {
         self.relics.contains(&relic)
     }
 
-    /// Pick a random walkable map for this chapter's node scenes.
-    pub fn roll_map(&self, rng: &mut Rng) -> MapKind {
+    /// Pick a random walkable map for this chapter, avoiding an immediate
+    /// repeat of the previous stage's map.
+    pub fn roll_map(&mut self, rng: &mut Rng) -> MapKind {
         let maps = self.chapter_def().maps;
-        maps[rng.range(0, maps.len() as i32 - 1) as usize]
+        let mut pick = maps[rng.range(0, maps.len() as i32 - 1) as usize];
+        if maps.len() > 1 {
+            while Some(pick) == self.last_map {
+                pick = maps[rng.range(0, maps.len() as i32 - 1) as usize];
+            }
+        }
+        self.last_map = Some(pick);
+        pick
     }
 
     /// Pick a random encounter zone for this chapter.
@@ -338,15 +359,6 @@ impl RunState {
         let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
         self.seen_events.push(index);
         index
-    }
-
-    /// Nodes reachable from the current position (entry layer if none).
-    pub fn reachable(&self) -> Vec<usize> {
-        if self.position == usize::MAX {
-            self.graph.entry_nodes()
-        } else {
-            self.graph.nodes[self.position].next.clone()
-        }
     }
 
     // --- relic-driven battle modifiers, summed over owned relics ---
@@ -530,34 +542,22 @@ impl Plugin for RoguelikePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<event::RunDialogue>()
             .init_resource::<screens::RewardChoices>()
-            .init_resource::<map_ui::MapCursor>()
             .add_systems(OnEnter(AppState::Title), screens::spawn_title)
             .add_systems(
                 Update,
                 screens::title_input.run_if(in_state(AppState::Title)),
             )
-            .add_systems(OnEnter(AppState::NodeMap), map_ui::spawn_node_map)
-            .add_systems(
-                Update,
-                (
-                    event::run_dialogue_input,
-                    map_ui::node_map_input,
-                    map_ui::update_node_cursor,
-                    map_ui::update_run_hud,
-                    event::update_run_dialogue_ui,
-                )
-                    .chain()
-                    .run_if(in_state(AppState::NodeMap)),
-            )
+            // `NodeMap` is a zero-frame hop: it rolls the next stage's map
+            // and markers into `RunSceneState`, then enters the scene.
+            .add_systems(OnEnter(AppState::NodeMap), scene::advance_stage)
             .add_systems(OnEnter(AppState::RunScene), scene::spawn_run_scene)
             .add_systems(
                 Update,
                 (
                     event::run_dialogue_input,
                     scene::run_scene_movement,
-                    scene::run_scene_finish,
                     scene::animate_marker_glyph,
-                    map_ui::update_run_hud,
+                    scene::update_run_hud,
                     event::update_run_dialogue_ui,
                 )
                     .chain()

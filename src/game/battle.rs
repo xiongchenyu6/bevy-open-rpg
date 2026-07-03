@@ -1774,7 +1774,7 @@ fn battle_tick(
             if let Some(run) = run.as_mut() {
                 run.current_fight = None;
                 commands.remove_resource::<RunBattleMods>();
-                next.set(AppState::NodeMap);
+                next.set(AppState::RunScene);
             } else {
                 next.set(AppState::Explore);
             }
