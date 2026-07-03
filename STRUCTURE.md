@@ -120,4 +120,12 @@ Explore-only).
   lavapipe (`VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`);
   the `rogue` preset walks title → card → nodes → battles → rewards on a
   cadence script. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/3/` (900 frames + video.mp4, 30s).
+- Latest proof bundle: `screenshots/result/4/` (900 frames + video.mp4, 30s).
+
+## UI art (`assets/ui/`, generated via remote ComfyUI)
+
+- `title_bg.png` — 标题主视觉(月下剑侣崖景); `map_bg.png` — 节点图水墨群山底;
+  `reward_bg.png` — 战利祭坛; `ending_bg.png` — 月夜渡口(结局)。
+- `assets/npcs/ai_linger.png` — 灵儿月轮立绘卡(剧情缘节点、歇脚谈心)。
+- Run 对话框为「立绘卡 + 文本」双栏;奇遇立绘复用 NPC/怪物/道具切图,
+  映射在 `content::event_portrait`。全屏界面文字均垫深色半透明底板。

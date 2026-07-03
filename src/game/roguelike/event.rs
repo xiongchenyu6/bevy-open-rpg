@@ -41,6 +41,8 @@ pub struct RunDialogue {
     pub source: DialogueSource,
     /// Options already resolved (so the tail lines just advance and close).
     pub resolved: bool,
+    /// Asset path of the speaker/scene portrait card, if any.
+    pub portrait: Option<&'static str>,
 }
 
 impl RunDialogue {
@@ -63,6 +65,7 @@ impl RunDialogue {
             lines: ev.lines.iter().map(|s| s.to_string()).collect(),
             options: ev.options.iter().map(|o| o.label.to_string()).collect(),
             source: DialogueSource::Event(index),
+            portrait: content::event_portrait(index),
             ..default()
         };
     }
@@ -77,6 +80,7 @@ impl RunDialogue {
             lines,
             options: scene.options.iter().map(|o| o.label.to_string()).collect(),
             source: DialogueSource::Story { chapter, roll },
+            portrait: Some(content::PORTRAIT_LINGER),
             ..default()
         };
     }
@@ -92,6 +96,7 @@ impl RunDialogue {
                 content::REST_TALK.to_string(),
             ],
             source: DialogueSource::Rest,
+            portrait: Some(content::PORTRAIT_LINGER),
             ..default()
         };
     }
@@ -111,6 +116,7 @@ impl RunDialogue {
                 content::MARKET_LEAVE.to_string(),
             ],
             source: DialogueSource::Market,
+            portrait: Some(content::PORTRAIT_MERCHANT),
             ..default()
         };
     }
@@ -413,8 +419,12 @@ pub struct RunDialogueLine;
 #[derive(Component)]
 pub struct RunDialogueOptions;
 
-/// Spawn the (hidden) overlay box. Called from the node-map scene setup so it
-/// carries the same `DespawnOnExit` scope.
+#[derive(Component)]
+pub struct RunDialoguePortrait;
+
+/// Spawn the (hidden) overlay box — a portrait card on the left, text column
+/// on the right. Called from the node-map scene setup so it carries the same
+/// `DespawnOnExit` scope.
 pub fn spawn_run_dialogue_ui(commands: &mut Commands, font: &GameFont, scope: impl Bundle) {
     commands
         .spawn((
@@ -425,8 +435,9 @@ pub fn spawn_run_dialogue_ui(commands: &mut Commands, font: &GameFont, scope: im
                 left: Val::Percent(8.0),
                 right: Val::Percent(8.0),
                 bottom: Val::Px(28.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(6.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.0),
+                align_items: AlignItems::FlexStart,
                 padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
                 ..default()
             },
@@ -436,29 +447,55 @@ pub fn spawn_run_dialogue_ui(commands: &mut Commands, font: &GameFont, scope: im
         ))
         .with_children(|parent| {
             parent.spawn((
-                RunDialogueTitle,
-                Text::new(""),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.95, 0.83, 0.52)),
+                RunDialoguePortrait,
+                ImageNode::default(),
+                Node {
+                    width: Val::Px(132.0),
+                    height: Val::Px(176.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+                Visibility::Hidden,
             ));
-            parent.spawn((
-                RunDialogueLine,
-                Text::new(""),
-                font.text_font(22.0),
-                TextColor(Color::srgb(0.94, 0.94, 0.90)),
-            ));
-            parent.spawn((
-                RunDialogueOptions,
-                Text::new(""),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.75, 0.88, 1.0)),
-            ));
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    flex_grow: 1.0,
+                    ..default()
+                })
+                .with_children(|column| {
+                    column.spawn((
+                        RunDialogueTitle,
+                        Text::new(""),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.95, 0.83, 0.52)),
+                    ));
+                    column.spawn((
+                        RunDialogueLine,
+                        Text::new(""),
+                        font.text_font(22.0),
+                        TextColor(Color::srgb(0.94, 0.94, 0.90)),
+                    ));
+                    column.spawn((
+                        RunDialogueOptions,
+                        Text::new(""),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.75, 0.88, 1.0)),
+                    ));
+                });
         });
 }
 
 pub fn update_run_dialogue_ui(
     dialogue: Res<RunDialogue>,
-    mut root: Query<&mut Visibility, With<RunDialogueRoot>>,
+    asset_server: Res<AssetServer>,
+    mut root: Query<&mut Visibility, (With<RunDialogueRoot>, Without<RunDialoguePortrait>)>,
+    mut portrait: Query<
+        (&mut ImageNode, &mut Visibility),
+        (With<RunDialoguePortrait>, Without<RunDialogueRoot>),
+    >,
     mut texts: ParamSet<(
         Query<&mut Text, With<RunDialogueTitle>>,
         Query<&mut Text, With<RunDialogueLine>>,
@@ -475,6 +512,20 @@ pub fn update_run_dialogue_ui(
     };
     if !dialogue.active {
         return;
+    }
+
+    if let Ok((mut image, mut portrait_visibility)) = portrait.single_mut() {
+        match dialogue.portrait {
+            Some(path) => {
+                if dialogue.is_changed() {
+                    image.image = asset_server.load(path);
+                }
+                *portrait_visibility = Visibility::Inherited;
+            }
+            None => {
+                *portrait_visibility = Visibility::Hidden;
+            }
+        }
     }
 
     if let Ok(mut text) = texts.p0().single_mut() {

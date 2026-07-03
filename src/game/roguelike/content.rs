@@ -1496,6 +1496,36 @@ pub const EVENTS: [RandomEvent; 22] = [
     },
 ];
 
+/// Portrait art for an event (indexes into [`EVENTS`]); reuses NPC / creature /
+/// prop cutouts from the asset library.
+pub fn event_portrait(index: usize) -> Option<&'static str> {
+    match index {
+        0 => Some("npcs/ai_fox_spirit.png"),          // 山间酒肆:老板娘
+        1 => Some("npcs/ai_mountain_monk.png"),       // 断剑冢:守冢老人
+        2 => Some("npcs/ai_wandering_merchant.png"),  // 落难货郎
+        3 => Some("npcs/ai_spirit_guide.png"),        // 古镜残光:白发道人
+        5 => Some("props/ai_spirit_lantern.png"),     // 溺水的萤火
+        6 => Some("npcs/ai_final_oracle.png"),        // 无名棋局:白衣人
+        7 => Some("npcs/ai_shrine_keeper.png"),       // 破庙香火
+        8 => Some("props/ai_cave_crystal.png"),       // 灵泉眼
+        9 => Some("npcs/forest_ranger.png"),          // 夜行商队:老镖头
+        10 => Some("creatures/ai_water_serpent.png"), // 走蛟渡河:老蛟
+        11 => Some("npcs/ai_shrine_keeper.png"),      // 山神庙求签
+        12 => Some("npcs/ai_wandering_merchant.png"), // 「仙丹」贩子
+        13 => Some("npcs/ai_capital_envoy.png"),      // 迷路的书生
+        14 => Some("npcs/ai_fox_spirit.png"),         // 雨夜狐宅
+        17 => Some("npcs/ai_herb_healer.png"),        // 峭壁灵芝
+        19 => Some("npcs/ai_cave_priestess.png"),     // 琴音辨路
+        20 => Some("npcs/ai_mansion_spy.png"),        // 悬赏皇榜
+        21 => Some("npcs/ai_tribal_chief.png"),       // 虎口樵夫
+        _ => None,
+    }
+}
+
+/// 灵儿的立绘卡(剧情缘节点、歇脚谈心)。
+pub const PORTRAIT_LINGER: &str = "npcs/ai_linger.png";
+pub const PORTRAIT_MERCHANT: &str = "npcs/ai_wandering_merchant.png";
+
 // ---------------------------------------------------------------------------
 // Market node (「市」) — priced picks resolved in code
 // ---------------------------------------------------------------------------

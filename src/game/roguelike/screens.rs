@@ -19,13 +19,22 @@ use crate::game::state::AppState;
 #[derive(Component)]
 pub struct TitleUi;
 
-pub fn spawn_title(mut commands: Commands, font: Res<GameFont>) {
+/// Full-screen backdrop image plus a dark letterbox band so overlay text
+/// stays readable on any art.
+fn spawn_screen_backdrop(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    path: &'static str,
+    scope: impl Bundle,
+) {
+    let mut sprite = Sprite::from_image(asset_server.load(path));
+    sprite.custom_size = Some(Vec2::new(1280.0, 720.0));
+    commands.spawn((sprite, Transform::from_xyz(0.0, 0.0, -10.0), scope));
+}
+
+pub fn spawn_title(mut commands: Commands, font: Res<GameFont>, asset_server: Res<AssetServer>) {
     let scope = || DespawnOnExit(AppState::Title);
-    commands.spawn((
-        Sprite::from_color(Color::srgb(0.04, 0.05, 0.10), Vec2::new(2200.0, 1400.0)),
-        Transform::from_xyz(0.0, 0.0, -10.0),
-        scope(),
-    ));
+    spawn_screen_backdrop(&mut commands, &asset_server, "ui/title_bg.png", scope());
     commands
         .spawn((
             TitleUi,
@@ -35,32 +44,46 @@ pub fn spawn_title(mut commands: Commands, font: Res<GameFont>) {
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: Val::Px(18.0),
+                justify_content: JustifyContent::FlexEnd,
+                row_gap: Val::Px(14.0),
+                padding: UiRect::bottom(Val::Px(46.0)),
                 ..default()
             },
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Text::new("御剑行 · 轮回"),
-                font.text_font(64.0),
-                TextColor(Color::srgb(0.96, 0.87, 0.6)),
-            ));
-            parent.spawn((
-                Text::new("仙侠肉鸽 · 一局一世 · 随机路途 · 剧情织缘"),
-                font.text_font(22.0),
-                TextColor(Color::srgb(0.75, 0.8, 0.9)),
-            ));
-            parent.spawn((
-                Text::new("没有练级,只有抉择:法宝、奇遇与誓言,决定这一世的结局。"),
-                font.text_font(18.0),
-                TextColor(Color::srgba(0.75, 0.8, 0.9, 0.75)),
-            ));
-            parent.spawn((
-                Text::new("—— 按 空格 踏入轮回 ——"),
-                font.text_font(26.0),
-                TextColor(Color::srgb(0.5, 0.9, 1.0)),
-            ));
+            parent
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::axes(Val::Px(46.0), Val::Px(22.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.03, 0.08, 0.62)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("御剑行 · 轮回"),
+                        font.text_font(64.0),
+                        TextColor(Color::srgb(0.97, 0.88, 0.62)),
+                    ));
+                    panel.spawn((
+                        Text::new("仙侠肉鸽 · 一局一世 · 随机路途 · 剧情织缘"),
+                        font.text_font(22.0),
+                        TextColor(Color::srgb(0.82, 0.87, 0.95)),
+                    ));
+                    panel.spawn((
+                        Text::new("没有练级,只有抉择:法宝、奇遇与誓言,决定这一世的结局。"),
+                        font.text_font(18.0),
+                        TextColor(Color::srgba(0.82, 0.87, 0.95, 0.8)),
+                    ));
+                    panel.spawn((
+                        Text::new("—— 按 空格 踏入轮回 ——"),
+                        font.text_font(26.0),
+                        TextColor(Color::srgb(0.55, 0.92, 1.0)),
+                    ));
+                });
         });
 }
 
@@ -192,6 +215,7 @@ fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {
 pub fn spawn_reward(
     mut commands: Commands,
     font: Res<GameFont>,
+    asset_server: Res<AssetServer>,
     run: Option<Res<RunState>>,
     mut choices: ResMut<RewardChoices>,
     mut rng: ResMut<Rng>,
@@ -205,11 +229,7 @@ pub fn spawn_reward(
     choices.selected = 0;
 
     let scope = || DespawnOnExit(AppState::Reward);
-    commands.spawn((
-        Sprite::from_color(Color::srgb(0.05, 0.05, 0.09), Vec2::new(2200.0, 1400.0)),
-        Transform::from_xyz(0.0, 0.0, -10.0),
-        scope(),
-    ));
+    spawn_screen_backdrop(&mut commands, &asset_server, "ui/reward_bg.png", scope());
     commands
         .spawn((
             scope(),
@@ -220,6 +240,7 @@ pub fn spawn_reward(
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 row_gap: Val::Px(20.0),
+                padding: UiRect::axes(Val::Px(60.0), Val::Px(30.0)),
                 ..default()
             },
         ))
@@ -229,22 +250,35 @@ pub fn spawn_reward(
                 Some(FightRank::Elite) => "力克精英 · 择一战利",
                 _ => "小胜一场 · 择一战利",
             };
-            parent.spawn((
-                Text::new(title),
-                font.text_font(34.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.55)),
-            ));
-            parent.spawn((
-                RewardListText,
-                Text::new(""),
-                font.text_font(24.0),
-                TextColor(Color::srgb(0.9, 0.92, 0.95)),
-            ));
-            parent.spawn((
-                Text::new("上/下 选择 · 空格 拿取"),
-                font.text_font(16.0),
-                TextColor(Color::srgba(0.85, 0.87, 0.9, 0.7)),
-            ));
+            parent
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(18.0),
+                        padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.72)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(title),
+                        font.text_font(34.0),
+                        TextColor(Color::srgb(0.95, 0.85, 0.55)),
+                    ));
+                    panel.spawn((
+                        RewardListText,
+                        Text::new(""),
+                        font.text_font(24.0),
+                        TextColor(Color::srgb(0.9, 0.92, 0.95)),
+                    ));
+                    panel.spawn((
+                        Text::new("上/下 选择 · 空格 拿取"),
+                        font.text_font(16.0),
+                        TextColor(Color::srgba(0.85, 0.87, 0.9, 0.7)),
+                    ));
+                });
         });
 }
 
@@ -343,6 +377,7 @@ pub fn reward_input(
 pub fn spawn_ending(
     mut commands: Commands,
     font: Res<GameFont>,
+    asset_server: Res<AssetServer>,
     run: Option<Res<RunState>>,
     mut next: ResMut<NextState<AppState>>,
 ) {
@@ -357,11 +392,7 @@ pub fn spawn_ending(
         _ => content::ENDING_DEFEAT,
     };
     let scope = || DespawnOnExit(AppState::Ending);
-    commands.spawn((
-        Sprite::from_color(Color::srgb(0.03, 0.04, 0.08), Vec2::new(2200.0, 1400.0)),
-        Transform::from_xyz(0.0, 0.0, -10.0),
-        scope(),
-    ));
+    spawn_screen_backdrop(&mut commands, &asset_server, "ui/ending_bg.png", scope());
     commands
         .spawn((
             scope(),
@@ -371,36 +402,48 @@ pub fn spawn_ending(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: Val::Px(12.0),
                 padding: UiRect::horizontal(Val::Px(80.0)),
                 ..default()
             },
         ))
         .with_children(|parent| {
-            for (i, line) in lines.iter().enumerate() {
-                let (size, color) = if i == 0 {
-                    (34.0, Color::srgb(0.95, 0.85, 0.55))
-                } else {
-                    (21.0, Color::srgb(0.9, 0.92, 0.95))
-                };
-                parent.spawn((Text::new(*line), font.text_font(size), TextColor(color)));
-            }
-            parent.spawn((
-                Text::new(format!(
-                    "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 道心 {} · 情缘 {}",
-                    run.fights_won,
-                    run.relics.len(),
-                    run.daoxin,
-                    run.qingyuan,
-                )),
-                font.text_font(18.0),
-                TextColor(Color::srgba(0.75, 0.8, 0.9, 0.85)),
-            ));
-            parent.spawn((
-                Text::new("—— 按 空格 回到轮回之初 ——"),
-                font.text_font(22.0),
-                TextColor(Color::srgb(0.5, 0.9, 1.0)),
-            ));
+            parent
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(12.0),
+                        padding: UiRect::axes(Val::Px(44.0), Val::Px(26.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.68)),
+                ))
+                .with_children(|panel| {
+                    for (i, line) in lines.iter().enumerate() {
+                        let (size, color) = if i == 0 {
+                            (34.0, Color::srgb(0.95, 0.85, 0.55))
+                        } else {
+                            (21.0, Color::srgb(0.9, 0.92, 0.95))
+                        };
+                        panel.spawn((Text::new(*line), font.text_font(size), TextColor(color)));
+                    }
+                    panel.spawn((
+                        Text::new(format!(
+                            "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 道心 {} · 情缘 {}",
+                            run.fights_won,
+                            run.relics.len(),
+                            run.daoxin,
+                            run.qingyuan,
+                        )),
+                        font.text_font(18.0),
+                        TextColor(Color::srgba(0.75, 0.8, 0.9, 0.85)),
+                    ));
+                    panel.spawn((
+                        Text::new("—— 按 空格 回到轮回之初 ——"),
+                        font.text_font(22.0),
+                        TextColor(Color::srgb(0.5, 0.9, 1.0)),
+                    ));
+                });
         });
 }
 

@@ -52,6 +52,19 @@ Late-story NPCs currently added through imagegen:
 - `src/game/quest.rs` drives the first quest chain through generated and
   paperdoll NPCs.
 
+## UI backgrounds & portrait cards (2026-07, ComfyUI Flux)
+
+| Asset | Path | Use |
+|-------|------|-----|
+| 标题主视觉 | `assets/ui/title_bg.png` | Title screen backdrop |
+| 水墨节点图底 | `assets/ui/map_bg.png` | NodeMap backdrop (dimmed) |
+| 战利祭坛 | `assets/ui/reward_bg.png` | Reward screen backdrop |
+| 月夜渡口 | `assets/ui/ending_bg.png` | Ending screen backdrop |
+| 灵儿立绘卡 | `assets/npcs/ai_linger.png` | Run dialogue portrait (story/rest) |
+
+Raw prompts/seeds: see git history of the generation commands; regenerate via
+`python3 .claude/skills/godogen/tools/comfyui_gen.py image --prompt ... -o ...`.
+
 ## Font
 
 | Asset | Path | Source | Notes |

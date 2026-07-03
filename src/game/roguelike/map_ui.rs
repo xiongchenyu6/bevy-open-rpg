@@ -61,6 +61,7 @@ fn kind_color(kind: NodeKind, cleared: bool) -> Color {
 pub fn spawn_node_map(
     mut commands: Commands,
     font: Res<GameFont>,
+    asset_server: Res<AssetServer>,
     run: Option<ResMut<RunState>>,
     mut dialogue: ResMut<RunDialogue>,
     mut cursor: ResMut<MapCursor>,
@@ -74,12 +75,11 @@ pub fn spawn_node_map(
     cursor.0 = 0;
     let scope = || DespawnOnExit(AppState::NodeMap);
 
-    // Backdrop.
-    commands.spawn((
-        Sprite::from_color(Color::srgb(0.05, 0.06, 0.11), Vec2::new(2200.0, 1400.0)),
-        Transform::from_xyz(0.0, 0.0, -10.0),
-        scope(),
-    ));
+    // Ink-wash mountain backdrop, dimmed so the node graph stays readable.
+    let mut backdrop = Sprite::from_image(asset_server.load("ui/map_bg.png"));
+    backdrop.custom_size = Some(Vec2::new(1280.0, 720.0));
+    backdrop.color = Color::srgba(0.62, 0.66, 0.74, 1.0);
+    commands.spawn((backdrop, Transform::from_xyz(0.0, 0.0, -10.0), scope()));
 
     // Chapter heading.
     commands.spawn((
@@ -178,6 +178,14 @@ pub fn spawn_node_map(
                     font.text_font(26.0),
                     TextColor(Color::srgb(0.97, 0.95, 0.9)),
                     Transform::from_xyz(0.0, 0.0, 1.0),
+                ));
+                // Dark rim so nodes read as tokens against the painting.
+                parent.spawn((
+                    Sprite::from_color(
+                        Color::srgba(0.03, 0.04, 0.08, 0.9),
+                        Vec2::splat(NODE_SIZE + 6.0),
+                    ),
+                    Transform::from_xyz(0.0, 0.0, -0.5),
                 ));
                 if here {
                     parent.spawn((
