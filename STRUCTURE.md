@@ -66,7 +66,7 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   (pairwise-spread walkable tiles, story beat guaranteed before the boss
   map; boss stage = single demon gate); `spawn_run_scene` renders tiles via
   explore's `tile_sprite`, hero, mist markers (unknown「?」until touched),
-  portal glow, fill lights, HUD, and rebuilds losslessly after battles
+  界门 spirit-gate sprite over the portal (boss gates reuse it violet-tinted), fill lights, HUD, and rebuilds losslessly after battles
   (`RunSceneState` persists). `run_scene_movement`: grid movement, marker
   contact fires the payload (battle → `AppState::Battle`; others open the
   overlay in place), grass tiles roll 8% random encounters, portal advances
@@ -144,7 +144,7 @@ Explore-only).
   the `rogue` preset walks title → card → maps on a cadence script and
   auto-paths through walkable scenes via `RunSceneState.flow`;
   `rogue-inventory` opens the Esc inventory for a still. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/8/` (900 frames + video.mp4, 30s).
+- Latest proof bundle: `screenshots/result/9/` (800 frames + video.mp4).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 

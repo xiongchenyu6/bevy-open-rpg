@@ -61,6 +61,8 @@ Late-story NPCs currently added through imagegen:
 | 战利祭坛 | `assets/ui/reward_bg.png` | Reward screen backdrop |
 | 月夜渡口 | `assets/ui/ending_bg.png` | Ending screen backdrop |
 | 灵儿立绘卡 | `assets/npcs/ai_linger.png` | Run dialogue portrait (story/rest) |
+| 主角头像 | `assets/npcs/ai_hero.png` | Run HUD avatar |
+| 青石界门 | `assets/props/ai_spirit_gate.png` | Stage exit gate (violet-tinted for boss gates) |
 
 Raw prompts/seeds: see git history of the generation commands; regenerate via
 `python3 .claude/skills/godogen/tools/comfyui_gen.py image --prompt ... -o ...`.

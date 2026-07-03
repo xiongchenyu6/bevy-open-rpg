@@ -580,25 +580,27 @@ pub fn spawn_run_scene(
         );
     }
 
-    // Portal glow (exit to the next stage).
+    // The stage exit: a weathered spirit gate (界门) standing over the
+    // portal tile, wrapped in teal light.
     for &(c, r) in &scene.portals {
         let p = tile_to_world(c, r);
+        commands.spawn((
+            Sprite {
+                image: asset_server.load("props/ai_spirit_gate.png"),
+                custom_size: Some(Vec2::new(86.0, 92.0)),
+                ..default()
+            },
+            Transform::from_xyz(p.x, p.y + 18.0, 9.0),
+            scope(),
+        ));
         lighting::spawn_light(
             &mut commands,
             &lights,
             Vec3::new(p.x, p.y, 4.0),
-            TILE * 2.6,
-            Color::srgba(0.45, 0.95, 1.0, 0.4),
+            TILE * 3.2,
+            Color::srgba(0.45, 0.95, 1.0, 0.42),
             AppState::RunScene,
         );
-        commands.spawn((
-            SceneMarkerGlyph { base_y: p.y + 34.0 },
-            Text2d::new("门"),
-            font.text_font(20.0),
-            TextColor(Color::srgb(0.62, 0.95, 1.0)),
-            Transform::from_xyz(p.x, p.y + 34.0, 11.0),
-            scope(),
-        ));
     }
 
     // HUD: hero avatar + HP/MP bars (details live in the Esc inventory).
@@ -696,7 +698,7 @@ pub fn spawn_run_scene(
         scope(),
     ));
     commands.spawn((
-        Text::new("方向键 移动 · 探明「?」后走「门」 · 草丛有妖 · ESC 行囊"),
+        Text::new("方向键 移动 · 探明「?」后踏入界门 · 草丛有妖 · ESC 行囊"),
         font.text_font(16.0),
         TextColor(Color::srgba(0.9, 0.92, 0.95, 0.75)),
         Node {
@@ -743,11 +745,12 @@ fn spawn_marker_visual(
         commands.spawn((
             SceneMarkerVisual(index),
             Sprite {
-                image: asset_server.load("props/ai_bamboo_gate.png"),
-                custom_size: Some(Vec2::splat(96.0)),
+                image: asset_server.load("props/ai_spirit_gate.png"),
+                color: Color::srgb(1.0, 0.62, 1.0),
+                custom_size: Some(Vec2::new(104.0, 112.0)),
                 ..default()
             },
-            Transform::from_xyz(op.x, op.y + 10.0, 9.0),
+            Transform::from_xyz(op.x, op.y + 22.0, 9.0),
             scope(),
         ));
         commands.spawn((
