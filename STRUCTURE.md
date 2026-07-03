@@ -144,12 +144,18 @@ Explore-only).
   the `rogue` preset walks title → card → maps on a cadence script and
   auto-paths through walkable scenes via `RunSceneState.flow`;
   `rogue-inventory` opens the Esc inventory for a still. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/9/` (800 frames + video.mp4).
+- Chapter-start presets `rogue-ch2|rogue-ch3|rogue-ch4` begin a run directly
+  at chapter 2/3/finale (used to proof per-chapter tilesets).
+- Latest proof bundle: `screenshots/result/10/` (per-chapter map stills; full
+  run video in `result/9/`).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 
 - `title_bg.png` — 标题主视觉(月下剑侣崖景); `map_bg.png` — 节点图水墨群山底;
   `reward_bg.png` — 战利祭坛; `ending_bg.png` — 月夜渡口(结局)。
 - `assets/npcs/ai_linger.png` — 灵儿月轮立绘卡(剧情缘节点、歇脚谈心)。
+- `assets/tiles/ai_*_wall|floor.png` — 每张章节地图的专属无缝地砖
+  (18 张,见 `ASSETS.md` 对照表);`explore::tile_sprite` 按 `MapKind`
+  选贴图,tint 近白。
 - Run 对话框为「立绘卡 + 文本」双栏;奇遇立绘复用 NPC/怪物/道具切图,
   映射在 `content::event_portrait`。全屏界面文字均垫深色半透明底板。

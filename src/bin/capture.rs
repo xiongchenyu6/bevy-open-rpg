@@ -197,6 +197,26 @@ fn main() {
             // clock; the script is cadence-based, not frame-exact).
             app.world_mut().resource_mut::<love_rpg::game::Rng>().0 = 0xC0FFEE_5EED;
         }
+        "rogue-ch2" | "rogue-ch3" | "rogue-ch4" => {
+            use love_rpg::game::roguelike::RunState;
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            let chapter = match preset {
+                "rogue-ch2" => 1,
+                "rogue-ch3" => 2,
+                _ => 3,
+            };
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xC0FFEE_5EED ^ (chapter as u64) << 8;
+                RunState::new(&mut rng)
+            };
+            run.chapter = chapter;
+            run.card_shown = true;
+            app.world_mut().insert_resource(run);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::NodeMap);
+        }
         "rogue-inventory" => {
             use love_rpg::game::explore::MapKind;
             use love_rpg::game::roguelike::{

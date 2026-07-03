@@ -107,6 +107,18 @@
 - 主角行走动画(上轮):滑步+HeroWalk/HeroIdle 帧图切换。
 - 证明包 screenshots/result/8(900 帧,无卡死)。
 
+## 每图专属素材(第八轮,「每个地图都生成素材各有特色吧」)
+
+- ComfyUI 批量生成 18 张 512×512 无缝地砖(9 图 × 墙/地):芦苇荡、
+  瘴雨村/祠道、京城、府邸、镜廊、南疆道、雷鼓祭道、灵渊终门、梦水道——
+  此前这些图共用竹林/灵草贴图仅靠 tint 区分,现在每章观感截然不同。
+- `ExploreAssets` 新增 18 个句柄;`tile_sprite` 各图 Wall/Path 分支换新贴图,
+  tint 改近白(颜色由贴图自带),逐格抖动保留。
+- capture 新增 `rogue-ch2|rogue-ch3|rogue-ch4` preset(直接以对应章开局)
+  逐章取证:瘴雨村(米卵石+紫瘴岩)、雷鼓祭道(青石板+蓝雷纹)、
+  灵渊终门(蓝渊石+紫电渊)在图确认;补生成过一张漏掉的 ai_south_wall。
+- 证明包 screenshots/result/10(三章地图静帧);ASSETS.md 增地砖对照表。
+
 ## 已知限制 / 后续可做
 
 - 本机无 `WAYLAND_DISPLAY`,桌面交互试玩未执行;运行时验证走 lavapipe

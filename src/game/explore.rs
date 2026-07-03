@@ -694,6 +694,24 @@ pub struct ExploreAssets {
     shrine_floor: Handle<Image>,
     stone_road: Handle<Image>,
     village_moss_path: Handle<Image>,
+    reed_wall: Handle<Image>,
+    reed_floor: Handle<Image>,
+    plague_wall: Handle<Image>,
+    plague_floor: Handle<Image>,
+    capital_wall: Handle<Image>,
+    capital_floor: Handle<Image>,
+    mansion_wall: Handle<Image>,
+    mansion_floor: Handle<Image>,
+    mirror_wall: Handle<Image>,
+    mirror_floor: Handle<Image>,
+    south_wall: Handle<Image>,
+    south_floor: Handle<Image>,
+    thunder_wall: Handle<Image>,
+    thunder_floor: Handle<Image>,
+    abyss_wall: Handle<Image>,
+    abyss_floor: Handle<Image>,
+    dream_wall: Handle<Image>,
+    dream_floor: Handle<Image>,
 }
 
 impl ExploreAssets {
@@ -710,6 +728,24 @@ impl ExploreAssets {
             shrine_floor: assets.load("tiles/ai_shrine_floor.png"),
             stone_road: assets.load("tiles/stone_road.png"),
             village_moss_path: assets.load("tiles/ai_village_moss_path.png"),
+            reed_wall: assets.load("tiles/ai_reed_wall.png"),
+            reed_floor: assets.load("tiles/ai_reed_floor.png"),
+            plague_wall: assets.load("tiles/ai_plague_wall.png"),
+            plague_floor: assets.load("tiles/ai_plague_floor.png"),
+            capital_wall: assets.load("tiles/ai_capital_wall.png"),
+            capital_floor: assets.load("tiles/ai_capital_floor.png"),
+            mansion_wall: assets.load("tiles/ai_mansion_wall.png"),
+            mansion_floor: assets.load("tiles/ai_mansion_floor.png"),
+            mirror_wall: assets.load("tiles/ai_mirror_wall.png"),
+            mirror_floor: assets.load("tiles/ai_mirror_floor.png"),
+            south_wall: assets.load("tiles/ai_south_wall.png"),
+            south_floor: assets.load("tiles/ai_south_floor.png"),
+            thunder_wall: assets.load("tiles/ai_thunder_wall.png"),
+            thunder_floor: assets.load("tiles/ai_thunder_floor.png"),
+            abyss_wall: assets.load("tiles/ai_abyss_wall.png"),
+            abyss_floor: assets.load("tiles/ai_abyss_floor.png"),
+            dream_wall: assets.load("tiles/ai_dream_wall.png"),
+            dream_floor: assets.load("tiles/ai_dream_floor.png"),
         }
     }
 }
@@ -4942,24 +4978,20 @@ pub(crate) fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> 
                 (assets.moon_cave_wall.clone(), Color::srgb(0.30, 0.38, 0.62))
             }
             MapKind::RiverTown => (assets.shrine_floor.clone(), Color::srgb(0.42, 0.45, 0.38)),
-            MapKind::RiverReedBed => (assets.bamboo_thicket.clone(), Color::srgb(0.28, 0.46, 0.28)),
-            MapKind::PlagueVillage => (assets.mystic_grass.clone(), Color::srgb(0.24, 0.36, 0.25)),
+            MapKind::RiverReedBed => (assets.reed_wall.clone(), Color::srgb(0.88, 0.95, 0.90)),
+            MapKind::PlagueVillage => (assets.plague_wall.clone(), Color::srgb(0.92, 0.88, 0.92)),
             MapKind::PlagueShrinePath => {
-                (assets.bamboo_thicket.clone(), Color::srgb(0.20, 0.34, 0.24))
+                (assets.plague_wall.clone(), Color::srgb(0.78, 0.76, 0.84))
             }
-            MapKind::Capital => (assets.stone_road.clone(), Color::srgb(0.30, 0.32, 0.42)),
-            MapKind::CapitalMansion => (assets.stone_road.clone(), Color::srgb(0.22, 0.22, 0.34)),
+            MapKind::Capital => (assets.capital_wall.clone(), Color::srgb(0.94, 0.92, 0.94)),
+            MapKind::CapitalMansion => (assets.mansion_wall.clone(), Color::srgb(0.92, 0.90, 0.92)),
             MapKind::MansionMirrorGallery => {
-                (assets.moon_cave_wall.clone(), Color::srgb(0.28, 0.34, 0.54))
+                (assets.mirror_wall.clone(), Color::srgb(0.90, 0.94, 1.0))
             }
-            MapKind::SouthernRoad => (assets.bamboo_thicket.clone(), Color::srgb(0.20, 0.42, 0.30)),
-            MapKind::ThunderDrumPath => {
-                (assets.bamboo_thicket.clone(), Color::srgb(0.18, 0.38, 0.34))
-            }
-            MapKind::FinalSanctum => (assets.moon_cave_wall.clone(), Color::srgb(0.24, 0.24, 0.42)),
-            MapKind::DreamWaterway => {
-                (assets.moon_cave_wall.clone(), Color::srgb(0.22, 0.28, 0.48))
-            }
+            MapKind::SouthernRoad => (assets.south_wall.clone(), Color::srgb(0.90, 0.96, 0.90)),
+            MapKind::ThunderDrumPath => (assets.thunder_wall.clone(), Color::srgb(0.90, 0.94, 1.0)),
+            MapKind::FinalSanctum => (assets.abyss_wall.clone(), Color::srgb(0.94, 0.90, 1.0)),
+            MapKind::DreamWaterway => (assets.dream_wall.clone(), Color::srgb(0.88, 0.96, 1.0)),
         },
         Tile::Water => (assets.water.clone(), Color::srgb(0.50, 0.78, 1.0)),
         Tile::Grass => match kind {
@@ -4995,24 +5027,24 @@ pub(crate) fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> 
             MapKind::Cave => (assets.cave_floor.clone(), Color::srgb(0.68, 0.74, 0.82)),
             MapKind::MoonEchoCorridor => (assets.cave_floor.clone(), Color::srgb(0.62, 0.74, 0.94)),
             MapKind::RiverTown => (assets.stone_road.clone(), Color::srgb(0.78, 0.76, 0.66)),
-            MapKind::RiverReedBed => (assets.bamboo_path.clone(), Color::srgb(0.78, 0.72, 0.48)),
-            MapKind::PlagueVillage => (
-                assets.village_moss_path.clone(),
-                Color::srgb(0.62, 0.64, 0.48),
-            ),
-            MapKind::PlagueShrinePath => (
-                assets.village_moss_path.clone(),
-                Color::srgb(0.58, 0.60, 0.42),
-            ),
-            MapKind::Capital => (assets.stone_road.clone(), Color::srgb(0.72, 0.72, 0.82)),
-            MapKind::CapitalMansion => (assets.shrine_floor.clone(), Color::srgb(0.62, 0.64, 0.78)),
-            MapKind::MansionMirrorGallery => {
-                (assets.shrine_floor.clone(), Color::srgb(0.58, 0.66, 0.90))
+            MapKind::RiverReedBed => (assets.reed_floor.clone(), Color::srgb(0.96, 0.94, 0.88)),
+            MapKind::PlagueVillage => (assets.plague_floor.clone(), Color::srgb(0.95, 0.92, 0.88)),
+            MapKind::PlagueShrinePath => {
+                (assets.plague_floor.clone(), Color::srgb(0.86, 0.84, 0.90))
             }
-            MapKind::SouthernRoad => (assets.bamboo_path.clone(), Color::srgb(0.82, 0.76, 0.52)),
-            MapKind::ThunderDrumPath => (assets.bamboo_path.clone(), Color::srgb(0.74, 0.78, 0.56)),
-            MapKind::FinalSanctum => (assets.cave_floor.clone(), Color::srgb(0.66, 0.70, 0.88)),
-            MapKind::DreamWaterway => (assets.cave_floor.clone(), Color::srgb(0.62, 0.70, 0.92)),
+            MapKind::Capital => (assets.capital_floor.clone(), Color::srgb(0.96, 0.96, 0.98)),
+            MapKind::CapitalMansion => {
+                (assets.mansion_floor.clone(), Color::srgb(0.96, 0.92, 0.90))
+            }
+            MapKind::MansionMirrorGallery => {
+                (assets.mirror_floor.clone(), Color::srgb(0.94, 0.97, 1.0))
+            }
+            MapKind::SouthernRoad => (assets.south_floor.clone(), Color::srgb(0.98, 0.94, 0.90)),
+            MapKind::ThunderDrumPath => {
+                (assets.thunder_floor.clone(), Color::srgb(0.92, 0.94, 1.0))
+            }
+            MapKind::FinalSanctum => (assets.abyss_floor.clone(), Color::srgb(0.94, 0.92, 1.0)),
+            MapKind::DreamWaterway => (assets.dream_floor.clone(), Color::srgb(0.94, 0.98, 1.0)),
         },
     };
 

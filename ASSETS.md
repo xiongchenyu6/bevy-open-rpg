@@ -31,7 +31,7 @@ Cutouts are generated on a flat chroma background and locally converted to alpha
 | NPC cutouts | 14 | `assets/npcs/ai_*.png`, plus `assets/npcs/star_mage_cutout.png` |
 | Creature cutouts | 9 | `assets/creatures/ai_*.png` |
 | Map props | 5 | `assets/props/ai_*.png` |
-| Tiles | 11 | `assets/tiles/*.png` and `assets/tiles/ai_*.png` |
+| Tiles | 28 | `assets/tiles/*.png` and `assets/tiles/ai_*.png` |
 | Effects | 2 | `assets/effects/light_orb.png`, `assets/effects/skill-vfx-sheet.png` |
 | Actor sheets | 4 | `assets/actors/*.png` |
 
@@ -66,6 +66,29 @@ Late-story NPCs currently added through imagegen:
 
 Raw prompts/seeds: see git history of the generation commands; regenerate via
 `python3 .claude/skills/godogen/tools/comfyui_gen.py image --prompt ... -o ...`.
+
+## Per-map tilesets (2026-07, ComfyUI, 512×512 seamless)
+
+每张章节地图现在有专属墙/地贴图(此前多图共用竹林/灵草砖只调色)。
+命名 `assets/tiles/ai_<map>_wall.png` / `ai_<map>_floor.png`:
+
+| Map | Wall | Floor |
+|-----|------|-------|
+| RiverReedBed 芦苇荡 | 芦苇丛 | 湿滩泥地 |
+| PlagueVillage / PlagueShrinePath 瘴雨村·祠道 | 紫瘴雾岩 | 米色卵石 |
+| Capital 京城 | 朱墙金瓦 | 青砖御道 |
+| CapitalMansion 府邸 | 木格漆墙 | 花梨地板 |
+| MansionMirrorGallery 镜廊 | 铜镜幽光 | 墨玉镜面 |
+| SouthernRoad 南疆道 | 丛林藤蔓 | 红土路 |
+| ThunderDrumPath 雷鼓祭道 | 蓝雷纹岩 | 青黑石板 |
+| FinalSanctum 灵渊终门 | 紫电幽渊 | 蓝渊石 |
+| DreamWaterway 梦水道 | 梦纹水墙 | 幻彩水面 |
+
+生成 prompt 模板:`seamless tileable top-down 2D RPG terrain texture tile
+for a Chinese xianxia game, <描述>, uniform flat lighting, fills the entire
+frame edge to edge, no border, no vignette, crisp fantasy game art`
+(wall/floor 各一固定 seed)。`explore.rs::tile_sprite` 里 tint 改为近白
+(贴图自带颜色),逐格 hash 抖动继续负责去网格感。
 
 ## Font
 
