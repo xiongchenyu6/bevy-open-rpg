@@ -96,6 +96,17 @@
 - capture 新增 rogue-inventory preset;证明包 screenshots/result/7
   (900 帧 + 行囊静帧)。
 
+## 有机地形(第七轮,用户反馈「地图整整方方好丑」)
+
+- 手工 ASCII 矩形地图 → **元胞自动机程序化生成**:噪声填充+四轮平滑成
+  蜿蜒林壁,最大连通域裁剪保证可达,随机 blob 水塘与草丛——每一程地形
+  独一无二且无任何矩形;出生点靠左、传送门取最远格、标记散布远端。
+- 逐格确定性翻转+明暗抖动(hash 驱动),重复贴图不再呈刚性网格。
+- 布局存入 RunSceneState.tiles,战斗往返场景零损重建;
+  explore.rs 增加 MapData::generated 构造器。
+- 主角行走动画(上轮):滑步+HeroWalk/HeroIdle 帧图切换。
+- 证明包 screenshots/result/8(900 帧,无卡死)。
+
 ## 已知限制 / 后续可做
 
 - 本机无 `WAYLAND_DISPLAY`,桌面交互试玩未执行;运行时验证走 lavapipe

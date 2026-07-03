@@ -767,6 +767,15 @@ impl MapData {
         }
     }
 
+    /// Build from procedurally generated tiles (roguelike stages).
+    pub(crate) fn generated(kind: MapKind, tiles: Vec<Vec<Tile>>) -> Self {
+        Self {
+            kind,
+            name: kind.def().name,
+            tiles,
+        }
+    }
+
     pub(crate) fn name(&self) -> &'static str {
         self.name
     }

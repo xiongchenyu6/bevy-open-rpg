@@ -58,7 +58,11 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   `PendingEncounter`+`RunBattleMods`+`AppState::Battle`; other kinds open the
   overlay). Chapter card opens on first map entry per chapter.
 - **`scene.rs`** — the run's core: `advance_stage` (on the `NodeMap` hop)
-  rolls a chapter map (no immediate repeats) and scatters 2–3 markers
+  rolls a chapter tileset (no immediate repeats) and **generates organic
+  terrain procedurally** (cellular-automata tree walls smoothed into blobs,
+  largest-region connectivity pass, blob lakes, scattered grass patches —
+  no hand-authored rectangles; layout persists in `RunSceneState.tiles`),
+  then scatters 2–3 markers
   (pairwise-spread walkable tiles, story beat guaranteed before the boss
   map; boss stage = single demon gate); `spawn_run_scene` renders tiles via
   explore's `tile_sprite`, hero, mist markers (unknown「?」until touched),
@@ -140,8 +144,7 @@ Explore-only).
   the `rogue` preset walks title → card → maps on a cadence script and
   auto-paths through walkable scenes via `RunSceneState.flow`;
   `rogue-inventory` opens the Esc inventory for a still. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/7/` (900 frames + video.mp4, 30s;
-  `inventory_still.png` shows the Esc inventory).
+- Latest proof bundle: `screenshots/result/8/` (900 frames + video.mp4, 30s).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 

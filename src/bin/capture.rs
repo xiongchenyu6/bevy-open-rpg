@@ -218,6 +218,7 @@ fn main() {
             app.world_mut().insert_resource(run);
             let mut scene = RunSceneState {
                 map: MapKind::Village,
+                tiles: Vec::new(),
                 col: -1,
                 row: -1,
                 facing_left: false,
@@ -257,6 +258,7 @@ fn main() {
             // recomputed by the driver as it steers.
             let mut scene = RunSceneState {
                 map: MapKind::Village,
+                tiles: Vec::new(),
                 col: -1,
                 row: -1,
                 facing_left: false,

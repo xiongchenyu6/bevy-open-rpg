@@ -39,6 +39,9 @@ pub struct SceneMarker {
 #[derive(Resource)]
 pub struct RunSceneState {
     pub map: MapKind,
+    /// Procedurally generated terrain for this stage (persists across
+    /// battles so the scene rebuilds identically).
+    pub tiles: Vec<Vec<Tile>>,
     /// Hero grid position; col < 0 means "use the map's spawn point".
     pub col: i32,
     pub row: i32,
@@ -144,7 +147,10 @@ fn recompute_flow(scene: &mut RunSceneState, map: &MapData) {
 /// Build a stage's flow field from scratch (used by capture presets that
 /// hand-craft a `RunSceneState`). Nudges markers off unwalkable tiles.
 pub fn seed_flow(scene: &mut RunSceneState) {
-    let map = MapData::build(scene.map);
+    if scene.tiles.is_empty() {
+        scene.tiles = MapData::build(scene.map).tiles;
+    }
+    let map = MapData::generated(scene.map, scene.tiles.clone());
     for marker in &mut scene.markers {
         if !map.at(marker.col, marker.row).walkable() {
             'search: for radius in 1..10 {
@@ -166,6 +172,160 @@ pub fn seed_flow(scene: &mut RunSceneState) {
 // ---------------------------------------------------------------------------
 // Stage generation (runs on the `NodeMap` hop state)
 // ---------------------------------------------------------------------------
+
+/// Cellular-automata organic terrain: winding tree walls, blob lakes and
+/// scattered grass — no hand-authored rectangles.
+fn generate_stage_tiles(rng: &mut Rng) -> Vec<Vec<Tile>> {
+    let (w, h) = (MAP_W as usize, MAP_H as usize);
+    loop {
+        // 1. Noise fill + guaranteed border.
+        let mut walls = vec![vec![false; w]; h];
+        for (r, row) in walls.iter_mut().enumerate() {
+            for (c, cell) in row.iter_mut().enumerate() {
+                let edge = r == 0 || c == 0 || r == h - 1 || c == w - 1;
+                *cell = edge || rng.chance(0.40);
+            }
+        }
+        // 2. Smooth into organic blobs.
+        for _ in 0..4 {
+            let snapshot = walls.clone();
+            for r in 1..h - 1 {
+                for c in 1..w - 1 {
+                    let mut n = 0;
+                    for dr in -1i32..=1 {
+                        for dc in -1i32..=1 {
+                            if snapshot[(r as i32 + dr) as usize][(c as i32 + dc) as usize] {
+                                n += 1;
+                            }
+                        }
+                    }
+                    walls[r][c] = n >= 5;
+                }
+            }
+        }
+        // 3. Keep only the largest open region.
+        let mut region = vec![vec![0u16; w]; h];
+        let mut sizes = vec![0usize];
+        for r in 0..h {
+            for c in 0..w {
+                if walls[r][c] || region[r][c] != 0 {
+                    continue;
+                }
+                let id = sizes.len() as u16;
+                let mut size = 0;
+                let mut queue = std::collections::VecDeque::from([(c, r)]);
+                region[r][c] = id;
+                while let Some((qc, qr)) = queue.pop_front() {
+                    size += 1;
+                    for (dc, dr) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                        let (nc, nr) = (qc as i32 + dc, qr as i32 + dr);
+                        if nc < 0 || nr < 0 || nc >= w as i32 || nr >= h as i32 {
+                            continue;
+                        }
+                        let (nc, nr) = (nc as usize, nr as usize);
+                        if !walls[nr][nc] && region[nr][nc] == 0 {
+                            region[nr][nc] = id;
+                            queue.push_back((nc, nr));
+                        }
+                    }
+                }
+                sizes.push(size);
+            }
+        }
+        let Some((best_id, &best_size)) = sizes.iter().enumerate().skip(1).max_by_key(|(_, s)| **s)
+        else {
+            continue;
+        };
+        if best_size < 180 {
+            continue; // too cramped — reroll
+        }
+        let mut tiles = vec![vec![Tile::Wall; w]; h];
+        for r in 0..h {
+            for c in 0..w {
+                if region[r][c] == best_id as u16 {
+                    tiles[r][c] = Tile::Path;
+                }
+            }
+        }
+        // 4. A blob lake or two (unwalkable, kept small to preserve routes).
+        for _ in 0..rng.range(1, 2) {
+            let mut placed = 0;
+            let (mut c, mut r) = (rng.range(4, MAP_W - 5), rng.range(3, MAP_H - 4));
+            for _ in 0..40 {
+                if placed >= 10 {
+                    break;
+                }
+                if tiles[r as usize][c as usize] == Tile::Path {
+                    tiles[r as usize][c as usize] = Tile::Water;
+                    placed += 1;
+                }
+                match rng.range(0, 3) {
+                    0 => c = (c + 1).min(MAP_W - 2),
+                    1 => c = (c - 1).max(1),
+                    2 => r = (r + 1).min(MAP_H - 2),
+                    _ => r = (r - 1).max(1),
+                }
+            }
+        }
+        // 5. Grass patches (walkable, roll encounters).
+        for _ in 0..rng.range(5, 8) {
+            let (mut c, mut r) = (rng.range(2, MAP_W - 3), rng.range(2, MAP_H - 3));
+            for _ in 0..rng.range(8, 18) {
+                if tiles[r as usize][c as usize] == Tile::Path {
+                    tiles[r as usize][c as usize] = Tile::Grass;
+                }
+                match rng.range(0, 3) {
+                    0 => c = (c + 1).min(MAP_W - 2),
+                    1 => c = (c - 1).max(1),
+                    2 => r = (r + 1).min(MAP_H - 2),
+                    _ => r = (r - 1).max(1),
+                }
+            }
+        }
+        // 6. Water may have split the open area — keep the largest walkable
+        // region only (stray pockets become walls).
+        let map = MapData::generated(MapKind::Village, tiles.clone());
+        let mut seed = None;
+        'find: for r in 0..h {
+            for c in 0..w {
+                if tiles[r][c].walkable() {
+                    seed = Some((c as i32, r as i32));
+                    break 'find;
+                }
+            }
+        }
+        let Some(seed) = seed else { continue };
+        let dist = distance_field(&map, &[seed]);
+        // pick the true largest region: try a few seeds, keep best
+        let mut best = (seed, dist);
+        for _ in 0..4 {
+            let (c, r) = (rng.range(1, MAP_W - 2), rng.range(1, MAP_H - 2));
+            if tiles[r as usize][c as usize].walkable() {
+                let d = distance_field(&map, &[(c, r)]);
+                let count =
+                    |f: &Vec<Vec<u16>>| f.iter().flatten().filter(|v| **v != u16::MAX).count();
+                if count(&d) > count(&best.1) {
+                    best = ((c, r), d);
+                }
+            }
+        }
+        let reach = best.1;
+        let mut open = 0;
+        for r in 0..h {
+            for c in 0..w {
+                if tiles[r][c].walkable() && reach[r][c] == u16::MAX {
+                    tiles[r][c] = Tile::Wall;
+                } else if tiles[r][c].walkable() {
+                    open += 1;
+                }
+            }
+        }
+        if open < 150 {
+            continue;
+        }
+        return tiles;
+    }
+}
 
 /// Roll a marker kind for a normal stage.
 fn roll_marker_kind(rng: &mut Rng, stage: usize) -> NodeKind {
@@ -195,26 +355,47 @@ pub fn advance_stage(
         return;
     };
     let map_kind = run.roll_map(&mut rng);
-    let map = MapData::build(map_kind);
-    let spawn = map.spawn();
+    let mut tiles = generate_stage_tiles(&mut rng);
 
-    // Portals.
-    let mut portals = Vec::new();
-    for r in 0..MAP_H {
-        for c in 0..MAP_W {
-            if map.at(c, r) == Tile::Portal {
-                portals.push((c, r));
+    // Spawn on a walkable tile near the left edge.
+    let mut spawn = (1, MAP_H / 2);
+    'spawn: for c in 1..MAP_W {
+        let mut rows: Vec<i32> = (1..MAP_H - 1).collect();
+        // shuffle-ish: random start offset
+        let off = rng.range(0, rows.len() as i32 - 1) as usize;
+        rows.rotate_left(off);
+        for r in rows {
+            if tiles[r as usize][c as usize].walkable() {
+                spawn = (c, r);
+                break 'spawn;
             }
         }
     }
 
-    // Candidate tiles: walkable, reasonably far from spawn and the portal.
+    let map = MapData::generated(map_kind, tiles.clone());
     let from_spawn = distance_field(&map, &[spawn]);
+
+    // Portal: the farthest reachable tile becomes the exit gate.
+    let mut portal = spawn;
+    let mut best_d = 0u16;
+    for r in 0..MAP_H {
+        for c in 0..MAP_W {
+            let d = from_spawn[r as usize][c as usize];
+            if d != u16::MAX && d > best_d {
+                best_d = d;
+                portal = (c, r);
+            }
+        }
+    }
+    tiles[portal.1 as usize][portal.0 as usize] = Tile::Portal;
+
+    // Marker candidates: reachable, away from both spawn and portal.
     let mut candidates: Vec<(i32, i32)> = Vec::new();
     for r in 0..MAP_H {
         for c in 0..MAP_W {
             let d = from_spawn[r as usize][c as usize];
-            if d != u16::MAX && d >= 6 && map.at(c, r) != Tile::Portal {
+            let dp = (c - portal.0).abs() + (r - portal.1).abs();
+            if d != u16::MAX && d >= 6 && dp >= 4 && tiles[r as usize][c as usize].walkable() {
                 candidates.push((c, r));
             }
         }
@@ -222,20 +403,15 @@ pub fn advance_stage(
 
     let mut markers: Vec<SceneMarker> = Vec::new();
     if run.is_boss_stage() {
-        // Boss map: a single demon gate at the farthest reachable tile.
-        let far = candidates
-            .iter()
-            .copied()
-            .max_by_key(|&(c, r)| from_spawn[r as usize][c as usize])
-            .unwrap_or(spawn);
+        // Boss map: the gate replaces the portal at the farthest tile.
+        tiles[portal.1 as usize][portal.0 as usize] = Tile::Path;
         markers.push(SceneMarker {
             kind: NodeKind::Boss,
-            col: far.0,
-            row: far.1,
+            col: portal.0,
+            row: portal.1,
             cleared: false,
         });
     } else {
-        // 2–3 spread-out objectives.
         let count = rng.range(2, 3) as usize;
         let mut guard = 0;
         while markers.len() < count && guard < 400 && !candidates.is_empty() {
@@ -263,16 +439,23 @@ pub fn advance_stage(
         }
     }
 
+    let portals = if run.is_boss_stage() {
+        Vec::new()
+    } else {
+        vec![portal]
+    };
     let mut scene = RunSceneState {
         map: map_kind,
-        col: -1,
-        row: -1,
+        tiles,
+        col: spawn.0,
+        row: spawn.1,
         facing_left: false,
         markers,
         portals,
         flow: Vec::new(),
         cooldown: 0.0,
     };
+    let map = MapData::generated(map_kind, scene.tiles.clone());
     recompute_flow(&mut scene, &map);
     commands.insert_resource(scene);
     next.set(AppState::RunScene);
@@ -300,17 +483,25 @@ pub fn spawn_run_scene(
         return;
     };
     let scope = || DespawnOnExit(AppState::RunScene);
-    let map = MapData::build(scene.map);
+    if scene.tiles.is_empty() {
+        scene.tiles = MapData::build(scene.map).tiles;
+    }
+    let map = MapData::generated(scene.map, scene.tiles.clone());
 
-    // Tiles.
+    // Tiles, with a deterministic per-tile flip + brightness jitter so the
+    // repeated textures stop reading as a rigid grid.
     for row in 0..MAP_H {
         for col in 0..MAP_W {
             let p = tile_to_world(col, row);
-            commands.spawn((
-                tile_sprite(map.at(col, row), scene.map, &assets),
-                Transform::from_xyz(p.x, p.y, 0.0),
-                scope(),
-            ));
+            let mut sprite = tile_sprite(map.at(col, row), scene.map, &assets);
+            let hash =
+                ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
+            sprite.flip_x = hash & 1 == 1;
+            sprite.flip_y = map.at(col, row) == Tile::Wall && hash & 2 == 2;
+            let tint = 0.90 + ((hash >> 3) % 8) as f32 * 0.02;
+            let c = sprite.color.to_srgba();
+            sprite.color = Color::srgb(c.red * tint, c.green * tint, c.blue * tint);
+            commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
         }
     }
 
@@ -323,7 +514,13 @@ pub fn spawn_run_scene(
             }
             let p = tile_to_world(col, row);
             let mut sprite = tile_sprite(Tile::Wall, scene.map, &assets);
-            sprite.color = sprite.color.with_alpha(0.9);
+            let hash =
+                ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
+            sprite.flip_x = hash & 1 == 1;
+            sprite.flip_y = hash & 2 == 2;
+            let tint = 0.82 + ((hash >> 3) % 8) as f32 * 0.02;
+            let c = sprite.color.to_srgba();
+            sprite.color = Color::srgba(c.red * tint, c.green * tint, c.blue * tint, 0.9);
             commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
         }
     }
