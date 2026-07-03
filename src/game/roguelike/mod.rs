@@ -14,10 +14,12 @@ pub mod content;
 pub mod event;
 pub mod graph;
 pub mod map_ui;
+pub mod scene;
 pub mod screens;
 
 use super::battle::{EncounterKind, EncounterZone};
 use super::core::Rng;
+use super::explore::MapKind;
 use super::quest::BossKind;
 use super::state::AppState;
 use graph::{NodeGraph, NodeKind};
@@ -142,6 +144,8 @@ pub const CHAPTER_COUNT: usize = 4;
 
 pub struct ChapterDef {
     pub title: &'static str,
+    /// Walkable tile maps this chapter's nodes play out on.
+    pub maps: &'static [MapKind],
     /// Encounter pools for normal / elite fights in this chapter.
     pub zones: &'static [EncounterZone],
     /// Boss candidates — one is rolled per run (randomness across runs).
@@ -157,6 +161,12 @@ pub struct ChapterDef {
 pub const CHAPTERS: [ChapterDef; CHAPTER_COUNT] = [
     ChapterDef {
         title: "第一卷 · 桃溪村誓",
+        maps: &[
+            MapKind::Village,
+            MapKind::Bamboo,
+            MapKind::Cave,
+            MapKind::MoonEchoCorridor,
+        ],
         zones: &[EncounterZone::Village, EncounterZone::Bamboo],
         bosses: &[BossKind::MoonWraith],
         enemy_hp_mul: 0.75,
@@ -165,6 +175,12 @@ pub const CHAPTERS: [ChapterDef; CHAPTER_COUNT] = [
     },
     ChapterDef {
         title: "第二卷 · 江雾疫火",
+        maps: &[
+            MapKind::RiverTown,
+            MapKind::RiverReedBed,
+            MapKind::PlagueVillage,
+            MapKind::PlagueShrinePath,
+        ],
         zones: &[EncounterZone::RiverTown, EncounterZone::PlagueVillage],
         bosses: &[BossKind::RiverDemon, BossKind::MiasmaRoot],
         enemy_hp_mul: 1.10,
@@ -173,6 +189,13 @@ pub const CHAPTERS: [ChapterDef; CHAPTER_COUNT] = [
     },
     ChapterDef {
         title: "第三卷 · 京华南疆",
+        maps: &[
+            MapKind::Capital,
+            MapKind::CapitalMansion,
+            MapKind::MansionMirrorGallery,
+            MapKind::SouthernRoad,
+            MapKind::ThunderDrumPath,
+        ],
         zones: &[EncounterZone::Capital, EncounterZone::SouthernRoad],
         bosses: &[BossKind::MirrorMinister, BossKind::ThunderQilin],
         enemy_hp_mul: 1.50,
@@ -181,6 +204,7 @@ pub const CHAPTERS: [ChapterDef; CHAPTER_COUNT] = [
     },
     ChapterDef {
         title: "终卷 · 心渊照影",
+        maps: &[MapKind::FinalSanctum, MapKind::DreamWaterway],
         zones: &[EncounterZone::FinalSanctum],
         bosses: &[BossKind::DreamEclipse],
         enemy_hp_mul: 1.85,
@@ -285,6 +309,12 @@ impl RunState {
 
     pub fn has_relic(&self, relic: Relic) -> bool {
         self.relics.contains(&relic)
+    }
+
+    /// Pick a random walkable map for this chapter's node scenes.
+    pub fn roll_map(&self, rng: &mut Rng) -> MapKind {
+        let maps = self.chapter_def().maps;
+        maps[rng.range(0, maps.len() as i32 - 1) as usize]
     }
 
     /// Pick a random encounter zone for this chapter.
@@ -518,6 +548,20 @@ impl Plugin for RoguelikePlugin {
                 )
                     .chain()
                     .run_if(in_state(AppState::NodeMap)),
+            )
+            .add_systems(OnEnter(AppState::RunScene), scene::spawn_run_scene)
+            .add_systems(
+                Update,
+                (
+                    event::run_dialogue_input,
+                    scene::run_scene_movement,
+                    scene::run_scene_finish,
+                    scene::animate_marker_glyph,
+                    map_ui::update_run_hud,
+                    event::update_run_dialogue_ui,
+                )
+                    .chain()
+                    .run_if(in_state(AppState::RunScene)),
             )
             .add_systems(OnEnter(AppState::Reward), screens::spawn_reward)
             .add_systems(

@@ -17,6 +17,8 @@ pub enum AppState {
     #[default]
     Title,
     NodeMap,
+    /// Walkable tile-map scene for the node picked on the `NodeMap`.
+    RunScene,
     Battle,
     Reward,
     Ending,

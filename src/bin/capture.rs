@@ -1108,7 +1108,46 @@ fn set_intent(app: &mut App, f: u32) {
     // chapter card → node picks → battles → rewards → events), with periodic
     // cursor-down presses to vary node/option choices.
     if app.world().resource::<CaptureRogue>().0 {
-        let in_reward = *app.world().resource::<State<AppState>>().get() == AppState::Reward;
+        let ui_state = *app.world().resource::<State<AppState>>().get();
+
+        // Walkable node scene: steer the hero along the BFS flow field
+        // toward the objective; confirms advance any overlay that opens.
+        if ui_state == AppState::RunScene && battle_frame.is_none() {
+            use love_rpg::game::core::{MAP_H, MAP_W};
+            use love_rpg::game::roguelike::scene::RunSceneState;
+            let step = app
+                .world()
+                .get_resource::<RunSceneState>()
+                .and_then(|scene| {
+                    if scene.flow.is_empty() {
+                        return None;
+                    }
+                    let mut best: Option<(IVec2, u16)> = None;
+                    for (dc, dr) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let (nc, nr) = (scene.col + dc, scene.row + dr);
+                        if nc < 0 || nr < 0 || nc >= MAP_W || nr >= MAP_H {
+                            continue;
+                        }
+                        let d = scene.flow[nr as usize][nc as usize];
+                        if d == u16::MAX {
+                            continue;
+                        }
+                        if best.is_none_or(|(_, bd)| d < bd) {
+                            best = Some((IVec2::new(dc, dr), d));
+                        }
+                    }
+                    best.map(|(dir, _)| dir)
+                });
+            let mut intent = app.world_mut().resource_mut::<Intent>();
+            intent.clear();
+            intent.move_dir = step;
+            if f % 18 == 12 {
+                intent.confirm = true;
+            }
+            return;
+        }
+
+        let in_reward = ui_state == AppState::Reward;
         let mut intent = app.world_mut().resource_mut::<Intent>();
         intent.clear();
         if let Some(battle_frame) = battle_frame {

@@ -4,11 +4,10 @@
 
 use bevy::prelude::*;
 
-use super::super::battle::PendingEncounter;
 use super::super::core::{GameFont, Intent, PlayerStats, Rng};
+use super::RunState;
 use super::event::{self, RunDialogue};
 use super::graph::NodeKind;
-use super::{FightRank, RunState, battle_mods_for, encounter_kind_for};
 use crate::game::state::AppState;
 
 // Layout constants (world units; the persistent Camera2d sits at the origin).
@@ -235,7 +234,7 @@ pub fn node_map_input(
     mut cursor: ResMut<MapCursor>,
     run: Option<ResMut<RunState>>,
     mut rng: ResMut<Rng>,
-    mut dialogue: ResMut<RunDialogue>,
+    dialogue: ResMut<RunDialogue>,
     mut next: ResMut<NextState<AppState>>,
     mut nodes: Query<(&MapNodeSprite, &mut Sprite)>,
 ) {
@@ -266,46 +265,29 @@ pub fn node_map_input(
         cursor.0 = 0;
         let kind = run.graph.nodes[target].kind;
 
-        // Repaint the travelled node immediately (scene isn't respawned for
-        // overlay nodes).
+        // Repaint the travelled node immediately.
         for (marker, mut sprite) in &mut nodes {
             if marker.0 == target {
                 sprite.color = Color::srgb(0.9, 0.8, 0.5);
             }
         }
 
-        match kind {
-            NodeKind::Fight | NodeKind::Elite | NodeKind::Boss => {
-                let rank = match kind {
-                    NodeKind::Elite => FightRank::Elite,
-                    NodeKind::Boss => FightRank::Boss,
-                    _ => FightRank::Normal,
-                };
-                let zone = run.roll_zone(&mut rng);
-                run.current_fight = Some(rank);
-                commands.insert_resource(PendingEncounter {
-                    zone,
-                    kind: encounter_kind_for(&run, run.graph.nodes[target].kind),
-                });
-                commands.insert_resource(battle_mods_for(&run, rank));
-                next.set(AppState::Battle);
-            }
-            NodeKind::Event => {
-                let index = run.draw_event(&mut rng);
-                dialogue.open_event(index);
-            }
-            NodeKind::Story => {
-                let roll =
-                    rng.range(0, super::content::story_count(run.chapter) as i32 - 1) as usize;
-                dialogue.open_story(run.chapter, roll);
-            }
-            NodeKind::Rest => {
-                dialogue.open_rest();
-            }
-            NodeKind::Market => {
-                dialogue.open_market();
-            }
-        }
+        // Every node plays out on a real walkable tile map: drop the hero
+        // into a random chapter map; the scene fires the payload when the
+        // marked objective is reached.
+        let map = run.roll_map(&mut rng);
+        commands.insert_resource(super::scene::RunSceneState {
+            kind,
+            map,
+            col: 0,
+            row: 0,
+            facing_left: false,
+            objective: (0, 0),
+            flow: Vec::new(),
+            resolved: false,
+            cooldown: 0.0,
+        });
+        next.set(AppState::RunScene);
     }
     intent.clear();
 }

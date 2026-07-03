@@ -24,10 +24,10 @@ for legacy capture presets but is no longer the main loop.
 
 ## States (`src/game/state.rs`)
 
-`AppState`: `Title` (default) | `NodeMap` | `Battle` | `Reward` | `Ending` |
-`Explore` (legacy). Run-mode dialogue/events are an overlay resource inside
-`NodeMap`, not a state. `Battle` is shared by both flows — the presence of the
-`RunState` resource marks a roguelike battle.
+`AppState`: `Title` (default) | `NodeMap` | `RunScene` | `Battle` | `Reward` |
+`Ending` | `Explore` (legacy). Run-mode dialogue/events are an overlay resource
+inside `NodeMap`/`RunScene`, not a state. `Battle` is shared by both flows —
+the presence of the `RunState` resource marks a roguelike battle.
 
 ## Roguelike core (`src/game/roguelike/`)
 
@@ -54,6 +54,15 @@ for legacy capture presets but is no longer the main loop.
   (up/down picks a reachable node, confirm travels & dispatches: battles set
   `PendingEncounter`+`RunBattleMods`+`AppState::Battle`; other kinds open the
   overlay). Chapter card opens on first map entry per chapter.
+- **`scene.rs`** — walkable node scenes(实景节点): picking any node drops the
+  hero onto a real tile map (random `MapKind` from the chapter's `maps` pool,
+  rendered via explore's `tile_sprite`); grid movement reads `Intent`;
+  reaching the marked objective (BFS-farthest walkable tile; marker art per
+  kind — 灵儿 paperdoll for 缘, gate for 魔, lantern/board/orb otherwise)
+  fires the payload: battles set `PendingEncounter`+mods, other kinds open
+  the `RunDialogue` overlay in place; overlay close → back to `NodeMap`.
+  `RunSceneState` exposes col/row/objective/BFS `flow` for the capture
+  driver's auto-pathing. Four soft fill lights keep the map readable.
 - **`screens.rs`** — Title (starts a run: resets `PlayerStats` [+2 atk/+1 def/
   +1 potion baseline], reseeds `Rng` with wall clock, inserts `RunState`);
   Reward (three-choice loot post-battle, relics guaranteed on elite/boss;
@@ -108,6 +117,7 @@ Explore-only).
 ## Controls
 
 - 节点图: 上/下 选路 · 空格 前进/继续对话/确认选项
+- 实景节点: 方向键/WASD 移动,走到发光标记处触发战斗或事件
 - 战斗: 上/下 选指令 · 空格/Enter 确认(攻击/仙术/合击/物品/逃跑)
 - 标题/奖励/结局: 上/下 + 空格
 
@@ -118,9 +128,9 @@ Explore-only).
   `WAYLAND_DISPLAY`)
 - Headless proof: `cargo run --bin capture -- <out> <frames> rogue` with
   lavapipe (`VK_ICD_FILENAMES=/run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json`);
-  the `rogue` preset walks title → card → nodes → battles → rewards on a
-  cadence script. Legacy presets still work (capture sets `Explore` for them).
-- Latest proof bundle: `screenshots/result/4/` (900 frames + video.mp4, 30s).
+  the `rogue` preset walks title → card → nodes on a cadence script and
+  auto-paths through walkable scenes via `RunSceneState.flow`. Legacy presets still work (capture sets `Explore` for them).
+- Latest proof bundle: `screenshots/result/5/` (900 frames + video.mp4, 30s).
 
 ## UI art (`assets/ui/`, generated via remote ComfyUI)
 

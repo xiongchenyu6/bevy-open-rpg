@@ -682,7 +682,7 @@ impl Default for CurrentMap {
 }
 
 #[derive(Resource)]
-struct ExploreAssets {
+pub struct ExploreAssets {
     grass: Handle<Image>,
     forest: Handle<Image>,
     water: Handle<Image>,
@@ -725,7 +725,7 @@ pub enum Tile {
 }
 
 impl Tile {
-    fn walkable(self) -> bool {
+    pub(crate) fn walkable(self) -> bool {
         matches!(self, Tile::Path | Tile::Grass | Tile::Portal)
     }
 }
@@ -738,7 +738,7 @@ pub struct MapData {
 }
 
 impl MapData {
-    fn build(kind: MapKind) -> Self {
+    pub(crate) fn build(kind: MapKind) -> Self {
         let def = kind.def();
         let mut tiles = Vec::with_capacity(MAP_H as usize);
         for row in def.rows.iter() {
@@ -767,14 +767,18 @@ impl MapData {
         }
     }
 
-    fn at(&self, col: i32, row: i32) -> Tile {
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
+    }
+
+    pub(crate) fn at(&self, col: i32, row: i32) -> Tile {
         if col < 0 || row < 0 || col >= MAP_W || row >= MAP_H {
             return Tile::Wall;
         }
         self.tiles[row as usize][col as usize]
     }
 
-    fn spawn(&self) -> (i32, i32) {
+    pub(crate) fn spawn(&self) -> (i32, i32) {
         let rows = self.kind.def().rows;
         for (r, row) in rows.iter().enumerate() {
             if let Some(c) = row.chars().position(|ch| ch == 'P') {
@@ -4919,7 +4923,7 @@ fn ambient_profile(kind: MapKind) -> AmbientProfile {
     }
 }
 
-fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> Sprite {
+pub(crate) fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> Sprite {
     let (image, color) = match tile {
         Tile::Wall => match kind {
             MapKind::Village => (assets.forest.clone(), Color::srgb(0.22, 0.43, 0.23)),
