@@ -8,7 +8,7 @@ use super::quest::{BondBonus, BossKind, CampBonus, Companion, QuestLog, ShrineBl
 use super::roguelike::{FightRank, RunBattleMods, RunOutcome, RunState};
 use super::state::AppState;
 
-const MENU: [&str; 5] = ["攻击", "仙术", "合击", "物品", "逃跑"];
+const MENU: [&str; 6] = ["攻击", "御守", "仙术", "合击", "物品", "逃跑"];
 const COMBO_COST: i32 = 8;
 
 // ---------------------------------------------------------------------------
@@ -242,11 +242,51 @@ enum Phase {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PlayerAction {
     Attack,
+    Guard,
     Spell,
     Combo,
     Item,
     Flee,
 }
+
+/// 敌人下一手的预告(杀戮尖塔式意图):回合开始就亮出来,
+/// 玩家据此决定是抢输出还是御守卸力。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnemyIntent {
+    /// 普通攻击。
+    Strike,
+    /// 蓄力重击(约 1.8×)——御守的最佳时机。
+    Heavy,
+    /// 凝气:不攻击,回血并提升防御——抢输出的最佳时机。
+    Gather,
+    /// 摄灵:较轻的一击,但吸走灵力。
+    Drain,
+}
+
+impl EnemyIntent {
+    fn describe(self) -> &'static str {
+        match self {
+            EnemyIntent::Strike => "意图:张爪欲击",
+            EnemyIntent::Heavy => "意图:妖气翻涌,蓄力重击!",
+            EnemyIntent::Gather => "意图:凝气回息(防备上升)",
+            EnemyIntent::Drain => "意图:虚影缠绕,欲摄灵力",
+        }
+    }
+}
+
+fn roll_intent(rng: &mut Rng) -> EnemyIntent {
+    match rng.range(0, 100) {
+        n if n < 45 => EnemyIntent::Strike,
+        n if n < 70 => EnemyIntent::Heavy,
+        n if n < 85 => EnemyIntent::Gather,
+        _ => EnemyIntent::Drain,
+    }
+}
+
+/// 气势上限:攻击/仙术各叠 1 层,满层可施展绝技·剑气爆发。
+const MOMENTUM_MAX: u32 = 3;
+/// 御守回合回复的灵力。
+const GUARD_MP_RESTORE: i32 = 4;
 
 struct EnemyInstance {
     name: String,
@@ -266,6 +306,9 @@ struct BattleState {
     enemy_turns: u32,
     menu_index: usize,
     player_action: Option<PlayerAction>,
+    intent: EnemyIntent,
+    guarding: bool,
+    momentum: u32,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
@@ -541,6 +584,9 @@ fn spawn_battle(
         enemy_turns: 0,
         menu_index: 0,
         player_action: None,
+        intent: roll_intent(&mut rng),
+        guarding: false,
+        momentum: 0,
         blessing,
         camp_bonus,
         bond_bonus,
@@ -997,9 +1043,18 @@ fn battle_input(
                     extra,
                 );
             }
+            state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
             start_player_acting(&mut state, PlayerAction::Attack);
         }
         1 => {
+            // 御守:本回合卸去大半来势,顺势回灵。
+            state.guarding = true;
+            stats.mp = (stats.mp + GUARD_MP_RESTORE).min(stats.max_mp);
+            state.message =
+                format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {GUARD_MP_RESTORE} 点灵力。");
+            start_player_acting(&mut state, PlayerAction::Guard);
+        }
+        2 => {
             // 仙术：御剑术 / 万剑诀
             let spell_cost = (quest.spell_cost() + relic_spell_cost).max(1);
             let spell_name = quest.spell_name();
@@ -1057,10 +1112,36 @@ fn battle_input(
                     ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
                     dmg,
                 );
+                state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
                 start_player_acting(&mut state, PlayerAction::Spell);
             }
         }
-        2 => {
+        3 if run.is_some() => {
+            // 绝技·剑气爆发:气势满层时的一锤定音。
+            if state.momentum < MOMENTUM_MAX {
+                state.message = format!(
+                    "气势未足({}/{MOMENTUM_MAX})——连续攻击或施术蓄满气势,方可施展绝技。",
+                    state.momentum
+                );
+            } else {
+                let base = (stats.atk * 2 - state.enemy.def + rng.range(2, 9)).max(3);
+                let dmg =
+                    (((base + relic_attack + relic_spell) as f32) * hunter_mul).round() as i32;
+                state.enemy.hp -= dmg;
+                state.momentum = 0;
+                state.message =
+                    format!("李逍遥 气势鼎盛,施展绝技·剑气爆发!剑光如潮水倾泻,造成 {dmg} 点伤害!");
+                spawn_combo_impact(&mut commands, &anims, &lights);
+                spawn_damage_text(
+                    &mut commands,
+                    &font,
+                    ENEMY_POS + Vec3::new(118.0, 84.0, 0.0),
+                    dmg,
+                );
+                start_player_acting(&mut state, PlayerAction::Combo);
+            }
+        }
+        3 => {
             // 合击：逍遥、灵儿、林月衡
             if !combo_unlocked(&quest) {
                 state.message = "羁绊未成，暂时无法施展合击。".into();
@@ -1095,7 +1176,7 @@ fn battle_input(
                 start_player_acting(&mut state, PlayerAction::Combo);
             }
         }
-        3 => {
+        4 => {
             // 物品：药水
             if stats.potions == 0 {
                 state.message = "药水已经用完了！".into();
@@ -1935,45 +2016,77 @@ fn begin_enemy_turn(
 ) -> EnemyAttackResult {
     let turn_index = state.enemy_turns;
     state.enemy_turns += 1;
+    let guarding = state.guarding;
+    state.guarding = false;
+
     if let EncounterKind::Boss(boss) = state.encounter_kind {
-        if let Some(result) = begin_boss_special_turn(boss, turn_index, state, stats, rng) {
+        if let Some(result) = begin_boss_special_turn(boss, turn_index, state, stats, rng, guarding)
+        {
+            state.intent = next_intent(state, rng);
             return result;
         }
     }
 
-    let low = state.enemy.hp * 100 / state.enemy.max_hp.max(1) < 35;
-    let (dmg, strong) = if low && rng.chance(0.4) {
-        let raw = ((state.enemy.atk as f32 * 1.6) as i32 - stats.def + rng.range(0, 4)).max(1);
-        let blocked = blessing_guard_block(state.blessing, raw);
-        let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
-        let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard - strong_guard).max(0);
+    let intent = state.intent;
+    let (dmg, strong) = if intent == EnemyIntent::Gather {
+        // 凝气回合:不攻击,回血并提升防御——错过输出窗口是玩家的损失。
+        let heal = (state.enemy.max_hp / 12).max(3);
+        state.enemy.hp = (state.enemy.hp + heal).min(state.enemy.max_hp);
+        state.enemy.def += 1;
         state.message = format!(
-            "{} 困兽犹斗，凶猛一击！造成 {} 点伤害！",
-            state.enemy.name, dmg
+            "{} 凝气回息,恢复 {heal} 点气血,妖气愈发凝实(防御 +1)。",
+            state.enemy.name
         );
-        append_blessing_guard_line(&mut state.message, blocked);
-        append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
-        append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
-        append_relic_guard_line(&mut state.message, relic_guard);
-        (dmg, true)
+        if guarding {
+            state.message.push_str("\n御守落空——妖物这一手并未出击。");
+        }
+        (0, false)
     } else {
-        let raw = (state.enemy.atk - stats.def + rng.range(-2, 3)).max(1);
+        let (mult, strong) = match intent {
+            EnemyIntent::Heavy => (1.8, true),
+            EnemyIntent::Drain => (0.7, false),
+            _ => (1.0, false),
+        };
+        let raw = ((state.enemy.atk as f32 * mult) as i32 - stats.def + rng.range(-2, 4)).max(1);
         let blocked = blessing_guard_block(state.blessing, raw);
         let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
         let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-        let dmg = (raw - blocked - camp_blocked - bond_blocked - relic_guard).max(0);
-        state.message = format!(
-            "{} 张牙舞爪，对 李逍遥 造成 {} 点伤害！",
-            state.enemy.name, dmg
-        );
+        let strong_cut = if strong { strong_guard } else { 0 };
+        let mut dmg =
+            (raw - blocked - camp_blocked - bond_blocked - relic_guard - strong_cut).max(0);
+        let mut guard_note = String::new();
+        if guarding {
+            let absorbed = dmg - dmg * 35 / 100;
+            dmg -= absorbed;
+            guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
+        }
+        state.message = match intent {
+            EnemyIntent::Heavy => format!(
+                "{} 蓄力已足,一记重击轰然落下!造成 {dmg} 点伤害!",
+                state.enemy.name
+            ),
+            EnemyIntent::Drain => {
+                let drained = 3.min(stats.mp);
+                stats.mp -= drained;
+                format!(
+                    "{} 虚影缠身,造成 {dmg} 点伤害,并摄走 {drained} 点灵力!",
+                    state.enemy.name
+                )
+            }
+            _ => format!(
+                "{} 张牙舞爪，对 李逍遥 造成 {dmg} 点伤害！",
+                state.enemy.name
+            ),
+        };
         append_blessing_guard_line(&mut state.message, blocked);
         append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
         append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
         append_relic_guard_line(&mut state.message, relic_guard);
-        (dmg, false)
+        state.message.push_str(&guard_note);
+        (dmg, strong)
     };
     stats.hp -= dmg;
+    state.intent = next_intent(state, rng);
     state.phase = Phase::EnemyActing;
     state.timer = 0.8;
     state.player_action = None;
@@ -1983,12 +2096,21 @@ fn begin_enemy_turn(
     }
 }
 
+/// 掷下一回合的意图;首领每逢秘法回合(每三回合)提前亮出重击预警。
+fn next_intent(state: &BattleState, rng: &mut Rng) -> EnemyIntent {
+    if matches!(state.encounter_kind, EncounterKind::Boss(_)) && state.enemy_turns % 3 == 0 {
+        return EnemyIntent::Heavy;
+    }
+    roll_intent(rng)
+}
+
 fn begin_boss_special_turn(
     boss: BossKind,
     turn_index: u32,
     state: &mut BattleState,
     stats: &mut PlayerStats,
     rng: &mut Rng,
+    guarding: bool,
 ) -> Option<EnemyAttackResult> {
     if turn_index % 3 != 0 {
         return None;
@@ -1998,7 +2120,13 @@ fn begin_boss_special_turn(
     let blocked = blessing_guard_block(state.blessing, raw);
     let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
     let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-    let dmg = raw - blocked - camp_blocked - bond_blocked;
+    let mut dmg = (raw - blocked - camp_blocked - bond_blocked).max(0);
+    let mut guard_note = String::new();
+    if guarding {
+        let absorbed = dmg - dmg * 35 / 100;
+        dmg -= absorbed;
+        guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
+    }
     stats.hp -= dmg;
     if mp_drain > 0 {
         stats.mp = (stats.mp - mp_drain).max(0);
@@ -2011,6 +2139,7 @@ fn begin_boss_special_turn(
     append_blessing_guard_line(&mut state.message, blocked);
     append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
     append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
+    state.message.push_str(&guard_note);
     if mp_drain > 0 {
         state
             .message
@@ -2472,6 +2601,7 @@ fn update_battle_ui(
     state: Res<BattleState>,
     stats: Res<PlayerStats>,
     quest: Res<QuestLog>,
+    run: Option<Res<RunState>>,
     mut bar: Query<(&mut Sprite, &mut Transform), With<EnemyHpBar>>,
     mut enemy_info: Query<&mut Text, (With<EnemyInfoText>, Without<MessageText>)>,
     mut message: Query<
@@ -2510,23 +2640,28 @@ fn update_battle_ui(
 
     if let Ok(mut t) = enemy_info.single_mut() {
         t.0 = format!(
-            "{}  气血 {}/{}",
+            "{}  气血 {}/{}   {}",
             state.enemy.name,
             state.enemy.hp.max(0),
-            state.enemy.max_hp
+            state.enemy.max_hp,
+            state.intent.describe(),
         );
     }
     if let Ok(mut t) = message.single_mut() {
         t.0 = state.message.clone();
     }
     if let Ok(mut t) = player_info.single_mut() {
+        let momentum: String = (0..MOMENTUM_MAX)
+            .map(|i| if i < state.momentum { '●' } else { '○' })
+            .collect();
         t.0 = format!(
-            "{}  气血 {}/{}   灵力 {}/{}   药水 x{}   钱 {}文   {}   {}   {}   {}",
+            "{}  气血 {}/{}   灵力 {}/{}   气势 {}   药水 x{}   钱 {}文   {}   {}   {}   {}",
             quest.party_summary(),
             stats.hp.max(0),
             stats.max_hp,
             stats.mp.max(0),
             stats.max_mp,
+            momentum,
             stats.potions,
             stats.gold,
             quest.bond_summary(),
@@ -2540,9 +2675,10 @@ fn update_battle_ui(
     for (item, mut text, mut color) in menu.iter_mut() {
         let selected = show_cursor && item.0 == state.menu_index;
         let label = match item.0 {
-            1 => format!("{} (灵力{})", quest.spell_name(), quest.spell_cost()),
-            2 if combo_unlocked(&quest) => format!("合击 (灵力{COMBO_COST})"),
-            2 => "合击 (未解锁)".to_string(),
+            2 => format!("{} (灵力{})", quest.spell_name(), quest.spell_cost()),
+            3 if run.is_some() => format!("绝技·剑气爆发 (气势{MOMENTUM_MAX})"),
+            3 if combo_unlocked(&quest) => format!("合击 (灵力{COMBO_COST})"),
+            3 => "合击 (未解锁)".to_string(),
             _ => MENU[item.0].to_string(),
         };
         text.0 = if selected {
@@ -2950,6 +3086,9 @@ mod tests {
             enemy_turns: 0,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            intent: EnemyIntent::Strike,
+            guarding: false,
+            momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,
@@ -2985,6 +3124,9 @@ mod tests {
             enemy_turns: 0,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            intent: EnemyIntent::Strike,
+            guarding: false,
+            momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
             camp_bonus: None,
@@ -3019,6 +3161,9 @@ mod tests {
             enemy_turns: 0,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            intent: EnemyIntent::Strike,
+            guarding: false,
+            momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,
@@ -3056,6 +3201,9 @@ mod tests {
             enemy_turns: 0,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            intent: EnemyIntent::Strike,
+            guarding: false,
+            momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,

@@ -70,7 +70,12 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   (`RunSceneState` persists). `run_scene_movement`: grid movement, marker
   contact fires the payload (battle → `AppState::Battle`; others open the
   overlay in place), grass tiles roll 8% random encounters, portal advances
-  the stage once all markers are cleared (`run.stage += 1` → hop). BFS
+  the stage once all mandatory markers are cleared (`run.stage += 1` → hop).
+  Optional visible loot never blocks the gate: chests (`NodeKind::Chest`,
+  ai_chest prop; 20% mimic elite fight / relic / potion / gold) and springs
+  (`NodeKind::Spring`, ai_spring prop; one-shot 35% heal). 3–5 瘴气 hazard
+  tiles (`RunSceneState.hazards`, violet mist) deal 8% max-hp poison on step
+  (never lethal) with rising float text (`SceneFloatText`). BFS
   multi-source `flow` steers the capture driver.
 - **`screens.rs`** — Title (starts a run: resets `PlayerStats` [+2 atk/+1 def/
   +1 potion baseline], reseeds `Rng` with wall clock, inserts `RunState`);
@@ -94,6 +99,12 @@ clamped to the bordered map (`scene::zoom_camera_in/out`, `camera_follow`).
 ### `battle.rs` — `BattlePlugin` (shared by run + legacy)
 - `ENEMIES[9]` zone pools + 6 boss defs; `PendingEncounter{zone, kind}` is the
   entry API from both flows.
+- **Decision layer**: every enemy telegraphs its next move (`EnemyIntent`:
+  Strike / Heavy 1.8× / Gather heal+def / Drain mp-steal, shown in the enemy
+  info line; boss special turns telegraph as Heavy). The 6-item menu adds
+  御守 (guard: −65% damage this turn, +4 mp). Attack/spell build 气势
+  momentum (max 3, shown as ●●○); at full stacks the run-mode menu offers
+  绝技·剑气爆发 (~2× atk, resets momentum) in the combo slot.
 - Run-mode hooks (all gated on `Option<Res<RunState>>` /
   `Option<Res<RunBattleMods>>`): enemy stat scaling & elite naming at spawn;
   relic modifiers in `battle_input` (attack/spell bonuses, spell-cost delta,

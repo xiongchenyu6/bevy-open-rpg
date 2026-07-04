@@ -250,6 +250,7 @@ fn main() {
                 }],
                 portals: Vec::new(),
                 flow: Vec::new(),
+                hazards: Vec::new(),
                 cooldown: 0.0,
             };
             love_rpg::game::roguelike::scene::seed_flow(&mut scene);
@@ -290,6 +291,7 @@ fn main() {
                 }],
                 portals: Vec::new(),
                 flow: Vec::new(),
+                hazards: Vec::new(),
                 cooldown: 0.0,
             };
             love_rpg::game::roguelike::scene::seed_flow(&mut scene);

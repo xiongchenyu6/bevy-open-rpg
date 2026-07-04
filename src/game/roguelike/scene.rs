@@ -52,6 +52,8 @@ pub struct RunSceneState {
     /// Multi-source BFS distance to the nearest active target (uncleared
     /// marker, or the portal once all are cleared). u16::MAX = unreachable.
     pub flow: Vec<Vec<u16>>,
+    /// 瘴气毒格:踩上扣血(可反复),绕路与否是玩家的取舍。
+    pub hazards: Vec<(i32, i32)>,
     pub cooldown: f32,
 }
 
@@ -67,6 +69,13 @@ pub struct SceneMarkerVisual(pub usize);
 #[derive(Component)]
 pub struct SceneMarkerGlyph {
     base_y: f32,
+}
+
+/// Transient floating text on the map (hazard damage, pickups): rises and
+/// fades, then despawns.
+#[derive(Component)]
+pub struct SceneFloatText {
+    age: f32,
 }
 
 #[derive(Component)]
@@ -437,6 +446,57 @@ pub fn advance_stage(
             markers[index].kind = NodeKind::Story;
             run.story_pending = false;
         }
+
+        // Optional visible loot: a chest (maybe a mimic) and/or a spirit
+        // spring — worth a detour, never required to open the gate.
+        for (kind, chance) in [(NodeKind::Chest, 0.55), (NodeKind::Spring, 0.40)] {
+            if !rng.chance(chance) {
+                continue;
+            }
+            let mut guard = 0;
+            while guard < 200 && !candidates.is_empty() {
+                guard += 1;
+                let pick = candidates[rng.range(0, candidates.len() as i32 - 1) as usize];
+                let spread = markers
+                    .iter()
+                    .all(|m| (m.col - pick.0).abs() + (m.row - pick.1).abs() >= 5);
+                if spread {
+                    markers.push(SceneMarker {
+                        kind,
+                        col: pick.0,
+                        row: pick.1,
+                        cleared: false,
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    // 瘴气毒格:少量散布在可达路面上,可见、可绕。
+    let mut hazards: Vec<(i32, i32)> = Vec::new();
+    if !run.is_boss_stage() {
+        let want = rng.range(3, 5);
+        let mut guard = 0;
+        while (hazards.len() as i32) < want && guard < 300 {
+            guard += 1;
+            let c = rng.range(2, MAP_W - 3);
+            let r = rng.range(2, MAP_H - 3);
+            let d = from_spawn[r as usize][c as usize];
+            if d == u16::MAX || d < 4 {
+                continue;
+            }
+            if tiles[r as usize][c as usize] != Tile::Path {
+                continue;
+            }
+            if (c, r) == portal
+                || markers.iter().any(|m| (m.col, m.row) == (c, r))
+                || hazards.iter().any(|&(hc, hr)| (hc, hr) == (c, r))
+            {
+                continue;
+            }
+            hazards.push((c, r));
+        }
     }
 
     let portals = if run.is_boss_stage() {
@@ -453,6 +513,7 @@ pub fn advance_stage(
         markers,
         portals,
         flow: Vec::new(),
+        hazards,
         cooldown: 0.0,
     };
     let map = MapData::generated(map_kind, scene.tiles.clone());
@@ -578,6 +639,21 @@ pub fn spawn_run_scene(
             index,
             marker,
         );
+    }
+
+    // 瘴气毒格:紫雾明示危险,绕不绕路自己掂量。
+    for &(c, r) in &scene.hazards {
+        let p = tile_to_world(c, r);
+        commands.spawn((
+            Sprite {
+                image: lights.orb.clone(),
+                color: Color::srgba(0.62, 0.25, 0.85, 0.55),
+                custom_size: Some(Vec2::splat(46.0)),
+                ..default()
+            },
+            Transform::from_xyz(p.x, p.y, 8.0),
+            scope(),
+        ));
     }
 
     // The stage exit: a weathered spirit gate (界门) standing over the
@@ -776,6 +852,44 @@ fn spawn_marker_visual(
         return;
     }
 
+    // Visible optional loot: chests and springs announce themselves with real
+    // prop art — the detour (and the mimic risk) is the player's call.
+    if marker.kind.optional() {
+        let (image, size, glow) = if marker.kind == NodeKind::Spring {
+            (
+                "props/ai_spring.png",
+                Vec2::new(62.0, 50.0),
+                Color::srgba(0.30, 0.95, 0.85, 0.45),
+            )
+        } else {
+            (
+                "props/ai_chest.png",
+                Vec2::new(52.0, 40.0),
+                Color::srgba(1.0, 0.75, 0.30, 0.45),
+            )
+        };
+        commands.spawn((
+            SceneMarkerVisual(index),
+            Sprite {
+                image: asset_server.load(image),
+                custom_size: Some(size),
+                ..default()
+            },
+            Transform::from_xyz(op.x, op.y + 6.0, 9.0),
+            scope(),
+        ));
+        let light = lighting::spawn_light(
+            commands,
+            lights,
+            Vec3::new(op.x, op.y, 4.0),
+            TILE * 2.6,
+            glow,
+            AppState::RunScene,
+        );
+        commands.entity(light).insert(SceneMarkerVisual(index));
+        return;
+    }
+
     let mist = Color::srgba(0.62, 0.58, 1.0, 0.42);
     commands.spawn((
         SceneMarkerVisual(index),
@@ -817,7 +931,9 @@ fn spawn_marker_visual(
 pub fn run_scene_movement(
     mut commands: Commands,
     time: Res<Time>,
+    font: Res<GameFont>,
     mut intent: ResMut<Intent>,
+    mut stats: ResMut<PlayerStats>,
     scene: Option<ResMut<RunSceneState>>,
     map: Option<Res<RunSceneMap>>,
     run: Option<ResMut<RunState>>,
@@ -898,8 +1014,60 @@ pub fn run_scene_movement(
             }
             NodeKind::Rest => dialogue.open_rest(),
             NodeKind::Market => dialogue.open_market(),
+            NodeKind::Chest => {
+                let roll = rng.unit();
+                if roll < 0.20 {
+                    // 宝箱妖!贪心有价。
+                    run.current_fight = Some(FightRank::Elite);
+                    commands.insert_resource(PendingEncounter {
+                        zone: map_zone(scene.map),
+                        kind: encounter_kind_for(&run, NodeKind::Elite),
+                    });
+                    commands.insert_resource(battle_mods_for(&run, FightRank::Elite));
+                    next.set(AppState::Battle);
+                } else if roll < 0.35 {
+                    let line = super::event::grant_random_relic(&mut stats, &mut run, &mut rng);
+                    dialogue.open_plain("宝箱", &["箱盖开处灵光扑面——", &line]);
+                } else if roll < 0.60 {
+                    stats.potions += 1;
+                    dialogue.open_plain("宝箱", &["箱中静静躺着一瓶药水。药水 +1。"]);
+                } else {
+                    let gold = rng.range(30, 80) as u32;
+                    stats.gold += gold;
+                    dialogue.open_plain("宝箱", &[&format!("箱底散着碎银铜钱,共 {gold} 文。")]);
+                }
+            }
+            NodeKind::Spring => {
+                let heal = (stats.max_hp * 35 / 100)
+                    .min(stats.max_hp - stats.hp)
+                    .max(0);
+                stats.hp += heal;
+                dialogue.open_plain(
+                    "灵泉",
+                    &[&format!("掬一捧灵泉,暖流沿经脉散开——恢复 {heal} 点气血。")],
+                );
+            }
         }
         return;
+    }
+
+    // 瘴气毒格:踩上即中毒掉血(不致死),下次记得绕路。
+    if scene
+        .hazards
+        .iter()
+        .any(|&(c, r)| (c, r) == (scene.col, scene.row))
+    {
+        let hurt = (stats.max_hp * 8 / 100).max(3);
+        stats.hp = (stats.hp - hurt).max(1);
+        let p = tile_to_world(scene.col, scene.row);
+        commands.spawn((
+            SceneFloatText { age: 0.0 },
+            Text2d::new(format!("瘴毒 -{hurt}")),
+            font.text_font(20.0),
+            TextColor(Color::srgb(0.85, 0.45, 1.0)),
+            Transform::from_xyz(p.x, p.y + 30.0, 30.0),
+            DespawnOnExit(AppState::RunScene),
+        ));
     }
 
     // Grass rustle: classic random encounters keep every walk risky.
@@ -914,13 +1082,18 @@ pub fn run_scene_movement(
         return;
     }
 
-    // Stepped onto the portal: advance once the map is cleared.
+    // Stepped onto the portal: advance once the map is cleared (visible
+    // loot — chests and springs — never blocks the gate).
     if map.0.at(scene.col, scene.row) == Tile::Portal {
-        if scene.markers.iter().all(|m| m.cleared) {
+        if scene.markers.iter().all(|m| m.cleared || m.kind.optional()) {
             run.stage += 1;
             next.set(AppState::NodeMap); // hop → builds the next stage
         } else {
-            let left = scene.markers.iter().filter(|m| !m.cleared).count();
+            let left = scene
+                .markers
+                .iter()
+                .filter(|m| !m.cleared && !m.kind.optional())
+                .count();
             dialogue.open_plain(
                 "路引",
                 &[&format!("妖气未清,此门不开——图上还有 {left} 处发光标记。")],
@@ -964,6 +1137,24 @@ pub fn animate_hero(
         }
     }
     sprite.flip_x = scene.facing_left;
+}
+
+/// Rise-and-fade for transient map float text (hazard damage etc.).
+pub fn animate_scene_float_text(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut texts: Query<(Entity, &mut SceneFloatText, &mut Transform, &mut TextColor)>,
+) {
+    for (entity, mut float, mut transform, mut color) in &mut texts {
+        float.age += time.delta_secs();
+        if float.age >= 1.3 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        transform.translation.y += 26.0 * time.delta_secs();
+        let alpha = (1.0 - float.age / 1.3).clamp(0.0, 1.0);
+        color.0 = color.0.with_alpha(alpha);
+    }
 }
 
 /// Gentle bob on marker glyphs so they read as interactive.

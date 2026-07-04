@@ -565,6 +565,7 @@ impl Plugin for RoguelikePlugin {
                     scene::animate_hero,
                     scene::camera_follow,
                     scene::animate_marker_glyph,
+                    scene::animate_scene_float_text,
                     scene::update_run_hud,
                     event::update_run_dialogue_ui,
                 )
