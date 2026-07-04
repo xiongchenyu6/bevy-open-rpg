@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::ui::widget::NodeImageMode;
 
 use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::core::{GameFont, Intent, PlayerStats, Rng};
@@ -746,12 +747,16 @@ fn spawn_battle(
                 bottom: Val::Px(0.0),
                 left: Val::Px(0.0),
                 right: Val::Px(0.0),
-                height: Val::Px(220.0),
-                padding: UiRect::all(Val::Px(20.0)),
+                height: Val::Px(240.0),
+                padding: UiRect::new(Val::Px(34.0), Val::Px(34.0), Val::Px(46.0), Val::Px(16.0)),
                 column_gap: Val::Px(20.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.04, 0.04, 0.10, 0.95)),
+            ImageNode {
+                image: asset_server.load("ui/panel_frame.png"),
+                image_mode: NodeImageMode::Sliced(super::roguelike::event::panel_slicer()),
+                ..default()
+            },
             DespawnOnExit(AppState::Battle),
         ))
         .with_children(|panel| {
@@ -784,18 +789,18 @@ fn spawn_battle(
                     Node {
                         width: Val::Percent(34.0),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(10.0),
-                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(5.0),
+                        padding: UiRect::all(Val::Px(10.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.10, 0.10, 0.20, 0.9)),
+                    BackgroundColor(Color::srgba(0.10, 0.10, 0.20, 0.55)),
                 ))
                 .with_children(|menu| {
                     for (i, _) in MENU.iter().enumerate() {
                         menu.spawn((
                             MenuItem(i),
                             Text::new(""),
-                            font.text_font(24.0),
+                            font.text_font(22.0),
                             TextColor(Color::WHITE),
                         ));
                     }

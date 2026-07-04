@@ -1,6 +1,7 @@
 //! Title, post-battle Reward, and Ending screens for the roguelike run.
 
 use bevy::prelude::*;
+use bevy::ui::widget::NodeImageMode;
 
 use super::super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::super::quest::QuestLog;
@@ -60,7 +61,11 @@ pub fn spawn_title(mut commands: Commands, font: Res<GameFont>, asset_server: Re
                         padding: UiRect::axes(Val::Px(46.0), Val::Px(22.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.03, 0.08, 0.62)),
+                    ImageNode {
+                        image: asset_server.load("ui/panel_frame.png"),
+                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
+                        ..default()
+                    },
                 ))
                 .with_children(|panel| {
                     panel.spawn((
@@ -259,7 +264,11 @@ pub fn spawn_reward(
                         padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.72)),
+                    ImageNode {
+                        image: asset_server.load("ui/panel_frame.png"),
+                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
+                        ..default()
+                    },
                 ))
                 .with_children(|panel| {
                     panel.spawn((
@@ -419,7 +428,11 @@ pub fn spawn_ending(
                         padding: UiRect::axes(Val::Px(44.0), Val::Px(26.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.68)),
+                    ImageNode {
+                        image: asset_server.load("ui/panel_frame.png"),
+                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
+                        ..default()
+                    },
                 ))
                 .with_children(|panel| {
                     for (i, line) in lines.iter().enumerate() {

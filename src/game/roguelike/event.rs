@@ -5,6 +5,7 @@
 //! resource-driven UI box, so the map stays visible behind the text.
 
 use bevy::prelude::*;
+use bevy::ui::widget::NodeImageMode;
 
 use super::super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::content::{self, Effect, Outcome};
@@ -422,10 +423,26 @@ pub struct RunDialogueOptions;
 #[derive(Component)]
 pub struct RunDialoguePortrait;
 
+/// Nine-slice profile for the gold-trimmed ink panel (`ui/panel_frame.png`,
+/// 768×512): corners stay crisp, the near-black centre stretches.
+pub fn panel_slicer() -> TextureSlicer {
+    TextureSlicer {
+        border: BorderRect::axes(110.0, 58.0),
+        center_scale_mode: SliceScaleMode::Stretch,
+        sides_scale_mode: SliceScaleMode::Stretch,
+        max_corner_scale: 0.6,
+    }
+}
+
 /// Spawn the (hidden) overlay box — a portrait card on the left, text column
 /// on the right. Called from the node-map scene setup so it carries the same
 /// `DespawnOnExit` scope.
-pub fn spawn_run_dialogue_ui(commands: &mut Commands, font: &GameFont, scope: impl Bundle) {
+pub fn spawn_run_dialogue_ui(
+    commands: &mut Commands,
+    font: &GameFont,
+    panel: Handle<Image>,
+    scope: impl Bundle,
+) {
     commands
         .spawn((
             RunDialogueRoot,
@@ -438,10 +455,14 @@ pub fn spawn_run_dialogue_ui(commands: &mut Commands, font: &GameFont, scope: im
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(16.0),
                 align_items: AlignItems::FlexStart,
-                padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
+                padding: UiRect::new(Val::Px(32.0), Val::Px(32.0), Val::Px(46.0), Val::Px(20.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.04, 0.05, 0.10, 0.92)),
+            ImageNode {
+                image: panel,
+                image_mode: NodeImageMode::Sliced(panel_slicer()),
+                ..default()
+            },
             Visibility::Hidden,
             GlobalZIndex(50),
         ))

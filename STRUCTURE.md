@@ -65,7 +65,10 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   then scatters 2–3 markers
   (pairwise-spread walkable tiles, story beat guaranteed before the boss
   map; boss stage = single demon gate); `spawn_run_scene` renders tiles via
-  explore's `tile_sprite`, hero, mist markers (unknown「?」until touched),
+  explore's `tile_sprite` — each cell samples a per-position 128×128
+  sub-rect of the 512px seamless sheet (`Sprite::rect`) so the texture
+  flows continuously across cells instead of tiling one squeezed copy —
+  hero, mist markers (unknown「?」until touched),
   界门 spirit-gate sprite over the portal (boss gates reuse it violet-tinted), fill lights, HUD, and rebuilds losslessly after battles
   (`RunSceneState` persists). `run_scene_movement`: grid movement, marker
   contact fires the payload (battle → `AppState::Battle`; others open the
@@ -169,4 +172,5 @@ Explore-only).
   (18 张,见 `ASSETS.md` 对照表);`explore::tile_sprite` 按 `MapKind`
   选贴图,tint 近白。
 - Run 对话框为「立绘卡 + 文本」双栏;奇遇立绘复用 NPC/怪物/道具切图,
-  映射在 `content::event_portrait`。全屏界面文字均垫深色半透明底板。
+  映射在 `content::event_portrait`。全屏界面与对话/菜单面板统一使用
+  `ui/panel_frame.png` 金纹九宫格框(`event::panel_slicer()`)。

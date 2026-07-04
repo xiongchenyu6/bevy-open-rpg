@@ -9,6 +9,7 @@
 
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
+use bevy::ui::widget::NodeImageMode;
 
 use super::super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::super::battle::{EncounterZone, PendingEncounter};
@@ -549,17 +550,24 @@ pub fn spawn_run_scene(
     }
     let map = MapData::generated(scene.map, scene.tiles.clone());
 
-    // Tiles, with a deterministic per-tile flip + brightness jitter so the
-    // repeated textures stop reading as a rigid grid.
+    // Tiles. All tile textures are 512×512 seamless: instead of squeezing the
+    // whole sheet into one 48px cell (which blurs it into a kaleidoscope),
+    // each cell samples its own 128×128 sub-rect by world position, so the
+    // texture flows continuously across a 4×4-cell area with no mirror
+    // symmetry. A light per-tile brightness jitter keeps large fields alive.
+    let sub_rect = |col: i32, row: i32| {
+        let x0 = col.rem_euclid(4) as f32 * 128.0;
+        let y0 = row.rem_euclid(4) as f32 * 128.0;
+        Rect::new(x0, y0, x0 + 128.0, y0 + 128.0)
+    };
     for row in 0..MAP_H {
         for col in 0..MAP_W {
             let p = tile_to_world(col, row);
             let mut sprite = tile_sprite(map.at(col, row), scene.map, &assets);
+            sprite.rect = Some(sub_rect(col, row));
             let hash =
                 ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
-            sprite.flip_x = hash & 1 == 1;
-            sprite.flip_y = map.at(col, row) == Tile::Wall && hash & 2 == 2;
-            let tint = 0.90 + ((hash >> 3) % 8) as f32 * 0.02;
+            let tint = 0.92 + ((hash >> 3) % 8) as f32 * 0.015;
             let c = sprite.color.to_srgba();
             sprite.color = Color::srgb(c.red * tint, c.green * tint, c.blue * tint);
             commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
@@ -575,11 +583,10 @@ pub fn spawn_run_scene(
             }
             let p = tile_to_world(col, row);
             let mut sprite = tile_sprite(Tile::Wall, scene.map, &assets);
+            sprite.rect = Some(sub_rect(col, row));
             let hash =
                 ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
-            sprite.flip_x = hash & 1 == 1;
-            sprite.flip_y = hash & 2 == 2;
-            let tint = 0.82 + ((hash >> 3) % 8) as f32 * 0.02;
+            let tint = 0.80 + ((hash >> 3) % 8) as f32 * 0.015;
             let c = sprite.color.to_srgba();
             sprite.color = Color::srgba(c.red * tint, c.green * tint, c.blue * tint, 0.9);
             commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
@@ -787,7 +794,12 @@ pub fn spawn_run_scene(
     ));
 
     // Dialogue overlay (events/story/rest/market/chapter card resolve here).
-    event::spawn_run_dialogue_ui(&mut commands, &font, scope());
+    event::spawn_run_dialogue_ui(
+        &mut commands,
+        &font,
+        asset_server.load("ui/panel_frame.png"),
+        scope(),
+    );
 
     // First stage of a chapter: show the chapter card.
     if !run.card_shown && run.stage == 0 {
@@ -1250,6 +1262,7 @@ pub fn inventory_toggle(
     mut inventory: ResMut<InventoryOpen>,
     dialogue: Res<RunDialogue>,
     font: Res<GameFont>,
+    asset_server: Res<AssetServer>,
     dolls: Res<PaperdollAssets>,
     stats: Res<PlayerStats>,
     run: Option<Res<RunState>>,
@@ -1329,11 +1342,15 @@ pub fn inventory_toggle(
                 width: Val::Percent(46.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(10.0),
-                padding: UiRect::all(Val::Px(22.0)),
+                padding: UiRect::new(Val::Px(30.0), Val::Px(30.0), Val::Px(56.0), Val::Px(24.0)),
                 overflow: Overflow::clip_y(),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.03, 0.04, 0.09, 0.9)),
+            ImageNode {
+                image: asset_server.load("ui/panel_frame.png"),
+                image_mode: NodeImageMode::Sliced(event::panel_slicer()),
+                ..default()
+            },
             GlobalZIndex(80),
         ))
         .with_children(|panel| {

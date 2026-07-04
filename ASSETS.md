@@ -63,6 +63,9 @@ Late-story NPCs currently added through imagegen:
 | 灵儿立绘卡 | `assets/npcs/ai_linger.png` | Run dialogue portrait (story/rest) |
 | 主角头像 | `assets/npcs/ai_hero.png` | Run HUD avatar |
 | 青石界门 | `assets/props/ai_spirit_gate.png` | Stage exit gate (violet-tinted for boss gates) |
+| 红漆宝箱 | `assets/props/ai_chest.png` | Map loot chest marker (mimic risk) |
+| 灵泉石池 | `assets/props/ai_spring.png` | Map spirit-spring marker (one-shot heal) |
+| 金纹面板框 | `assets/ui/panel_frame.png` | Nine-slice UI panel (dialogue/battle/menus/inventory), `event::panel_slicer()` |
 
 Raw prompts/seeds: see git history of the generation commands; regenerate via
 `python3 .claude/skills/godogen/tools/comfyui_gen.py image --prompt ... -o ...`.
