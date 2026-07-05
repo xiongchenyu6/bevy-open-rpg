@@ -259,6 +259,57 @@ fn main() {
                 .resource_mut::<NextState<AppState>>()
                 .set(AppState::RunScene);
         }
+        "rogue-boss" => {
+            use love_rpg::game::explore::MapKind;
+            use love_rpg::game::roguelike::{
+                RunState,
+                graph::NodeKind,
+                scene::{RunSceneState, SceneMarker},
+            };
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xB055_F16D;
+                RunState::new(&mut rng)
+            };
+            run.card_shown = true;
+            run.story_pending = false;
+            app.world_mut().insert_resource(run);
+            {
+                // 相当于打满一章的积累,让取证局能撑到 boss 二阶段。
+                let mut stats = app
+                    .world_mut()
+                    .resource_mut::<love_rpg::game::PlayerStats>();
+                stats.atk += 8;
+                stats.def += 4;
+                stats.max_hp += 80;
+                stats.hp = stats.max_hp;
+                stats.potions = 6;
+            }
+            // 单魔门标记:直达对峙台词 → 章 boss 战(取证二阶段变身)。
+            let mut scene = RunSceneState {
+                map: MapKind::Bamboo,
+                tiles: Vec::new(),
+                col: -1,
+                row: -1,
+                facing_left: false,
+                markers: vec![SceneMarker {
+                    kind: NodeKind::Boss,
+                    col: 15,
+                    row: 8,
+                    cleared: false,
+                }],
+                portals: Vec::new(),
+                flow: Vec::new(),
+                hazards: Vec::new(),
+                cooldown: 0.0,
+            };
+            love_rpg::game::roguelike::scene::seed_flow(&mut scene);
+            app.world_mut().insert_resource(scene);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::RunScene);
+        }
         "rogue-market" => {
             use love_rpg::game::explore::MapKind;
             use love_rpg::game::roguelike::{

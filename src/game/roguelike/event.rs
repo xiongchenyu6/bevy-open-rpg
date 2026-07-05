@@ -44,6 +44,8 @@ pub struct RunDialogue {
     pub resolved: bool,
     /// Asset path of the speaker/scene portrait card, if any.
     pub portrait: Option<&'static str>,
+    /// 对峙对话结束后立即开打(章末魔门的先礼后兵)。
+    pub boss_battle_after: bool,
 }
 
 impl RunDialogue {
@@ -165,6 +167,10 @@ pub fn apply_effect(
         }
         Effect::GainPotions(n) => {
             stats.potions += n;
+            None
+        }
+        Effect::LosePotions(n) => {
+            stats.potions = stats.potions.saturating_sub(n);
             None
         }
         Effect::GainGold(n) => {
@@ -295,6 +301,10 @@ fn resolve_choice(
 ) {
     let outcome: Outcome = match dialogue.source {
         DialogueSource::Event(index) => {
+            // 白狐初遇:救或不救,写进这一世的因果。
+            if index == content::EV_FOX1 {
+                run.fox_kind = if pick == 0 { 1 } else { -1 };
+            }
             let option = &content::EVENTS[index].options[pick];
             if rng.chance(option.chance) {
                 option.success

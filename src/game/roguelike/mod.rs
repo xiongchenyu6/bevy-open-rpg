@@ -271,6 +271,12 @@ pub struct RunState {
     pub fights_won: u32,
     /// One-shot revive from 檀木符 has been consumed.
     pub revive_used: bool,
+    /// 白狐三遇链:0 未遇,1/2/3 已推进到第几遇。
+    pub fox_stage: u8,
+    /// 白狐链善恶记号:+1 救过,-1 无视(初遇选择写入)。
+    pub fox_kind: i8,
+    /// 盲女琴师链:0 未遇,1 听过曲,2 已重逢。
+    pub qin_stage: u8,
 }
 
 impl RunState {
@@ -293,6 +299,9 @@ impl RunState {
             outcome: None,
             fights_won: 0,
             revive_used: false,
+            fox_stage: 0,
+            fox_kind: 0,
+            qin_stage: 0,
         }
     }
 
@@ -344,15 +353,51 @@ impl RunState {
         zones[rng.range(0, zones.len() as i32 - 1) as usize]
     }
 
+    /// 「遇」节点的抽取入口:链式奇遇按进度优先触发,否则落回随机池。
+    /// 链事件跨章推进——初遇的选择决定后续与结局回响。
+    pub fn draw_chain_or_event(&mut self, rng: &mut Rng) -> usize {
+        use content as c;
+        if self.fox_stage == 0 && rng.chance(0.6) {
+            self.fox_stage = 1;
+            return c::EV_FOX1;
+        }
+        if self.fox_stage == 1 && self.chapter >= 1 && rng.chance(0.6) {
+            self.fox_stage = 2;
+            return if self.fox_kind > 0 {
+                c::EV_FOX2_WARM
+            } else {
+                c::EV_FOX2_COLD
+            };
+        }
+        if self.fox_stage == 2 && self.chapter >= 2 && rng.chance(0.7) {
+            self.fox_stage = 3;
+            return if self.fox_kind > 0 {
+                c::EV_FOX3_WARM
+            } else {
+                c::EV_FOX3_COLD
+            };
+        }
+        if self.qin_stage == 0 && self.chapter == 1 && rng.chance(0.5) {
+            self.qin_stage = 1;
+            return c::EV_QIN1;
+        }
+        if self.qin_stage == 1 && self.chapter >= 2 && rng.chance(0.6) {
+            self.qin_stage = 2;
+            return c::EV_QIN2;
+        }
+        self.draw_event(rng)
+    }
+
     /// Draw a random event index the player has not seen this run; the pool
-    /// resets once exhausted.
+    /// resets once exhausted (chain events live past `CHAIN_START` and never
+    /// enter this pool).
     pub fn draw_event(&mut self, rng: &mut Rng) -> usize {
-        let unseen: Vec<usize> = (0..content::EVENTS.len())
+        let unseen: Vec<usize> = (0..content::CHAIN_START)
             .filter(|i| !self.seen_events.contains(i))
             .collect();
         let pool = if unseen.is_empty() {
             self.seen_events.clear();
-            (0..content::EVENTS.len()).collect()
+            (0..content::CHAIN_START).collect()
         } else {
             unseen
         };
@@ -582,5 +627,92 @@ impl Plugin for RoguelikePlugin {
                 Update,
                 screens::ending_input.run_if(in_state(AppState::Ending)),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::core::Rng;
+    use super::*;
+
+    /// 白狐链按章推进,善恶分歧走向不同事件;随机池永不吐出链下标。
+    #[test]
+    fn fox_chain_progresses_and_branches_by_kindness() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+
+        // 第一卷:反复抽直到白狐初遇触发(60% 概率,重试足够多次)。
+        let mut first = None;
+        for _ in 0..64 {
+            let idx = run.draw_chain_or_event(&mut rng);
+            if idx >= content::CHAIN_START {
+                first = Some(idx);
+                break;
+            }
+        }
+        assert_eq!(first, Some(content::EV_FOX1));
+        assert_eq!(run.fox_stage, 1);
+
+        // 救了白狐 → 善缘;第二卷应触发「白衣回礼」。
+        run.fox_kind = 1;
+        run.chapter = 1;
+        let mut second = None;
+        for _ in 0..64 {
+            let idx = run.draw_chain_or_event(&mut rng);
+            if idx >= content::CHAIN_START {
+                second = Some(idx);
+                break;
+            }
+        }
+        assert_eq!(second, Some(content::EV_FOX2_WARM));
+
+        // 第三卷善缘收束于「狐仙赠丹」。
+        run.chapter = 2;
+        let mut third = None;
+        for _ in 0..64 {
+            let idx = run.draw_chain_or_event(&mut rng);
+            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
+                third = Some(idx);
+                break;
+            }
+        }
+        assert_eq!(third, Some(content::EV_FOX3_WARM));
+        assert_eq!(run.fox_stage, 3);
+
+        // 链走完后,随机池不会再吐出链事件下标。
+        for _ in 0..64 {
+            let idx = run.draw_event(&mut rng);
+            assert!(idx < content::CHAIN_START);
+        }
+    }
+
+    /// 无视白狐的一世,走向「白影避走」与「妖狐拦路」。
+    #[test]
+    fn fox_chain_cold_branch() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        run.fox_stage = 1;
+        run.fox_kind = -1;
+        run.chapter = 1;
+        let mut second = None;
+        for _ in 0..64 {
+            let idx = run.draw_chain_or_event(&mut rng);
+            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
+                second = Some(idx);
+                break;
+            }
+        }
+        assert_eq!(second, Some(content::EV_FOX2_COLD));
+
+        run.chapter = 2;
+        let mut third = None;
+        for _ in 0..64 {
+            let idx = run.draw_chain_or_event(&mut rng);
+            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
+                third = Some(idx);
+                break;
+            }
+        }
+        assert_eq!(third, Some(content::EV_FOX3_COLD));
     }
 }

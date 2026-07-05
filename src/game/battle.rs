@@ -310,6 +310,8 @@ struct BattleState {
     intent: EnemyIntent,
     guarding: bool,
     momentum: u32,
+    /// Boss 半血后的真身阶段:变身宣言 + 专属强化机制。
+    boss_phase2: bool,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
@@ -587,6 +589,7 @@ fn spawn_battle(
         player_action: None,
         intent: roll_intent(&mut rng),
         guarding: false,
+        boss_phase2: false,
         momentum: 0,
         blessing,
         camp_bonus,
@@ -1029,6 +1032,9 @@ fn battle_input(
             append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
             append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
             append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
+            if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
+                state.message.push_str(&line);
+            }
             spawn_weapon_hit(&mut commands, &anims, &lights, ENEMY_POS);
             spawn_damage_text(
                 &mut commands,
@@ -1136,6 +1142,9 @@ fn battle_input(
                 state.momentum = 0;
                 state.message =
                     format!("李逍遥 气势鼎盛,施展绝技·剑气爆发!剑光如潮水倾泻,造成 {dmg} 点伤害!");
+                if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
+                    state.message.push_str(&line);
+                }
                 spawn_combo_impact(&mut commands, &anims, &lights);
                 spawn_damage_text(
                     &mut commands,
@@ -1792,6 +1801,20 @@ fn battle_tick(
                 state.phase = Phase::Won;
                 state.timer = 1.6;
             } else {
+                // Boss 半血:先声夺人的变身回合(不出手),再入真身机制。
+                if let EncounterKind::Boss(boss) = state.encounter_kind
+                    && !state.boss_phase2
+                    && state.enemy.hp * 2 <= state.enemy.max_hp
+                {
+                    state.boss_phase2 = true;
+                    state.message = boss_phase2_transform(boss, &mut state.enemy);
+                    state.intent = next_intent(&state, &mut rng);
+                    state.phase = Phase::EnemyActing;
+                    state.timer = 1.1;
+                    state.player_action = None;
+                    spawn_enemy_strike_impact(&mut commands, &anims, &lights, true);
+                    return;
+                }
                 let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
                 let strong_guard = run.as_ref().map_or(0, |r| r.strong_hit_guard());
                 let attack =
@@ -2091,6 +2114,29 @@ fn begin_enemy_turn(
         (dmg, strong)
     };
     stats.hp -= dmg;
+    if state.boss_phase2 {
+        match state.encounter_kind {
+            EncounterKind::Boss(BossKind::MiasmaRoot) => {
+                let heal = 6.min(state.enemy.max_hp - state.enemy.hp).max(0);
+                if heal > 0 {
+                    state.enemy.hp += heal;
+                    state
+                        .message
+                        .push_str(&format!("\n根须自大地汲取生机,回复 {heal} 点气血。"));
+                }
+            }
+            EncounterKind::Boss(BossKind::MoonWraith) if dmg > 0 => {
+                let drained = 2.min(stats.mp);
+                if drained > 0 {
+                    stats.mp -= drained;
+                    state
+                        .message
+                        .push_str(&format!("\n月魄真形拂过,又摄走 {drained} 点灵力。"));
+                }
+            }
+            _ => {}
+        }
+    }
     state.intent = next_intent(state, rng);
     state.phase = Phase::EnemyActing;
     state.timer = 0.8;
@@ -2101,12 +2147,32 @@ fn begin_enemy_turn(
     }
 }
 
-/// 掷下一回合的意图;首领每逢秘法回合(每三回合)提前亮出重击预警。
+/// 掷下一回合的意图;首领每逢秘法回合提前亮出重击预警,
+/// 二阶段真身还会扭曲意图池(雷麟连环蓄力、月魄嗜灵)。
 fn next_intent(state: &BattleState, rng: &mut Rng) -> EnemyIntent {
-    if matches!(state.encounter_kind, EncounterKind::Boss(_)) && state.enemy_turns % 3 == 0 {
-        return EnemyIntent::Heavy;
+    if let EncounterKind::Boss(boss) = state.encounter_kind {
+        let cadence = boss_special_cadence(boss, state.boss_phase2);
+        if state.enemy_turns % cadence == 0 {
+            return EnemyIntent::Heavy;
+        }
+        if state.boss_phase2 {
+            match boss {
+                BossKind::ThunderQilin if rng.chance(0.6) => return EnemyIntent::Heavy,
+                BossKind::MoonWraith if rng.chance(0.5) => return EnemyIntent::Drain,
+                _ => {}
+            }
+        }
     }
     roll_intent(rng)
+}
+
+/// 首领秘法节奏:默认每三回合;宿命水影二阶段加速到每两回合。
+fn boss_special_cadence(boss: BossKind, phase2: bool) -> u32 {
+    if phase2 && boss == BossKind::DreamEclipse {
+        2
+    } else {
+        3
+    }
 }
 
 fn begin_boss_special_turn(
@@ -2117,7 +2183,7 @@ fn begin_boss_special_turn(
     rng: &mut Rng,
     guarding: bool,
 ) -> Option<EnemyAttackResult> {
-    if turn_index % 3 != 0 {
+    if turn_index % boss_special_cadence(boss, state.boss_phase2) != 0 {
         return None;
     }
 
@@ -2164,6 +2230,62 @@ fn begin_boss_special_turn(
         damage: dmg,
         strong: true,
     })
+}
+
+/// 照影国师二阶段:玩家武力攻击被镜界照回两成。
+fn mirror_backlash(state: &BattleState, stats: &mut PlayerStats, dmg: i32) -> Option<String> {
+    if !state.boss_phase2
+        || state.encounter_kind != EncounterKind::Boss(BossKind::MirrorMinister)
+        || dmg <= 0
+    {
+        return None;
+    }
+    let backlash = (dmg / 5).max(1);
+    stats.hp = (stats.hp - backlash).max(1);
+    Some(format!(
+        "\n【镜界】剑影被铜镜照回,你受到 {backlash} 点反噬。"
+    ))
+}
+
+/// Boss 二阶段变身:属性调整 + 宣言文案。每个 boss 的真身机制不同,
+/// 与 `next_intent` / `mirror_backlash` / 秘术节奏配合。
+fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance) -> String {
+    match boss {
+        BossKind::MoonWraith => {
+            enemy.atk += 2;
+            format!(
+                "{} 仰首长啸,月轮倒悬——妖身化作半透明的月魄真形!\n(攻击提升,此后招招摄取灵力)",
+                enemy.name
+            )
+        }
+        BossKind::RiverDemon => {
+            enemy.atk += 6;
+            enemy.def = (enemy.def - 2).max(0);
+            format!(
+                "{} 怒啸破浪,鳞甲尽张——狂化之下攻势滔天,破绽亦现!\n(攻击大幅提升,防御下降)",
+                enemy.name
+            )
+        }
+        BossKind::MiasmaRoot => format!(
+            "{} 的根须疯长,扎入大地深处汲取生机!\n(此后每回合回复气血——抢攻才是活路)",
+            enemy.name
+        ),
+        BossKind::MirrorMinister => format!(
+            "{} 袖中铜镜升空,镜界铺展——你的剑影会被照回来!\n(攻击将遭镜光反噬)",
+            enemy.name
+        ),
+        BossKind::ThunderQilin => {
+            enemy.atk += 3;
+            format!(
+                "{} 踏出雷劫连环的第一步,周身电弧不熄!\n(蓄力重击将接连不断——看准御守!)",
+                enemy.name
+            )
+        }
+        BossKind::DreamEclipse => format!(
+            "{} 沉入旧梦深处,潮声骤密——秘术涌动得更快了!\n(秘法回合更频繁)",
+            enemy.name
+        ),
+    }
 }
 
 fn boss_special_attack(
@@ -2644,9 +2766,11 @@ fn update_battle_ui(
     }
 
     if let Ok(mut t) = enemy_info.single_mut() {
+        let phase_tag = if state.boss_phase2 { "·真身 " } else { "" };
         t.0 = format!(
-            "{}  气血 {}/{}   {}",
+            "{}{}  气血 {}/{}   {}",
             state.enemy.name,
+            phase_tag,
             state.enemy.hp.max(0),
             state.enemy.max_hp,
             state.intent.describe(),
@@ -3093,6 +3217,7 @@ mod tests {
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
+            boss_phase2: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -3131,6 +3256,7 @@ mod tests {
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
+            boss_phase2: false,
             momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
@@ -3168,6 +3294,7 @@ mod tests {
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
+            boss_phase2: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -3208,6 +3335,7 @@ mod tests {
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
+            boss_phase2: false,
             momentum: 0,
             message: String::new(),
             blessing: None,

@@ -16,6 +16,7 @@ pub enum Effect {
     /// Lose percentage of max hp (never lethal — clamps to 1).
     DamagePct(i32),
     GainPotions(u32),
+    LosePotions(u32),
     GainGold(u32),
     LoseGold(u32),
     GainAtk(i32),
@@ -528,7 +529,7 @@ pub fn pick_story(chapter: usize, roll: usize) -> &'static StoryScene {
 // Random events (「遇」 nodes) — drawn from this pool with the run RNG
 // ---------------------------------------------------------------------------
 
-pub const EVENTS: [RandomEvent; 22] = [
+pub const EVENTS: [RandomEvent; 29] = [
     RandomEvent {
         title: "山间酒肆",
         lines: &[
@@ -1494,10 +1495,349 @@ pub const EVENTS: [RandomEvent; 22] = [
             },
         ],
     },
+    // --- 链式奇遇(不入随机池,由 RunState::draw_chain_or_event 按进度触发) ---
+    // 22 EV_FOX1 · 白狐初遇(第一卷)
+    RandomEvent {
+        title: "雪尾白狐",
+        lines: &[
+            "山径旁传来细弱的呜咽——一只雪尾白狐被兽夹咬住了后腿,",
+            "血染白毛。它不挣扎,只用琥珀色的眼睛一眨不眨地望着你。",
+        ],
+        options: &[
+            EventOption {
+                label: "撬开兽夹,撕衣为它裹伤(用去一瓶药水)",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "白狐舔了舔你的手背,一瘸一拐地隐入林中,回头望了你三次。",
+                        "(药水 -1,情缘 +1……你总觉得,还会再见到它)",
+                    ],
+                    effect: Effect::LosePotions(1),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "山中妖物,多一事不如少一事",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "你按剑绕开。身后呜咽渐弱,琥珀色的目光落在你背上,很凉。",
+                        "(道心 +1……某个雨夜,或许你会想起这一眼)",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 23 EV_FOX2_WARM · 白衣回礼(第二卷,救过)
+    RandomEvent {
+        title: "白衣回礼",
+        lines: &[
+            "疫雨夜,一位白衣少女撑伞而来,伞沿一抬,眉眼弯弯:",
+            "「恩公,山中兽夹之恩,阿狸记得。」她指尖递来一枚暖玉。",
+        ],
+        options: &[
+            EventOption {
+                label: "收下暖玉",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "暖玉贴身,寒雨不侵,伤处竟自愈合。(恢复四成气血,得 30 文)",
+                        "白衣少女笑着退进雨里:「第三面,再还你一桩大的。」",
+                    ],
+                    effect: Effect::HealPct(40),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "「举手之劳,不必挂怀。」",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "少女怔了怔,轻声道:「人间竟真有这样的人。」",
+                        "(情缘 +2)她把伞留给了你,自己消失在雨里。",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 0,
+                    qingyuan: 2,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 24 EV_FOX2_COLD · 白影避走(第二卷,未救)
+    RandomEvent {
+        title: "白影避走",
+        lines: &[
+            "巷口白影一闪——那只瘸腿的白狐。它认出了你,",
+            "耳朵倏地压平,警惕地退进雨幕,像在说:人心,凉薄。",
+        ],
+        options: &[
+            EventOption {
+                label: "追上去,放下一瓶药水",
+                chance: 0.5,
+                success: Outcome {
+                    lines: &[
+                        "白狐迟疑良久,终于叼走了药水。琥珀色的眼睛柔和了一瞬。",
+                        "(药水 -1,情缘 +1……或许还来得及)",
+                    ],
+                    effect: Effect::LosePotions(1),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: Some(Outcome {
+                    lines: &["白影头也不回地消失了。雨更大了。(无事发生)"],
+                    effect: Effect::None,
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "由它去",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &["你收回目光。修行路上,本就不该多牵挂。(道心 +1)"],
+                    effect: Effect::None,
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 25 EV_FOX3_WARM · 狐仙赠丹(第三卷,善缘)
+    RandomEvent {
+        title: "狐仙赠丹",
+        lines: &[
+            "月华如练。白衣少女立于枝头,身后九条雪尾缓缓展开——",
+            "「阿狸修行三百年,欠恩不欠情。这枚内丹辉光,赠予恩公。」",
+        ],
+        options: &[
+            EventOption {
+                label: "郑重接过",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "辉光入体,如月入怀。(获得一件法宝)",
+                        "「前路凶险,恩公珍重。」九尾一卷,月下再无狐影。",
+                    ],
+                    effect: Effect::RandomRelic,
+                    daoxin: 0,
+                    qingyuan: 2,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "「山高水长,后会有期。」",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "狐仙深深看了你一眼,化月光渡入你眉心。(气血上限 +12,情缘 +2)",
+                        "「那便……以此相护,直到雾散。」",
+                    ],
+                    effect: Effect::GainMaxHp(12),
+                    daoxin: 0,
+                    qingyuan: 2,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 26 EV_FOX3_COLD · 妖狐拦路(第三卷,恶缘)
+    RandomEvent {
+        title: "妖狐拦路",
+        lines: &[
+            "阴风骤起。一只瘸腿的九尾妖狐拦在路心,妖瞳猩红:",
+            "「当年山径一眼,本座记到今日。」",
+        ],
+        options: &[
+            EventOption {
+                label: "拔剑硬闯",
+                chance: 0.6,
+                success: Outcome {
+                    lines: &[
+                        "你剑意如虹,妖狐纠缠一阵,恨恨遁去。(道心 +1)",
+                        "「修剑先修心——望你早日明白。」风里留下这句。",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: Some(Outcome {
+                    lines: &["妖风撕开护体剑气,你且战且退。(损失一成五气血)"],
+                    effect: Effect::DamagePct(15),
+                    daoxin: 0,
+                    qingyuan: 0,
+                }),
+            },
+            EventOption {
+                label: "散财消灾(付 40 文)",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &["妖狐嗤笑一声卷走钱袋:「俗物。」但到底放你过去了。"],
+                    effect: Effect::LoseGold(40),
+                    daoxin: 0,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 27 EV_QIN1 · 盲女琴师(第二卷)
+    RandomEvent {
+        title: "盲女琴师",
+        lines: &[
+            "疫城渡口,一位盲眼少女怀抱旧琴,指下流出的调子哀而不伤,",
+            "竟压住了半条街的疫气。「客人留步——可愿听完这一曲?」",
+        ],
+        options: &[
+            EventOption {
+                label: "赠银听曲(付 20 文)",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "曲罢,你只觉灵台清明,经脉里多了一缕琴韵。(灵力上限 +4)",
+                        "「谢客人。他日再闻此曲,便是重逢。」",
+                    ],
+                    effect: Effect::GainMaxMp(4),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "静静听完,不出一声",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "一曲终了,少女朝你的方向浅浅一礼:「心静之人,曲子听得最全。」",
+                        "(道心 +1)",
+                    ],
+                    effect: Effect::None,
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
+    // 28 EV_QIN2 · 旧曲重逢(第三卷,听过琴)
+    RandomEvent {
+        title: "旧曲重逢",
+        lines: &[
+            "宫墙之外,忽有琴声穿夜而来——正是渡口那支曲子。",
+            "盲女琴师循声而立:「我说过,再闻此曲,便是重逢。」",
+        ],
+        options: &[
+            EventOption {
+                label: "「一别经年,姑娘别来无恙。」",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &[
+                        "她这次奏的是新曲,曲中有山、有雾、有一个执剑北行的人。",
+                        "(灵力上限 +6,情缘 +1)「曲名《雾散》。愿它应验。」",
+                    ],
+                    effect: Effect::GainMaxMp(6),
+                    daoxin: 0,
+                    qingyuan: 1,
+                },
+                failure: None,
+            },
+            EventOption {
+                label: "驻足听完,悄然离去",
+                chance: 1.0,
+                success: Outcome {
+                    lines: &["琴声送你到街尾。有些重逢,不必开口。(道心 +1,回三成气血)"],
+                    effect: Effect::HealPct(30),
+                    daoxin: 1,
+                    qingyuan: 0,
+                },
+                failure: None,
+            },
+        ],
+    },
 ];
 
 /// Portrait art for an event (indexes into [`EVENTS`]); reuses NPC / creature /
 /// prop cutouts from the asset library.
+/// 章末决战前的对峙台词(踏入魔门先礼后兵,再入战斗)。
+pub fn boss_taunt(boss: super::super::quest::BossKind) -> (&'static str, &'static [&'static str]) {
+    use super::super::quest::BossKind;
+    match boss {
+        BossKind::MoonWraith => (
+            "决战 · 月魄妖",
+            &[
+                "山门内月光凝成实质,一道白影自水月倒影中浮起。",
+                "「又是执剑的凡人……你们的魂魄,在月下最是清甜。」",
+                "灵儿攥紧了袖角:「逍遥哥哥,它在看我——小心!」",
+                "你横剑身前:「今夜之后,水月洞天,再无噬魂之妖。」",
+            ],
+        ),
+        BossKind::RiverDemon => (
+            "决战 · 河魇蛟",
+            &[
+                "江心漩涡轰然炸开,黑鳞巨蛟携着腥雨升出水面。",
+                "「三百年了……又有人敢踏进本座的河道?」",
+                "「疫气因你而起,灯火因你而熄。」你踏浪而立,剑指蛟目。",
+                "「今日,还江城三千户一个太平。」",
+            ],
+        ),
+        BossKind::MiasmaRoot => (
+            "决战 · 瘴母根",
+            &[
+                "祠堂地底,根须如活物般蠕动,紫瘴自根节间汩汩渗出。",
+                "「养分……新鲜的养分自己走进来了……」",
+                "你想起疫村祠堂里那位抱着孩子的母亲。",
+                "「烧了你,雨就停了。」剑锋燃起一线青芒。",
+            ],
+        ),
+        BossKind::MirrorMinister => (
+            "决战 · 照影国师",
+            &[
+                "百面铜镜同时亮起,每一面里都站着一个「你」。",
+                "「小侠客,可知镜中人比你更懂你的破绽?」",
+                "国师广袖一拂,镜影齐齐拔剑。",
+                "「破镜,先破心。」你阖眼再睁,剑心澄明。",
+            ],
+        ),
+        BossKind::ThunderQilin => (
+            "决战 · 雷麟",
+            &[
+                "祭道尽头,雷图腾一座接一座亮起,巨兽踏雷而来。",
+                "「南疆的雷,三百年未曾认过主。」",
+                "「凡人,接得住第一道雷,再谈资格。」",
+                "你反手把剑插进土里,任雷光沿剑身入地——「来。」",
+            ],
+        ),
+        BossKind::DreamEclipse => (
+            "决战 · 宿命水影",
+            &[
+                "灵渊尽头没有妖,只有一泓水——水里映着你来时的每一步。",
+                "水影抬头,眉眼竟与你一模一样:「回头吧,雾散不了的。」",
+                "「这一路的道心与情缘,都会沉进这里。」",
+                "你伸手握住剑柄:「那就连你,一起斩了。」",
+            ],
+        ),
+    }
+}
+
+/// 链式奇遇的固定下标(EVENTS 尾部;不进入随机池)。
+pub const CHAIN_START: usize = 22;
+pub const EV_FOX1: usize = 22;
+pub const EV_FOX2_WARM: usize = 23;
+pub const EV_FOX2_COLD: usize = 24;
+pub const EV_FOX3_WARM: usize = 25;
+pub const EV_FOX3_COLD: usize = 26;
+pub const EV_QIN1: usize = 27;
+pub const EV_QIN2: usize = 28;
+
 pub fn event_portrait(index: usize) -> Option<&'static str> {
     match index {
         0 => Some("npcs/ai_fox_spirit.png"),          // 山间酒肆:老板娘

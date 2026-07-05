@@ -443,6 +443,26 @@ pub fn spawn_ending(
                         };
                         panel.spawn((Text::new(*line), font.text_font(size), TextColor(color)));
                     }
+                    // 此世回响:链式奇遇的抉择在结局被记起。
+                    let mut echoes: Vec<&str> = Vec::new();
+                    match (run.fox_stage, run.fox_kind) {
+                        (3, k) if k > 0 => echoes.push("山径上救下的那只白狐,最终以九尾月华相送。"),
+                        (3, _) => echoes.push("你偶尔会想起山径上那一眼——凉薄,原来有价。"),
+                        (s, k) if s > 0 && k > 0 => echoes.push("桃溪山径的白狐,不知伤好了没有。"),
+                        _ => {}
+                    }
+                    if run.qin_stage >= 2 {
+                        echoes.push("宫墙外那支《雾散》,如今真的应验了。");
+                    } else if run.qin_stage == 1 {
+                        echoes.push("疫城渡口的琴声,后来再没听见过。");
+                    }
+                    for echo in echoes {
+                        panel.spawn((
+                            Text::new(echo),
+                            font.text_font(18.0),
+                            TextColor(Color::srgba(0.85, 0.78, 0.95, 0.9)),
+                        ));
+                    }
                     panel.spawn((
                         Text::new(format!(
                             "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 道心 {} · 情缘 {}",

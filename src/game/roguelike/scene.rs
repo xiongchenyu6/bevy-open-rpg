@@ -961,6 +961,18 @@ pub fn run_scene_movement(
     if dialogue.active || inventory.0 {
         return; // an overlay (dialogue / inventory) owns the input
     }
+    // 对峙对话刚落幕:魔门之战开场。
+    if dialogue.boss_battle_after {
+        dialogue.boss_battle_after = false;
+        run.current_fight = Some(FightRank::Boss);
+        commands.insert_resource(PendingEncounter {
+            zone: map_zone(scene.map),
+            kind: encounter_kind_for(&run, NodeKind::Boss),
+        });
+        commands.insert_resource(battle_mods_for(&run, FightRank::Boss));
+        next.set(AppState::Battle);
+        return;
+    }
 
     scene.cooldown -= time.delta_secs();
     let mut moved = false;
@@ -1001,10 +1013,15 @@ pub fn run_scene_movement(
         recompute_flow(&mut scene, &map.0);
 
         match kind {
-            NodeKind::Fight | NodeKind::Elite | NodeKind::Boss => {
+            NodeKind::Boss => {
+                // 章末魔门:先礼后兵——对峙台词落幕才拔剑。
+                let (title, lines) = super::content::boss_taunt(run.boss);
+                dialogue.open_plain(title, lines);
+                dialogue.boss_battle_after = true;
+            }
+            NodeKind::Fight | NodeKind::Elite => {
                 let rank = match kind {
                     NodeKind::Elite => FightRank::Elite,
-                    NodeKind::Boss => FightRank::Boss,
                     _ => FightRank::Normal,
                 };
                 run.current_fight = Some(rank);
@@ -1016,7 +1033,7 @@ pub fn run_scene_movement(
                 next.set(AppState::Battle);
             }
             NodeKind::Event => {
-                let index = run.draw_event(&mut rng);
+                let index = run.draw_chain_or_event(&mut rng);
                 dialogue.open_event(index);
             }
             NodeKind::Story => {

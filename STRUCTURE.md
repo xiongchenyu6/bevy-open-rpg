@@ -46,8 +46,14 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   Fight战/Elite袭/Event遇/Story缘/Rest歇/Market市/Boss魔 (the abstract node
   graph was removed in favour of playing directly on maps).
 - **`content.rs`** — all narrative data: 4 chapter cards, 11 story scenes(每章一个池,「缘」节点随机抽取), 22 random events (options
-  with success chance + outcome effects; run 内不重复抽取), market prices,
-  rest options, 4 endings (情缘 / 道心 / 双全隐藏 / defeat). `Effect` enum applied by `event::apply_effect`.
+  with success chance + outcome effects; run 内不重复抽取) plus 7 **chain
+  events** past `CHAIN_START` (白狐三遇 branching on the first-meeting
+  choice, 盲女琴师二遇 — driven by `RunState::draw_chain_or_event`, never in
+  the random pool), six `boss_taunt` confrontation scripts (played before
+  the boss gate battle via `RunDialogue.boss_battle_after`), market prices,
+  rest options, 4 endings (情缘 / 道心 / 双全隐藏 / defeat) with
+  chain-echo recap lines on the ending screen. `Effect` enum applied by
+  `event::apply_effect`.
 - **`event.rs`** — `RunDialogue` overlay resource (chapter cards, story,
   events, rests, markets all render through it; market purchases keep the
   stall open until离开); `run_dialogue_input` (line advance +
@@ -108,6 +114,12 @@ clamped to the bordered map (`scene::zoom_camera_in/out`, `camera_follow`).
   御守 (guard: −65% damage this turn, +4 mp). Attack/spell build 气势
   momentum (max 3, shown as ●●○); at full stacks the run-mode menu offers
   绝技·剑气爆发 (~2× atk, resets momentum) in the combo slot.
+- **Boss phase 2**: at half HP every boss takes a transform turn
+  (`boss_phase2_transform`, enemy line tagged ·真身) and gains a signature
+  mechanic — MoonWraith drains mp per hit, RiverDemon rages (+atk/−def),
+  MiasmaRoot regenerates each turn, MirrorMinister reflects 20% of player
+  strikes (`mirror_backlash`), ThunderQilin chains Heavy intents,
+  DreamEclipse casts specials every 2 turns (`boss_special_cadence`).
 - Run-mode hooks (all gated on `Option<Res<RunState>>` /
   `Option<Res<RunBattleMods>>`): enemy stat scaling & elite naming at spawn;
   relic modifiers in `battle_input` (attack/spell bonuses, spell-cost delta,
