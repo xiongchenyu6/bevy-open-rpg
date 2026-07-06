@@ -65,7 +65,8 @@ Late-story NPCs currently added through imagegen:
 | 青石界门 | `assets/props/ai_spirit_gate.png` | Stage exit gate (violet-tinted for boss gates) |
 | 红漆宝箱 | `assets/props/ai_chest.png` | Map loot chest marker (mimic risk) |
 | 灵泉石池 | `assets/props/ai_spring.png` | Map spirit-spring marker (one-shot heal) |
-| 章节过场画 ×4 | `assets/ui/chapter1..4_art.png` | Full-screen chapter-card backdrop (`scene::ChapterArt`) |
+| 章节过场画 ×4 | `assets/ui/chapter1..4_art.png` | Full-screen chapter-card backdrop (`scene::ChapterArt`, static fallback) |
+| 章节过场动画 ×4 | `assets/ui/anim/chapter1..4_sheet.png` | Wan2.2 i2v 32-frame 8×4 atlas (640×352/frame, 16fps loop, `animate_chapter_art`) |
 | 金纹面板框 | `assets/ui/panel_frame.png` | Nine-slice UI panel (dialogue/battle/menus/inventory), `event::panel_slicer()` |
 
 Raw prompts/seeds: see git history of the generation commands; regenerate via

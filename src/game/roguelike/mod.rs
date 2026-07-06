@@ -648,6 +648,7 @@ impl Plugin for RoguelikePlugin {
                     scene::inventory_toggle,
                     scene::run_scene_movement,
                     scene::clear_chapter_art,
+                    scene::animate_chapter_art,
                     scene::animate_hero,
                     scene::camera_follow,
                     scene::animate_marker_glyph,

@@ -77,6 +77,31 @@ pub struct SceneMarkerGlyph {
 #[derive(Component)]
 pub struct ChapterArt;
 
+/// 章节过场动画播放状态(16fps 顺播,末帧回卷做呼吸循环)。
+#[derive(Component, Default)]
+pub struct ChapterArtAnim {
+    timer: f32,
+    frame: usize,
+}
+
+/// 逐帧推进章节过场动画图集。
+pub fn animate_chapter_art(
+    time: Res<Time>,
+    mut anims: Query<(&mut ChapterArtAnim, &mut ImageNode)>,
+) {
+    for (mut anim, mut node) in &mut anims {
+        anim.timer += time.delta_secs();
+        if anim.timer < 1.0 / 16.0 {
+            continue;
+        }
+        anim.timer = 0.0;
+        anim.frame = (anim.frame + 1) % 32;
+        if let Some(atlas) = node.texture_atlas.as_mut() {
+            atlas.index = anim.frame;
+        }
+    }
+}
+
 /// 章节卡对话关闭后撤下全屏过场画。
 pub fn clear_chapter_art(
     mut commands: Commands,
@@ -554,6 +579,7 @@ pub fn spawn_run_scene(
     dolls: Res<PaperdollAssets>,
     lights: Res<LightingAssets>,
     asset_server: Res<AssetServer>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
     run: Option<ResMut<RunState>>,
     scene: Option<ResMut<RunSceneState>>,
     mut dialogue: ResMut<RunDialogue>,
@@ -829,6 +855,7 @@ pub fn spawn_run_scene(
             run.chapter_def().title,
             super::content::CHAPTER_CARDS[chapter.min(3)],
         );
+        // 静态过场画兜底(动画图集加载失败时仍有画面)。
         commands.spawn((
             ChapterArt,
             scope(),
@@ -842,6 +869,32 @@ pub fn spawn_run_scene(
             },
             ImageNode::new(asset_server.load(format!("ui/chapter{}_art.png", chapter.min(3) + 1))),
             GlobalZIndex(40),
+        ));
+        // Wan2.2 i2v 生成的 32 帧过场动画(8×4 图集,640×352/帧,16fps 循环)。
+        let layout = layouts.add(TextureAtlasLayout::from_grid(
+            UVec2::new(640, 352),
+            8,
+            4,
+            None,
+            None,
+        ));
+        commands.spawn((
+            ChapterArt,
+            ChapterArtAnim::default(),
+            scope(),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                ..default()
+            },
+            ImageNode::from_atlas_image(
+                asset_server.load(format!("ui/anim/chapter{}_sheet.png", chapter.min(3) + 1)),
+                TextureAtlas { layout, index: 0 },
+            ),
+            GlobalZIndex(41),
         ));
     }
 

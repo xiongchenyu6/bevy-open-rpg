@@ -182,6 +182,21 @@
   对话落幕自动撤下(`ChapterArt` + `clear_chapter_art`)。
 - 证明包 screenshots/result/14(开卷过场画/行囊里程碑/终章插画)。
 
+## Wan2.2 过场动画(第十三轮,「用 ComfyUI 生成一些过场动画?」)
+
+- 远程 ComfyUI 备有 **Wan2.2 i2v 14B**(fp8,双 4090):以四张章节
+  过场画为首帧,image-to-video 生成 33 帧 640×352 动画(每章一条
+  中文运镜 prompt:雾流/灯曳/衣袂/涟漪,镜头近静止;单章约 1–3 分钟)。
+- 本地 magick montage 拼 8×4 图集(5120×1408,取前 32 帧)存
+  `assets/ui/anim/chapterN_sheet.png`;新脚本
+  scratchpad/wan_i2v.py(自管 SSH 隧道,ComfyUI API 双阶段
+  KSamplerAdvanced high/low noise 标准 Wan2.2 流程)。
+- 游戏内:章节卡的 `ChapterArt` 变双层——静态画兜底(z40)+
+  `ChapterArtAnim` 图集层(z41,`ImageNode::from_atlas_image`,
+  16fps 循环 32 帧,`animate_chapter_art` 推进 atlas index)。
+  开卷即是会动的水墨画:月下递铃、瘴雾翻涌、乌云闪电、渊水涟漪。
+- 证明包 screenshots/result/15(游戏内两帧对比 + chapter1_anim.gif)。
+
 ## 已知限制 / 后续可做
 
 - 本机无 `WAYLAND_DISPLAY`,桌面交互试玩未执行;运行时验证走 lavapipe
