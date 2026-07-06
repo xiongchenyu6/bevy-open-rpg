@@ -312,6 +312,8 @@ struct BattleState {
     momentum: u32,
     /// Boss 半血后的真身阶段:变身宣言 + 专属强化机制。
     boss_phase2: bool,
+    /// 终章水影的分歧:true = 以情乱心(情缘压道心的一世)。
+    eclipse_heart: bool,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
@@ -555,6 +557,14 @@ fn spawn_battle(
             stats.hp += healed;
             message.push_str(&format!("\n【息壤袋】土息养身,回复 {healed} 点气血。"));
         }
+        let shield = run.bond_shield();
+        if shield > 0 && stats.hp < stats.max_hp {
+            let healed = shield.min(stats.max_hp - stats.hp);
+            stats.hp += healed;
+            message.push_str(&format!(
+                "\n【情缘·灵息罩】灵儿抢先布下灵息,回复 {healed} 点气血。"
+            ));
+        }
     }
     if let Some(bond_bonus) = bond_bonus {
         message.push_str(&format!(
@@ -590,6 +600,7 @@ fn spawn_battle(
         intent: roll_intent(&mut rng),
         guarding: false,
         boss_phase2: false,
+        eclipse_heart: false,
         momentum: 0,
         blessing,
         camp_bonus,
@@ -1060,9 +1071,16 @@ fn battle_input(
         1 => {
             // 御守:本回合卸去大半来势,顺势回灵。
             state.guarding = true;
-            stats.mp = (stats.mp + GUARD_MP_RESTORE).min(stats.max_mp);
-            state.message =
-                format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {GUARD_MP_RESTORE} 点灵力。");
+            let restore = run
+                .as_ref()
+                .map_or(GUARD_MP_RESTORE, |r| r.guard_mp_restore());
+            stats.mp = (stats.mp + restore).min(stats.max_mp);
+            state.message = format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {restore} 点灵力。");
+            if restore > GUARD_MP_RESTORE {
+                state
+                    .message
+                    .push_str("\n【道心·御守精进】身形如渊渟岳峙。");
+            }
             start_player_acting(&mut state, PlayerAction::Guard);
         }
         2 => {
@@ -1136,12 +1154,16 @@ fn battle_input(
                 );
             } else {
                 let base = (stats.atk * 2 - state.enemy.def + rng.range(2, 9)).max(3);
-                let dmg =
-                    (((base + relic_attack + relic_spell) as f32) * hunter_mul).round() as i32;
+                let burst_mul = run.as_ref().map_or(1.0, |r| r.resolve_burst_mul());
+                let dmg = (((base + relic_attack + relic_spell) as f32) * hunter_mul * burst_mul)
+                    .round() as i32;
                 state.enemy.hp -= dmg;
                 state.momentum = 0;
                 state.message =
                     format!("李逍遥 气势鼎盛,施展绝技·剑气爆发!剑光如潮水倾泻,造成 {dmg} 点伤害!");
+                if burst_mul > 1.0 {
+                    state.message.push_str("\n【道心·剑意如磐】绝技威力更盛!");
+                }
                 if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                     state.message.push_str(&line);
                 }
@@ -1807,7 +1829,10 @@ fn battle_tick(
                     && state.enemy.hp * 2 <= state.enemy.max_hp
                 {
                     state.boss_phase2 = true;
-                    state.message = boss_phase2_transform(boss, &mut state.enemy);
+                    // 终章水影读你这一世的道心与情缘,决定用哪种方式压垮你。
+                    state.eclipse_heart = run.as_ref().is_some_and(|r| r.qingyuan > r.daoxin);
+                    let heart = state.eclipse_heart;
+                    state.message = boss_phase2_transform(boss, &mut state.enemy, heart);
                     state.intent = next_intent(&state, &mut rng);
                     state.phase = Phase::EnemyActing;
                     state.timer = 1.1;
@@ -1817,8 +1842,15 @@ fn battle_tick(
                 }
                 let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
                 let strong_guard = run.as_ref().map_or(0, |r| r.strong_hit_guard());
-                let attack =
-                    begin_enemy_turn(&mut state, &mut stats, &mut rng, relic_guard, strong_guard);
+                let guard_keep = run.as_ref().map_or(35, |r| r.guard_keep_pct());
+                let attack = begin_enemy_turn(
+                    &mut state,
+                    &mut stats,
+                    &mut rng,
+                    relic_guard,
+                    strong_guard,
+                    guard_keep,
+                );
                 spawn_enemy_strike_impact(&mut commands, &anims, &lights, attack.strong);
                 spawn_damage_text(
                     &mut commands,
@@ -1851,6 +1883,19 @@ fn battle_tick(
                 state.phase = Phase::Lost;
                 state.timer = 1.6;
             } else {
+                if let Some(run) = run.as_ref() {
+                    let regen = run.bond_regen();
+                    if regen > 0 && stats.hp > 0 && stats.hp < stats.max_hp {
+                        let healed = regen.min(stats.max_hp - stats.hp);
+                        stats.hp += healed;
+                        spawn_heal_text(
+                            &mut commands,
+                            &font,
+                            HERO_POS + Vec3::new(-24.0, 96.0, 0.0),
+                            healed,
+                        );
+                    }
+                }
                 if let Some(heal) = companion_support(&quest, state.bond_bonus, &mut stats) {
                     state.message = format!(
                         "赵灵儿 以灵息护住你，恢复 {} 点气血。\n你的回合，请选择行动。",
@@ -2041,6 +2086,7 @@ fn begin_enemy_turn(
     rng: &mut Rng,
     relic_guard: i32,
     strong_guard: i32,
+    guard_keep: i32,
 ) -> EnemyAttackResult {
     let turn_index = state.enemy_turns;
     state.enemy_turns += 1;
@@ -2048,7 +2094,8 @@ fn begin_enemy_turn(
     state.guarding = false;
 
     if let EncounterKind::Boss(boss) = state.encounter_kind {
-        if let Some(result) = begin_boss_special_turn(boss, turn_index, state, stats, rng, guarding)
+        if let Some(result) =
+            begin_boss_special_turn(boss, turn_index, state, stats, rng, guarding, guard_keep)
         {
             state.intent = next_intent(state, rng);
             return result;
@@ -2084,7 +2131,7 @@ fn begin_enemy_turn(
             (raw - blocked - camp_blocked - bond_blocked - relic_guard - strong_cut).max(0);
         let mut guard_note = String::new();
         if guarding {
-            let absorbed = dmg - dmg * 35 / 100;
+            let absorbed = dmg - dmg * guard_keep / 100;
             dmg -= absorbed;
             guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
         }
@@ -2125,6 +2172,15 @@ fn begin_enemy_turn(
                         .push_str(&format!("\n根须自大地汲取生机,回复 {heal} 点气血。"));
                 }
             }
+            EncounterKind::Boss(BossKind::DreamEclipse) if state.eclipse_heart => {
+                let heal = 4.min(state.enemy.max_hp - state.enemy.hp).max(0);
+                if heal > 0 {
+                    state.enemy.hp += heal;
+                    state
+                        .message
+                        .push_str(&format!("\n旧梦潮水抚过伤口,水影回复 {heal} 点气血。"));
+                }
+            }
             EncounterKind::Boss(BossKind::MoonWraith) if dmg > 0 => {
                 let drained = 2.min(stats.mp);
                 if drained > 0 {
@@ -2159,6 +2215,12 @@ fn next_intent(state: &BattleState, rng: &mut Rng) -> EnemyIntent {
             match boss {
                 BossKind::ThunderQilin if rng.chance(0.6) => return EnemyIntent::Heavy,
                 BossKind::MoonWraith if rng.chance(0.5) => return EnemyIntent::Drain,
+                BossKind::DreamEclipse if state.eclipse_heart && rng.chance(0.5) => {
+                    return EnemyIntent::Drain;
+                }
+                BossKind::DreamEclipse if !state.eclipse_heart && rng.chance(0.5) => {
+                    return EnemyIntent::Heavy;
+                }
                 _ => {}
             }
         }
@@ -2182,6 +2244,7 @@ fn begin_boss_special_turn(
     stats: &mut PlayerStats,
     rng: &mut Rng,
     guarding: bool,
+    guard_keep: i32,
 ) -> Option<EnemyAttackResult> {
     if turn_index % boss_special_cadence(boss, state.boss_phase2) != 0 {
         return None;
@@ -2194,7 +2257,7 @@ fn begin_boss_special_turn(
     let mut dmg = (raw - blocked - camp_blocked - bond_blocked).max(0);
     let mut guard_note = String::new();
     if guarding {
-        let absorbed = dmg - dmg * 35 / 100;
+        let absorbed = dmg - dmg * guard_keep / 100;
         dmg -= absorbed;
         guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
     }
@@ -2249,7 +2312,7 @@ fn mirror_backlash(state: &BattleState, stats: &mut PlayerStats, dmg: i32) -> Op
 
 /// Boss 二阶段变身:属性调整 + 宣言文案。每个 boss 的真身机制不同,
 /// 与 `next_intent` / `mirror_backlash` / 秘术节奏配合。
-fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance) -> String {
+fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance, eclipse_heart: bool) -> String {
     match boss {
         BossKind::MoonWraith => {
             enemy.atk += 2;
@@ -2281,10 +2344,20 @@ fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance) -> String {
                 enemy.name
             )
         }
-        BossKind::DreamEclipse => format!(
-            "{} 沉入旧梦深处,潮声骤密——秘术涌动得更快了!\n(秘法回合更频繁)",
-            enemy.name
-        ),
+        BossKind::DreamEclipse => {
+            if eclipse_heart {
+                format!(
+                    "{} 水面一晃,竟化作灵儿的眉眼:「逍遥哥哥,别打了……」\n(以情乱心:招招摄灵,水影不断自愈——斩情,或者被情斩)",
+                    enemy.name
+                )
+            } else {
+                enemy.atk += 2;
+                format!(
+                    "{} 举起一柄与你一模一样的剑,剑势如渊:「你的道,不过如此。」\n(以剑势压人:蓄力重击连绵不绝,秘法更密)",
+                    enemy.name
+                )
+            }
+        }
     }
 }
 
@@ -3218,6 +3291,7 @@ mod tests {
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            eclipse_heart: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -3228,7 +3302,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
 
         assert!(attack.damage > 0);
         assert!(!attack.strong);
@@ -3257,6 +3331,7 @@ mod tests {
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            eclipse_heart: false,
             momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
@@ -3267,7 +3342,7 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
 
         assert!(attack.damage > 0);
         assert!(attack.damage < 7);
@@ -3295,6 +3370,7 @@ mod tests {
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            eclipse_heart: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -3306,7 +3382,7 @@ mod tests {
         let before_hp = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
 
         assert!(attack.strong);
         assert!(state.message.contains("月影噬灵"));
@@ -3336,6 +3412,7 @@ mod tests {
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            eclipse_heart: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -3345,7 +3422,7 @@ mod tests {
         let mut stats = PlayerStats::default();
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
 
         assert!(attack.strong);
         assert!(state.message.contains("旧梦潮声"));

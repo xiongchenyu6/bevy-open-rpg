@@ -406,6 +406,46 @@ impl RunState {
         index
     }
 
+    // --- 道心/情缘里程碑:剧情计数直接反哺战斗 ---
+
+    /// 情缘≥4:灵儿灵息缠身,敌人每回合行动后为你回血。
+    pub fn bond_regen(&self) -> i32 {
+        if self.qingyuan >= 4 { 2 } else { 0 }
+    }
+
+    /// 情缘≥7:开战灵儿先布灵息护罩(开战回血)。
+    pub fn bond_shield(&self) -> i32 {
+        if self.qingyuan >= 7 { 8 } else { 0 }
+    }
+
+    /// 道心≥4:绝技·剑气爆发威力 ×1.3。
+    pub fn resolve_burst_mul(&self) -> f32 {
+        if self.daoxin >= 4 { 1.3 } else { 1.0 }
+    }
+
+    /// 御守卸力后保留的伤害百分比:道心≥7 时 35%→20%。
+    pub fn guard_keep_pct(&self) -> i32 {
+        if self.daoxin >= 7 { 20 } else { 35 }
+    }
+
+    /// 道心≥7:御守回灵 4→6。
+    pub fn guard_mp_restore(&self) -> i32 {
+        if self.daoxin >= 7 { 6 } else { 4 }
+    }
+
+    /// 行囊里程碑一览(已激活的以「◆」标出)。
+    pub fn milestone_summary(&self) -> String {
+        let mark = |on: bool| if on { "◆" } else { "◇" };
+        format!(
+            "{} 情缘4 灵息缠身(敌回合后回血)  {} 情缘7 开战灵息罩
+{} 道心4 绝技威力+30%  {} 道心7 御守精进(减伤85%·回灵+)",
+            mark(self.qingyuan >= 4),
+            mark(self.qingyuan >= 7),
+            mark(self.daoxin >= 4),
+            mark(self.daoxin >= 7),
+        )
+    }
+
     // --- relic-driven battle modifiers, summed over owned relics ---
 
     fn sum_relics(&self, f: impl Fn(Relic) -> i32) -> i32 {
@@ -607,6 +647,7 @@ impl Plugin for RoguelikePlugin {
                     event::run_dialogue_input,
                     scene::inventory_toggle,
                     scene::run_scene_movement,
+                    scene::clear_chapter_art,
                     scene::animate_hero,
                     scene::camera_follow,
                     scene::animate_marker_glyph,

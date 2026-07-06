@@ -1768,7 +1768,10 @@ pub const EVENTS: [RandomEvent; 29] = [
 /// Portrait art for an event (indexes into [`EVENTS`]); reuses NPC / creature /
 /// prop cutouts from the asset library.
 /// 章末决战前的对峙台词(踏入魔门先礼后兵,再入战斗)。
-pub fn boss_taunt(boss: super::super::quest::BossKind) -> (&'static str, &'static [&'static str]) {
+pub fn boss_taunt(
+    boss: super::super::quest::BossKind,
+    heart_over_resolve: bool,
+) -> (&'static str, &'static [&'static str]) {
     use super::super::quest::BossKind;
     match boss {
         BossKind::MoonWraith => (
@@ -1816,13 +1819,22 @@ pub fn boss_taunt(boss: super::super::quest::BossKind) -> (&'static str, &'stati
                 "你反手把剑插进土里,任雷光沿剑身入地——「来。」",
             ],
         ),
+        BossKind::DreamEclipse if heart_over_resolve => (
+            "决战 · 宿命水影",
+            &[
+                "灵渊尽头没有妖,只有一泓水——水里映着你来时的每一步。",
+                "水面轻晃,浮出的竟是灵儿的眉眼:「逍遥哥哥,留下来陪我,好不好?」",
+                "腕上的桃木铃轻轻响了一声——真正的她,还在雾外等你。",
+                "「你不是她。」你握紧剑柄,「让开。」",
+            ],
+        ),
         BossKind::DreamEclipse => (
             "决战 · 宿命水影",
             &[
                 "灵渊尽头没有妖,只有一泓水——水里映着你来时的每一步。",
-                "水影抬头,眉眼竟与你一模一样:「回头吧,雾散不了的。」",
-                "「这一路的道心与情缘,都会沉进这里。」",
-                "你伸手握住剑柄:「那就连你,一起斩了。」",
+                "水影抬头,眉眼竟与你一模一样,手中之剑也分毫不差。",
+                "「你我同源,你的道,不过是我做过的一场梦。」",
+                "你伸手握住剑柄:「那就连这场梦,一起斩了。」",
             ],
         ),
     }

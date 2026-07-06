@@ -72,6 +72,25 @@ pub struct SceneMarkerGlyph {
     base_y: f32,
 }
 
+/// 章节开卷的全屏过场画,盖在地图之上、章节卡文字之下;
+/// 章节卡对话一关就撤下。
+#[derive(Component)]
+pub struct ChapterArt;
+
+/// 章节卡对话关闭后撤下全屏过场画。
+pub fn clear_chapter_art(
+    mut commands: Commands,
+    dialogue: Res<RunDialogue>,
+    art: Query<Entity, With<ChapterArt>>,
+) {
+    if dialogue.active {
+        return;
+    }
+    for e in &art {
+        commands.entity(e).despawn();
+    }
+}
+
 /// Transient floating text on the map (hazard damage, pickups): rises and
 /// fades, then despawns.
 #[derive(Component)]
@@ -801,7 +820,8 @@ pub fn spawn_run_scene(
         scope(),
     );
 
-    // First stage of a chapter: show the chapter card.
+    // First stage of a chapter: show the chapter card over a full-screen
+    // chapter painting.
     if !run.card_shown && run.stage == 0 {
         run.card_shown = true;
         let chapter = run.chapter;
@@ -809,6 +829,20 @@ pub fn spawn_run_scene(
             run.chapter_def().title,
             super::content::CHAPTER_CARDS[chapter.min(3)],
         );
+        commands.spawn((
+            ChapterArt,
+            scope(),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                ..default()
+            },
+            ImageNode::new(asset_server.load(format!("ui/chapter{}_art.png", chapter.min(3) + 1))),
+            GlobalZIndex(40),
+        ));
     }
 
     commands.insert_resource(RunSceneMap(map));
@@ -1015,7 +1049,8 @@ pub fn run_scene_movement(
         match kind {
             NodeKind::Boss => {
                 // 章末魔门:先礼后兵——对峙台词落幕才拔剑。
-                let (title, lines) = super::content::boss_taunt(run.boss);
+                let (title, lines) =
+                    super::content::boss_taunt(run.boss, run.qingyuan > run.daoxin);
                 dialogue.open_plain(title, lines);
                 dialogue.boss_battle_after = true;
             }
@@ -1395,6 +1430,11 @@ pub fn inventory_toggle(
                 )),
                 font.text_font(20.0),
                 TextColor(Color::srgb(0.9, 0.92, 0.95)),
+            ));
+            panel.spawn((
+                Text::new(run.milestone_summary()),
+                font.text_font(16.0),
+                TextColor(Color::srgb(0.85, 0.78, 0.95)),
             ));
             panel.spawn((
                 Text::new(format!("法宝({}):", run.relics.len())),
