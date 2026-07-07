@@ -5,3 +5,7 @@
 /tmp/
 .claude/
 CLAUDE.md
+# wasm web build artifacts (built by scripts/build_web.sh / CI)
+/web/pkg/
+/web/assets/
+web-dist.zip

@@ -48,8 +48,21 @@ bevy_fog_of_war = { version = "0.4.0", default-features = false, features = [
   "format-json",
 ] }
 
+[features]
+# Build the web target with the WebGPU backend:
+#   cargo build --target wasm32-unknown-unknown --release --features webgpu --bin love-rpg
+webgpu = ["bevy/web", "bevy/webgpu"]
+
 [patch.crates-io]
 bevy_firefly = { path = "vendor/bevy_firefly" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+# No `strip = true` — it removes the wasm `target_features` section, breaking
+# wasm-opt's bulk-memory handling; wasm-opt -Oz already strips symbols.
 
 [profile.dev]
 opt-level = 1

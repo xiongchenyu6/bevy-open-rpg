@@ -94,6 +94,7 @@ pub fn spawn_title(mut commands: Commands, font: Res<GameFont>, asset_server: Re
 
 pub fn title_input(
     mut commands: Commands,
+    time: Res<Time>,
     mut intent: ResMut<Intent>,
     mut stats: ResMut<PlayerStats>,
     mut quest: ResMut<QuestLog>,
@@ -115,9 +116,20 @@ pub fn title_input(
     stats.def += 1;
     stats.potions += 1;
     *quest = QuestLog::default();
-    if let Ok(elapsed) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        rng.0 ^= u64::from(elapsed.subsec_nanos()) << 16 | 1;
-    }
+    // Mix real-time entropy into the seed. wasm32-unknown-unknown has no
+    // SystemTime, so the web build stirs in Bevy's boot-relative clock
+    // (frame-exact press timing) instead of the wall clock.
+    #[cfg(target_arch = "wasm32")]
+    let wall_nanos = (time.elapsed_secs_f64() * 1.0e9) as u64;
+    #[cfg(not(target_arch = "wasm32"))]
+    let wall_nanos = {
+        let _ = &time;
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64)
+            .unwrap_or(0)
+    };
+    rng.0 ^= (wall_nanos << 16) | 1;
     let run = RunState::new(&mut rng);
     commands.insert_resource(run);
     next.set(AppState::NodeMap);

@@ -55,6 +55,10 @@
                 clippy
                 openssl
                 rustfmt
+                # wasm web build: wasm32 linker + JS glue + size optimizer
+                lld
+                wasm-bindgen-cli
+                binaryen
               ];
             };
         };
