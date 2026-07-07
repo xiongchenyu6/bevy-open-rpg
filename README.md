@@ -6,7 +6,8 @@ ComfyUI(Flux 静帧 + Wan2.2 过场动画)生成。
 **▶ 在浏览器游玩:<https://xiongchenyu6.github.io/bevy-open-rpg/>**(需要
 WebGPU:最新 Chrome / Edge,或 Firefox 开启 `dom.webgpu.enabled`)
 
-![章节开卷](https://github.com/xiongchenyu6/bevy-open-rpg/releases/download/web-latest/preview.png)
+![章节开卷](docs/preview.png)
+![Boss 真身战](docs/preview_battle.png)
 
 ## 玩法
 
