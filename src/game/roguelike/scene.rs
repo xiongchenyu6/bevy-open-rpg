@@ -336,6 +336,39 @@ fn generate_stage_tiles(rng: &mut Rng) -> Vec<Vec<Tile>> {
                 }
             }
         }
+        // 5b. 孤立的 1–3 格水塘/草点看着像贴图错位——不成片就抹回路面。
+        for kind in [Tile::Water, Tile::Grass] {
+            let mut seen = vec![vec![false; w]; h];
+            for r0 in 0..h {
+                for c0 in 0..w {
+                    if tiles[r0][c0] != kind || seen[r0][c0] {
+                        continue;
+                    }
+                    let mut blob = vec![(c0, r0)];
+                    let mut queue = std::collections::VecDeque::from([(c0, r0)]);
+                    seen[r0][c0] = true;
+                    while let Some((qc, qr)) = queue.pop_front() {
+                        for (dc, dr) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                            let (nc, nr) = (qc as i32 + dc, qr as i32 + dr);
+                            if nc < 0 || nr < 0 || nc >= w as i32 || nr >= h as i32 {
+                                continue;
+                            }
+                            let (nc, nr) = (nc as usize, nr as usize);
+                            if tiles[nr][nc] == kind && !seen[nr][nc] {
+                                seen[nr][nc] = true;
+                                blob.push((nc, nr));
+                                queue.push_back((nc, nr));
+                            }
+                        }
+                    }
+                    if blob.len() <= 3 {
+                        for (bc, br) in blob {
+                            tiles[br][bc] = Tile::Path;
+                        }
+                    }
+                }
+            }
+        }
         // 6. Water may have split the open area — keep the largest walkable
         // region only (stray pockets become walls).
         let map = MapData::generated(MapKind::Village, tiles.clone());
@@ -600,19 +633,31 @@ pub fn spawn_run_scene(
     // each cell samples its own 128×128 sub-rect by world position, so the
     // texture flows continuously across a 4×4-cell area with no mirror
     // symmetry. A light per-tile brightness jitter keeps large fields alive.
+    // 镜像折返(乒乓)采样:每格取 512 图的一个 128×128 子区,索引沿
+    // 0,1,2,3,3,2,1,0 折返——相邻格纹理天然连续(贴图非完美无缝也不会
+    // 露接缝),8 格才回到同一子区,又不会形成逐格镜像的万花筒。
     let sub_rect = |col: i32, row: i32| {
-        let x0 = col.rem_euclid(4) as f32 * 128.0;
-        let y0 = row.rem_euclid(4) as f32 * 128.0;
+        let mirror = |v: i32| {
+            let m = v.rem_euclid(8);
+            (if m < 4 { m } else { 7 - m }) as f32
+        };
+        let x0 = mirror(col) * 128.0;
+        let y0 = mirror(row) * 128.0;
         Rect::new(x0, y0, x0 + 128.0, y0 + 128.0)
+    };
+    let tile_hash = |col: i32, row: i32| {
+        ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663))
     };
     for row in 0..MAP_H {
         for col in 0..MAP_W {
             let p = tile_to_world(col, row);
-            let mut sprite = tile_sprite(map.at(col, row), scene.map, &assets);
+            let tile = map.at(col, row);
+            let mut sprite = tile_sprite(tile, scene.map, &assets);
+            let hash = tile_hash(col, row);
             sprite.rect = Some(sub_rect(col, row));
-            let hash =
-                ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
-            let tint = 0.92 + ((hash >> 3) % 8) as f32 * 0.015;
+            // 墙体整体压暗:与地面拉开明度差,可走区域一眼可读。
+            let _ = hash;
+            let tint = if tile == Tile::Wall { 0.62 } else { 1.0 };
             let c = sprite.color.to_srgba();
             sprite.color = Color::srgb(c.red * tint, c.green * tint, c.blue * tint);
             commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));
@@ -628,10 +673,10 @@ pub fn spawn_run_scene(
             }
             let p = tile_to_world(col, row);
             let mut sprite = tile_sprite(Tile::Wall, scene.map, &assets);
+            let hash = tile_hash(col, row);
             sprite.rect = Some(sub_rect(col, row));
-            let hash =
-                ((col as u32).wrapping_mul(73_856_093)) ^ ((row as u32).wrapping_mul(19_349_663));
-            let tint = 0.80 + ((hash >> 3) % 8) as f32 * 0.015;
+            let _ = hash;
+            let tint = 0.46;
             let c = sprite.color.to_srgba();
             sprite.color = Color::srgba(c.red * tint, c.green * tint, c.blue * tint, 0.9);
             commands.spawn((sprite, Transform::from_xyz(p.x, p.y, 0.0), scope()));

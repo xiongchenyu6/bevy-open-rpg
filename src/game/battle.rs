@@ -359,13 +359,6 @@ struct BattleCompanion {
 struct BattleEnemy;
 
 #[derive(Component)]
-struct BattleEnemyAura {
-    origin: Vec3,
-    light: [f32; 4],
-    age: f32,
-}
-
-#[derive(Component)]
 struct BattleEnemyMotion {
     origin: Vec3,
     age: f32,
@@ -619,22 +612,8 @@ fn spawn_battle(
         Color::srgba(def.light[0], def.light[1], def.light[2], def.light[3]),
         AppState::Battle,
     );
-    let mut aura_sprite = anims.sprite(
-        AnimationClip::MonsterIdle,
-        Vec2::splat(enemy_aura_size(def)),
-    );
-    aura_sprite.color = enemy_aura_color(def.light, Phase::Menu, 0.0);
-    commands.spawn((
-        BattleEnemyAura {
-            origin: ENEMY_POS,
-            light: def.light,
-            age: rng.range(0, 100) as f32 * 0.05,
-        },
-        aura_sprite,
-        SpriteAnimation::new(AnimationClip::MonsterIdle),
-        Transform::from_xyz(ENEMY_POS.x, ENEMY_POS.y, ENEMY_POS.z + 0.08),
-        DespawnOnExit(AppState::Battle),
-    ));
+    // (此前这里还叠了一层共享怪物 sheet 的半透明剪影——它和生成立绘
+    // 形状不符,看起来像敌人背后藏了只「恐龙」,已移除。)
     commands.spawn((
         BattleEnemy,
         BattleEnemyMotion {
@@ -2482,7 +2461,6 @@ fn update_battle_animations(
             With<BattleHero>,
             Without<BattleCompanion>,
             Without<BattleEnemy>,
-            Without<BattleEnemyAura>,
         ),
     >,
     mut companions: Query<
@@ -2491,28 +2469,12 @@ fn update_battle_animations(
             With<BattleCompanion>,
             Without<BattleHero>,
             Without<BattleEnemy>,
-            Without<BattleEnemyAura>,
         ),
     >,
     mut enemy: Query<
         (&mut Transform, &mut Sprite, &mut BattleEnemyMotion),
         (
             With<BattleEnemy>,
-            Without<BattleHero>,
-            Without<BattleCompanion>,
-            Without<BattleEnemyAura>,
-        ),
-    >,
-    mut aura: Query<
-        (
-            &mut Transform,
-            &mut Sprite,
-            &mut SpriteAnimation,
-            &mut BattleEnemyAura,
-        ),
-        (
-            With<BattleEnemyAura>,
-            Without<BattleEnemy>,
             Without<BattleHero>,
             Without<BattleCompanion>,
         ),
@@ -2557,31 +2519,6 @@ fn update_battle_animations(
         transform.scale = Vec3::splat((scale + breath * 0.025).max(0.82));
         sprite.color = enemy_primary_color(state.phase, hit);
     }
-
-    if let Ok((mut transform, mut sprite, mut animation, mut aura)) = aura.single_mut() {
-        animation::set_clip(
-            &anims,
-            &mut sprite,
-            &mut animation,
-            enemy_clip_for_phase(state.phase),
-        );
-        aura.age += time.delta_secs();
-        let pulse = (aura.age * 4.2).sin() * 0.5 + 0.5;
-        let (x, y, scale, _) = enemy_phase_motion(state.phase, state.player_action, state.timer);
-
-        transform.translation.x = aura.origin.x + x * 0.9;
-        transform.translation.y = aura.origin.y + y + pulse * 8.0 - 4.0;
-        transform.scale = Vec3::splat((scale + pulse * 0.04).max(0.82));
-        sprite.color = enemy_aura_color(aura.light, state.phase, pulse);
-    }
-}
-
-fn enemy_clip_for_phase(phase: Phase) -> AnimationClip {
-    if phase == Phase::EnemyActing {
-        AnimationClip::MonsterAttack
-    } else {
-        AnimationClip::MonsterIdle
-    }
 }
 
 fn enemy_primary_image(def: &EnemyDef) -> &'static str {
@@ -2590,10 +2527,6 @@ fn enemy_primary_image(def: &EnemyDef) -> &'static str {
 
 fn enemy_primary_size(def: &EnemyDef) -> f32 {
     def.size
-}
-
-fn enemy_aura_size(def: &EnemyDef) -> f32 {
-    def.size * 0.82
 }
 
 fn enemy_phase_motion(
@@ -2722,18 +2655,6 @@ fn enemy_primary_color(phase: Phase, hit: f32) -> Color {
         Phase::Won => Color::srgba(0.70, 0.78, 0.92, 0.34),
         _ => Color::srgba(1.0, 1.0, 1.0, 0.98),
     }
-}
-
-fn enemy_aura_color(light: [f32; 4], phase: Phase, pulse: f32) -> Color {
-    let phase_boost = match phase {
-        Phase::EnemyActing => 0.18,
-        Phase::PlayerActing => 0.08,
-        Phase::Won => -0.12,
-        Phase::Menu | Phase::Lost | Phase::Fled => 0.0,
-    };
-    let alpha = (light[3] + phase_boost + pulse * 0.05).clamp(0.12, 0.62);
-
-    Color::srgba(light[0], light[1], light[2], alpha)
 }
 
 fn update_battle_effects(
@@ -2986,40 +2907,14 @@ mod tests {
     }
 
     #[test]
-    fn enemy_sprite_uses_attack_clip_only_during_enemy_turn() {
-        assert_eq!(
-            enemy_clip_for_phase(Phase::Menu),
-            AnimationClip::MonsterIdle
-        );
-        assert_eq!(
-            enemy_clip_for_phase(Phase::PlayerActing),
-            AnimationClip::MonsterIdle
-        );
-        assert_eq!(
-            enemy_clip_for_phase(Phase::EnemyActing),
-            AnimationClip::MonsterAttack
-        );
-        assert_eq!(enemy_clip_for_phase(Phase::Won), AnimationClip::MonsterIdle);
-    }
-
-    #[test]
     fn generated_enemy_cutouts_are_primary_battle_visuals() {
         let enemy = &ENEMIES[0];
 
         assert_eq!(enemy_primary_image(enemy), "creatures/ai_water_serpent.png");
         assert_eq!(enemy_primary_size(enemy), enemy.size);
-        assert!(enemy_primary_size(enemy) > enemy_aura_size(enemy));
-
+        // 敌人只有生成立绘一层本体(旧的共享剪影层已移除,不再有重影)。
         let primary_alpha = enemy_primary_color(Phase::Menu, 0.0).to_srgba().alpha;
-        let aura_alpha = enemy_aura_color(enemy.light, Phase::Menu, 0.0)
-            .to_srgba()
-            .alpha;
-        let attack_aura_alpha = enemy_aura_color(enemy.light, Phase::EnemyActing, 1.0)
-            .to_srgba()
-            .alpha;
-
-        assert!(primary_alpha > aura_alpha);
-        assert!(attack_aura_alpha > aura_alpha);
+        assert!(primary_alpha > 0.9);
     }
 
     #[test]
