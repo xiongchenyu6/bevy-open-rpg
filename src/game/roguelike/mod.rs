@@ -28,6 +28,56 @@ use graph::NodeKind;
 // Relics (法宝) — persistent passive items collected during a run
 // ---------------------------------------------------------------------------
 
+/// 品级:法宝与妖纹的稀有度。决定掉落权重与 UI 用色。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Grade {
+    /// 凡品(白):随处可得的实用小物。
+    Common,
+    /// 良品(绿):有明确战力的常备之选。
+    Fine,
+    /// 上品(蓝):足以改变打法的利器。
+    Superior,
+    /// 极品(紫):一件成型的核心。
+    Epic,
+    /// 仙品(金):一局难遇的传说。
+    Celestial,
+}
+
+impl Grade {
+    pub fn name(self) -> &'static str {
+        match self {
+            Grade::Common => "凡品",
+            Grade::Fine => "良品",
+            Grade::Superior => "上品",
+            Grade::Epic => "极品",
+            Grade::Celestial => "仙品",
+        }
+    }
+
+    /// UI 用色(白/绿/蓝/紫/金)。
+    pub fn color(self) -> bevy::prelude::Color {
+        use bevy::prelude::Color;
+        match self {
+            Grade::Common => Color::srgb(0.90, 0.90, 0.92),
+            Grade::Fine => Color::srgb(0.55, 0.95, 0.55),
+            Grade::Superior => Color::srgb(0.48, 0.76, 1.0),
+            Grade::Epic => Color::srgb(0.85, 0.55, 1.0),
+            Grade::Celestial => Color::srgb(1.0, 0.84, 0.35),
+        }
+    }
+
+    /// 掉落权重:品级越高越难遇。
+    pub fn weight(self) -> u32 {
+        match self {
+            Grade::Common => 40,
+            Grade::Fine => 30,
+            Grade::Superior => 20,
+            Grade::Epic => 8,
+            Grade::Celestial => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relic {
     SwordTassel,   // 青锋剑穗:普攻伤害 +5
@@ -80,6 +130,31 @@ pub const ALL_RELICS: [Relic; 22] = [
 ];
 
 impl Relic {
+    /// 法宝品级。
+    pub fn grade(self) -> Grade {
+        match self {
+            Relic::JadeVial | Relic::DrunkenBrew | Relic::GinsengRoot => Grade::Common,
+            Relic::SwordTassel
+            | Relic::ChixiaoCore
+            | Relic::VajraPestle
+            | Relic::SpiritPendant
+            | Relic::BreathSoil
+            | Relic::SoulLantern => Grade::Fine,
+            Relic::SwordSutra
+            | Relic::TortoiseArmor
+            | Relic::BloodBead
+            | Relic::StarSand
+            | Relic::YinYangMirror
+            | Relic::TigerTalisman
+            | Relic::PeachHairpin
+            | Relic::HeavenScroll => Grade::Superior,
+            Relic::ThunderDrum | Relic::PixiuPouch | Relic::KunlunMirror | Relic::CloudSleeves => {
+                Grade::Epic
+            }
+            Relic::SandalCharm => Grade::Celestial,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Relic::SwordTassel => "青锋剑穗",

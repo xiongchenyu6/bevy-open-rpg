@@ -2510,18 +2510,6 @@ pub fn inventory_toggle(
     ));
 
     // Right panel: stats + relics.
-    let relics = if run.relics.is_empty() {
-        "(尚未寻得法宝)".to_string()
-    } else {
-        run.relics
-            .iter()
-            .map(|r| format!("【{}】{}", r.name(), r.desc()))
-            .collect::<Vec<_>>()
-            .join(
-                "
-",
-            )
-    };
     let task_status = scene
         .as_deref()
         .map(|scene| journey_task_status_line(&run, scene))
@@ -2585,11 +2573,7 @@ pub fn inventory_toggle(
                 TextColor(Color::srgb(0.9, 0.92, 0.95)),
             ));
             panel.spawn((
-                Text::new(format!(
-                    "{}\n—— 妖纹 ——\n{}",
-                    run.milestone_summary(),
-                    run.hex_summary()
-                )),
+                Text::new(run.milestone_summary()),
                 font.text_font(16.0),
                 TextColor(Color::srgb(0.85, 0.78, 0.95)),
             ));
@@ -2598,11 +2582,56 @@ pub fn inventory_toggle(
                 font.text_font(20.0),
                 TextColor(Color::srgb(0.95, 0.85, 0.55)),
             ));
+            if run.relics.is_empty() {
+                panel.spawn((
+                    Text::new("(尚未寻得法宝)"),
+                    font.text_font(17.0),
+                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                ));
+            } else {
+                // 按品级从高到低排,每件按品级着色(白/绿/蓝/紫/金)。
+                let mut sorted = run.relics.clone();
+                sorted.sort_by_key(|r| std::cmp::Reverse(r.grade()));
+                for r in sorted {
+                    panel.spawn((
+                        Text::new(format!(
+                            "〔{}〕【{}】{}",
+                            r.grade().name(),
+                            r.name(),
+                            r.desc()
+                        )),
+                        font.text_font(17.0),
+                        TextColor(r.grade().color()),
+                    ));
+                }
+            }
             panel.spawn((
-                Text::new(relics),
-                font.text_font(17.0),
-                TextColor(Color::srgb(0.82, 0.86, 0.94)),
+                Text::new(format!("妖纹({}):", run.hexes.len())),
+                font.text_font(20.0),
+                TextColor(Color::srgb(0.90, 0.62, 1.0)),
             ));
+            if run.hexes.is_empty() {
+                panel.spawn((
+                    Text::new("(尚未染上妖纹)"),
+                    font.text_font(16.0),
+                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                ));
+            } else {
+                let mut sorted = run.hexes.clone();
+                sorted.sort_by_key(|h| std::cmp::Reverse(h.grade()));
+                for h in sorted {
+                    panel.spawn((
+                        Text::new(format!(
+                            "〔{}〕【{}】{}",
+                            h.grade().name(),
+                            h.name(),
+                            h.desc()
+                        )),
+                        font.text_font(16.0),
+                        TextColor(h.grade().color()),
+                    ));
+                }
+            }
             panel.spawn((
                 Text::new(
                     "

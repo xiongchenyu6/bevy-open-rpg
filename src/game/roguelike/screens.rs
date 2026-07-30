@@ -150,8 +150,18 @@ pub enum RewardOption {
 impl RewardOption {
     fn label(&self) -> String {
         match self {
-            RewardOption::Relic(r) => format!("法宝【{}】—— {}", r.name(), r.desc()),
-            RewardOption::Hex(h) => format!("妖纹【{}】—— {}", h.name(), h.desc()),
+            RewardOption::Relic(r) => format!(
+                "〔{}〕法宝【{}】—— {}",
+                r.grade().name(),
+                r.name(),
+                r.desc()
+            ),
+            RewardOption::Hex(h) => format!(
+                "〔{}〕妖纹【{}】—— {}",
+                h.grade().name(),
+                h.name(),
+                h.desc()
+            ),
             RewardOption::HealHalf => "疗伤调息 —— 回复五成气血".to_string(),
             RewardOption::MaxHp(n) => format!("淬体丹 —— 气血上限 +{n}"),
             RewardOption::Atk(n) => format!("砺剑石 —— 攻击 +{n}"),
@@ -189,9 +199,17 @@ fn roll_relic_option(
     if pool.is_empty() {
         return None;
     }
-    Some(RewardOption::Relic(
-        pool[rng.range(0, pool.len() as i32 - 1) as usize],
-    ))
+    // 按品级权重抽取:凡品常见,仙品一局难遇。
+    let total: u32 = pool.iter().map(|r| r.grade().weight()).sum();
+    let mut roll = rng.range(0, total as i32 - 1) as u32;
+    for r in &pool {
+        let w = r.grade().weight();
+        if roll < w {
+            return Some(RewardOption::Relic(*r));
+        }
+        roll -= w;
+    }
+    pool.last().copied().map(RewardOption::Relic)
 }
 
 fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {

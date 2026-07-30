@@ -354,6 +354,10 @@ fn main() {
             };
             run.card_shown = true;
             run.relics = vec![Relic::SwordTassel, Relic::SandalCharm, Relic::PixiuPouch];
+            run.hexes = vec![
+                love_rpg::game::roguelike::hex::HexMark::DemonPact,
+                love_rpg::game::roguelike::hex::HexMark::MistWalk,
+            ];
             run.daoxin = 2;
             run.qingyuan = 3;
             run.accept_journey_task();

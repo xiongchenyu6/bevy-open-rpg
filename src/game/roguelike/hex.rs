@@ -58,6 +58,25 @@ pub const ALL_HEXES: [HexMark; 14] = [
 ];
 
 impl HexMark {
+    /// 妖纹品级(增益与代价越极端,品级越高)。
+    pub fn grade(self) -> super::Grade {
+        use super::Grade;
+        match self {
+            HexMark::MistWalk | HexMark::Vinegrip | HexMark::StoneHeart | HexMark::GreedSpring => {
+                Grade::Fine
+            }
+            HexMark::BloodRage
+            | HexMark::GaleStep
+            | HexMark::BloodTithe
+            | HexMark::MoonBite
+            | HexMark::EmptyCup
+            | HexMark::SeveredFate
+            | HexMark::LoneStar => Grade::Superior,
+            HexMark::ThunderBrand | HexMark::SoulBurn => Grade::Epic,
+            HexMark::DemonPact => Grade::Celestial,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             HexMark::BloodRage => "血怒纹",
@@ -114,7 +133,8 @@ impl HexMark {
     }
 }
 
-/// 从未持有的妖纹里随机抽一枚(全部持有时返回 None)。
+/// 从未持有的妖纹里按品级权重抽一枚(全部持有时返回 None)。
+/// 品级越高权重越低——仙品妖契一局难遇。
 pub fn roll_hex(owned: &[HexMark], rng: &mut Rng) -> Option<HexMark> {
     let pool: Vec<HexMark> = ALL_HEXES
         .iter()
@@ -124,5 +144,14 @@ pub fn roll_hex(owned: &[HexMark], rng: &mut Rng) -> Option<HexMark> {
     if pool.is_empty() {
         return None;
     }
-    Some(pool[rng.range(0, pool.len() as i32 - 1) as usize])
+    let total: u32 = pool.iter().map(|h| h.grade().weight()).sum();
+    let mut roll = rng.range(0, total as i32 - 1) as u32;
+    for h in &pool {
+        let w = h.grade().weight();
+        if roll < w {
+            return Some(*h);
+        }
+        roll -= w;
+    }
+    pool.last().copied()
 }
