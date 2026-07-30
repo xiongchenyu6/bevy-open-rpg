@@ -127,7 +127,15 @@ pub fn title_input(
             .unwrap_or(0)
     };
     rng.0 ^= (wall_nanos << 16) | 1;
-    let run = RunState::new(&mut rng);
+    let mut run = RunState::new(&mut rng);
+    // 开局技能:御剑·斩保底输出,再随机拓一式(每局起手不同)。
+    run.skills.push(super::skill::skill_id(
+        super::skill::Element::Sword,
+        super::skill::SkillKind::Slash,
+    ));
+    if let Some(id) = super::skill::roll_skill(&run.skills, &mut rng) {
+        run.skills.push(id);
+    }
     commands.insert_resource(run);
     next.set(AppState::NodeMap);
 }
@@ -140,6 +148,7 @@ pub fn title_input(
 pub enum RewardOption {
     Relic(Relic),
     Hex(super::hex::HexMark),
+    Skill(super::skill::SkillId),
     HealHalf,
     MaxHp(i32),
     Atk(i32),
@@ -162,6 +171,16 @@ impl RewardOption {
                 h.name(),
                 h.desc()
             ),
+            RewardOption::Skill(id) => {
+                let def = super::skill::skill(*id);
+                format!(
+                    "〔{}〕仙术「{}」—— {}(灵{})",
+                    def.grade.name(),
+                    def.name(),
+                    def.desc(),
+                    def.cost
+                )
+            }
             RewardOption::HealHalf => "疗伤调息 —— 回复五成气血".to_string(),
             RewardOption::MaxHp(n) => format!("淬体丹 —— 气血上限 +{n}"),
             RewardOption::Atk(n) => format!("砺剑石 —— 攻击 +{n}"),
@@ -241,6 +260,12 @@ fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {
     if options.len() < 3 && rng.chance(0.35) {
         if let Some(h) = super::hex::roll_hex(&run.hexes, rng) {
             options.push(RewardOption::Hex(h));
+        }
+    }
+    // 技能槽:约四成战利里可拓一式百技谱。
+    if options.len() < 3 && rng.chance(0.40) {
+        if let Some(id) = super::skill::roll_skill(&run.skills, rng) {
+            options.push(RewardOption::Skill(id));
         }
     }
     // Fill remaining slots with distinct consumable/stat picks.
@@ -390,6 +415,7 @@ pub fn reward_input(
                 h.on_pickup(&mut stats);
                 run.hexes.push(h);
             }
+            RewardOption::Skill(id) => run.skills.push(id),
         }
 
         // Route onwards: boss victories advance the chapter (or end the run).

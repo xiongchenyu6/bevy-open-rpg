@@ -2606,6 +2606,35 @@ pub fn inventory_toggle(
                 }
             }
             panel.spawn((
+                Text::new(format!("百技谱({}式):", run.skills.len())),
+                font.text_font(20.0),
+                TextColor(Color::srgb(0.62, 0.85, 1.0)),
+            ));
+            if run.skills.is_empty() {
+                panel.spawn((
+                    Text::new("(尚未习得仙术)"),
+                    font.text_font(16.0),
+                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                ));
+            } else {
+                let mut sorted = run.skills.clone();
+                sorted.sort_by_key(|id| std::cmp::Reverse(super::skill::skill(*id).grade));
+                for id in sorted {
+                    let def = super::skill::skill(id);
+                    panel.spawn((
+                        Text::new(format!(
+                            "〔{}〕「{}」灵{} · {}",
+                            def.grade.name(),
+                            def.name(),
+                            def.cost,
+                            def.desc()
+                        )),
+                        font.text_font(16.0),
+                        TextColor(def.grade.color()),
+                    ));
+                }
+            }
+            panel.spawn((
                 Text::new(format!("妖纹({}):", run.hexes.len())),
                 font.text_font(20.0),
                 TextColor(Color::srgb(0.90, 0.62, 1.0)),

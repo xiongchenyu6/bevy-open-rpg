@@ -16,6 +16,7 @@ pub mod graph;
 pub mod hex;
 pub mod scene;
 pub mod screens;
+pub mod skill;
 
 use super::battle::{EncounterKind, EncounterZone};
 use super::core::Rng;
@@ -1184,6 +1185,8 @@ pub struct RunState {
     /// 白狐三遇链:0 未遇,1/2/3 已推进到第几遇。
     /// 妖纹(海克斯):战利里随机出现的有代价词条,可叠加成 build。
     pub hexes: Vec<hex::HexMark>,
+    /// 已习得的技能(百技谱下标),战斗「仙术」子菜单从这里列出。
+    pub skills: Vec<skill::SkillId>,
     pub fox_stage: u8,
     /// 白狐链善恶记号:+1 救过,-1 无视(初遇选择写入)。
     pub fox_kind: i8,
@@ -1224,6 +1227,7 @@ impl RunState {
             fights_won: 0,
             revive_used: false,
             hexes: Vec::new(),
+            skills: Vec::new(),
             fox_stage: 0,
             fox_kind: 0,
             qin_stage: 0,

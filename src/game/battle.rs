@@ -333,6 +333,15 @@ struct BattleState {
     eclipse_heart: bool,
     /// 雷引纹:本战的玩家首次攻击已经打出。
     hex_first_hit_used: bool,
+    /// 百技谱子菜单:打开状态与光标(页由光标推出)。
+    skill_menu: bool,
+    skill_cursor: usize,
+    /// 「护」形态结成的护罩,先于气血抵伤。
+    player_shield: i32,
+    /// 「蚀」形态挂在敌人身上的流失:(每回合伤害, 剩余回合)。
+    enemy_dot: (i32, u32),
+    /// 「震」形态命中:敌人下一回合动弹不得。
+    enemy_stunned: bool,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
@@ -685,6 +694,11 @@ fn spawn_battle(
         boss_phase2: false,
         eclipse_heart: false,
         hex_first_hit_used: false,
+        skill_menu: false,
+        skill_cursor: 0,
+        player_shield: 0,
+        enemy_dot: (0, 0),
+        enemy_stunned: false,
         momentum: 0,
         blessing,
         camp_bonus,
@@ -1433,6 +1447,50 @@ fn battle_input(
         return;
     }
 
+    // 百技谱子菜单:选式、翻页、施放、返回。
+    if state.skill_menu {
+        let skills: Vec<super::roguelike::skill::SkillId> =
+            run.as_ref().map(|r| r.skills.clone()).unwrap_or_default();
+        let total = skills.len() + 1; // 末位是「返回」
+        if intent.up {
+            state.skill_cursor = (state.skill_cursor + total - 1) % total;
+        }
+        if intent.down {
+            state.skill_cursor = (state.skill_cursor + 1) % total;
+        }
+        if intent.cancel {
+            state.skill_menu = false;
+            return;
+        }
+        if !intent.confirm {
+            return;
+        }
+        if state.skill_cursor >= skills.len() {
+            state.skill_menu = false;
+            return;
+        }
+        let id = skills[state.skill_cursor];
+        if let Some(run) = run.as_ref() {
+            if cast_skill(
+                &mut commands,
+                &font,
+                &lights,
+                &mut state,
+                &mut stats,
+                run,
+                &mut rng,
+                id,
+            ) {
+                state.skill_menu = false;
+                start_player_acting(&mut state, PlayerAction::Spell);
+            } else {
+                // 灵力不足:退回主菜单,不困在技谱里。
+                state.skill_menu = false;
+            }
+        }
+        return;
+    }
+
     // Roguelike relic modifiers (all zero/1.0 outside run mode).
     let relic_attack = run.as_ref().map_or(0, |r| r.attack_bonus());
     let relic_spell = run.as_ref().map_or(0, |r| r.spell_bonus());
@@ -1560,6 +1618,12 @@ fn battle_input(
         2 => {
             // 仙术：御剑术 / 万剑诀
             let late_spell = battle_has_late_spell(&quest, run_ref);
+            // run 模式已拓技能谱:仙术槽打开「百技谱」子菜单。
+            if run.as_ref().is_some_and(|r| !r.skills.is_empty()) {
+                state.skill_menu = true;
+                state.skill_cursor = 0;
+                return;
+            }
             let hex_cost = run.as_ref().map_or(0, |r| r.hex_spell_cost_delta());
             let spell_cost =
                 (battle_spell_cost(&quest, run_ref) + relic_spell_cost + hex_cost).max(1);
@@ -1766,7 +1830,16 @@ fn sync_battle_automation_view(
         enemy_hp: state.enemy.hp.max(0),
         enemy_max_hp: state.enemy.max_hp,
         enemy_heavy_intent: state.intent == EnemyIntent::Heavy,
-        spell_cost: (battle_spell_cost(&quest, run_ref) + spell_cost_delta).max(1),
+        spell_cost: run_ref
+            .filter(|r| !r.skills.is_empty())
+            .map(|r| {
+                r.skills
+                    .iter()
+                    .map(|id| super::roguelike::skill::skill(*id).cost + r.hex_spell_cost_delta())
+                    .min()
+                    .unwrap_or(4)
+            })
+            .unwrap_or_else(|| (battle_spell_cost(&quest, run_ref) + spell_cost_delta).max(1)),
         momentum: state.momentum,
     };
 }
@@ -3040,6 +3113,21 @@ fn begin_enemy_turn(
     let guarding = state.guarding;
     state.guarding = false;
 
+    // 「震」形态命中:妖物动弹不得,跳过这一手。
+    if state.enemy_stunned {
+        state.enemy_stunned = false;
+        state.message = format!("{} 仍被震得头晕目眩,这一回合动弹不得!", state.enemy.name);
+        tick_enemy_dot(state);
+        state.intent = next_intent(state, rng);
+        state.phase = Phase::EnemyActing;
+        state.timer = 0.8;
+        state.player_action = None;
+        return EnemyAttackResult {
+            damage: 0,
+            strong: false,
+        };
+    }
+
     if let EncounterKind::Boss(boss) = state.encounter_kind {
         if let Some(result) =
             begin_boss_special_turn(boss, turn_index, state, stats, rng, guarding, guard_keep)
@@ -3126,6 +3214,7 @@ fn begin_enemy_turn(
         state.message.push_str(&guard_note);
         (dmg, strong)
     };
+    let dmg = absorb_with_shield(state, dmg);
     stats.hp -= dmg;
     if state.boss_phase2 {
         match state.encounter_kind {
@@ -3159,6 +3248,7 @@ fn begin_enemy_turn(
             _ => {}
         }
     }
+    tick_enemy_dot(state);
     state.intent = next_intent(state, rng);
     state.phase = Phase::EnemyActing;
     state.timer = 0.8;
@@ -3167,6 +3257,32 @@ fn begin_enemy_turn(
         damage: dmg,
         strong,
     }
+}
+
+/// 「蚀」形态的流失结算:敌人行动后掉血,持续回合递减。
+fn tick_enemy_dot(state: &mut BattleState) {
+    let (dot, turns) = state.enemy_dot;
+    if turns == 0 || dot <= 0 {
+        return;
+    }
+    state.enemy.hp -= dot;
+    state.enemy_dot = (dot, turns - 1);
+    state
+        .message
+        .push_str(&format!("\n侵蚀之力灼烧妖躯,再失 {dot} 点气血。"));
+}
+
+/// 「护」形态的护罩:先于气血抵挡伤害,返回剩余伤害。
+fn absorb_with_shield(state: &mut BattleState, dmg: i32) -> i32 {
+    if state.player_shield <= 0 || dmg <= 0 {
+        return dmg;
+    }
+    let absorbed = state.player_shield.min(dmg);
+    state.player_shield -= absorbed;
+    state
+        .message
+        .push_str(&format!("\n灵光护罩挡下 {absorbed} 点伤害。"));
+    dmg - absorbed
 }
 
 /// 掷下一回合的意图;首领每逢秘法回合提前亮出重击预警,
@@ -3232,6 +3348,7 @@ fn begin_boss_special_turn(
         dmg -= absorbed;
         guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
     }
+    let dmg = absorb_with_shield(state, dmg);
     stats.hp -= dmg;
     if mp_drain > 0 {
         stats.mp = (stats.mp - mp_drain).max(0);
@@ -3870,13 +3987,21 @@ fn update_battle_ui(
 
     if let Ok(mut t) = enemy_info.single_mut() {
         let phase_tag = if state.boss_phase2 { "·真身 " } else { "" };
+        let mut ail = String::new();
+        if state.enemy_dot.1 > 0 {
+            ail.push_str(&format!("  蚀{}", state.enemy_dot.1));
+        }
+        if state.enemy_stunned {
+            ail.push_str("  震慑");
+        }
         t.0 = format!(
-            "{}{}  气血 {}/{}   {}",
+            "{}{}  气血 {}/{}   {}{}",
             state.enemy.name,
             phase_tag,
             state.enemy.hp.max(0),
             state.enemy.max_hp,
             state.intent.describe(),
+            ail,
         );
     }
     if let Ok(mut t) = message.single_mut() {
@@ -3904,9 +4029,60 @@ fn update_battle_ui(
     }
 
     let show_cursor = state.phase == Phase::Menu;
+
+    // 百技谱子菜单:6 个槽位改为显示技能窗口(5 式 + 返回),按品级着色。
+    if state.skill_menu {
+        let skills: Vec<super::roguelike::skill::SkillId> =
+            run.as_ref().map(|r| r.skills.clone()).unwrap_or_default();
+        let page = state.skill_cursor / 5;
+        let start = page * 5;
+        for (item, mut text, mut color) in menu.iter_mut() {
+            let slot = item.0;
+            if slot < 5 {
+                let idx = start + slot;
+                if idx < skills.len() {
+                    let def = super::roguelike::skill::skill(skills[idx]);
+                    let selected = show_cursor && idx == state.skill_cursor;
+                    text.0 = format!(
+                        "{} {} 〔{}〕(灵{}) {}",
+                        if selected { "▶" } else { " " },
+                        def.name(),
+                        def.grade.name(),
+                        def.cost,
+                        def.desc(),
+                    );
+                    *color = if selected {
+                        TextColor(Color::srgb(1.0, 0.9, 0.4))
+                    } else {
+                        TextColor(def.grade.color())
+                    };
+                } else {
+                    text.0 = String::new();
+                }
+            } else {
+                let selected = show_cursor && state.skill_cursor >= skills.len();
+                text.0 = if selected {
+                    "▶ 返回".to_string()
+                } else {
+                    "   返回".to_string()
+                };
+                *color = TextColor(if selected {
+                    Color::srgb(1.0, 0.9, 0.4)
+                } else {
+                    Color::srgb(0.8, 0.8, 0.85)
+                });
+            }
+        }
+        return;
+    }
+
     for (item, mut text, mut color) in menu.iter_mut() {
         let selected = show_cursor && item.0 == state.menu_index;
         let label = match item.0 {
+            2 if run.as_ref().is_some_and(|r| !r.skills.is_empty()) => {
+                let n = run.as_ref().map_or(0, |r| r.skills.len());
+                format!("仙术·百技谱 ({n}式)")
+            }
             2 => format!(
                 "{} (灵力{})",
                 battle_spell_name(&quest, run_ref),
@@ -3958,6 +4134,287 @@ fn battle_bond_summary(bonus: Option<BondBonus>) -> &'static str {
         Some(BondBonus::Courage) => "护念 勇心",
         Some(BondBonus::Tender) => "护念 柔心",
         None => "护念 无",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 百技谱:技能结算与参数化特效(十系元素 × 十种形态 = 100 式)
+// ---------------------------------------------------------------------------
+
+use super::roguelike::skill::{self, SkillKind};
+
+/// 施放一式技能:扣灵、结算、叠气势。返回 false 表示灵力不足未施放。
+#[allow(clippy::too_many_arguments)]
+fn cast_skill(
+    commands: &mut Commands,
+    font: &GameFont,
+    lights: &LightingAssets,
+    state: &mut BattleState,
+    stats: &mut PlayerStats,
+    run: &super::roguelike::RunState,
+    rng: &mut Rng,
+    id: skill::SkillId,
+) -> bool {
+    let def = skill::skill(id);
+    let cost = (def.cost + run.hex_spell_cost_delta()).max(2);
+    if stats.mp < cost {
+        state.message = format!("灵力不足,施展不出「{}」(需 {cost} 灵)。", def.name());
+        return false;
+    }
+    stats.mp -= cost;
+    let hex_spell = run.hex_spell_bonus();
+    let base = (def.power + hex_spell + rng.range(-2, 3)).max(1);
+    let name = def.name();
+    match def.kind {
+        SkillKind::Slash | SkillKind::Burst => {
+            let dmg = (base - state.enemy.def / 2).max(2);
+            state.enemy.hp -= dmg;
+            state.message = format!("「{name}」剑气迸发,造成 {dmg} 点元素伤害!");
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+        }
+        SkillKind::Corrode => {
+            let dmg = (base - state.enemy.def / 3).max(2);
+            state.enemy.hp -= dmg;
+            state.enemy_dot = (def.power.max(2), 3);
+            state.message = format!("「{name}」蚀入妖躯,造成 {dmg} 点伤害,侵蚀之力将持续三回合!");
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+        }
+        SkillKind::Bind => {
+            let dmg = (base - state.enemy.def / 3).max(2);
+            state.enemy.hp -= dmg;
+            state.enemy.def = (state.enemy.def - 3).max(0);
+            state.message = format!("「{name}」缠住妖物,造成 {dmg} 点伤害并削去 3 点防御!");
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+        }
+        SkillKind::Drain => {
+            let dmg = (base - state.enemy.def / 2).max(2);
+            state.enemy.hp -= dmg;
+            let heal = (dmg / 2).min(stats.max_hp - stats.hp).max(0);
+            stats.hp += heal;
+            state.message = format!("「{name}」摄取精魄,造成 {dmg} 点伤害,吸回 {heal} 点气血!");
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            if heal > 0 {
+                spawn_heal_text(commands, font, HERO_POS + Vec3::new(10.0, 100.0, 0.0), heal);
+            }
+        }
+        SkillKind::Flurry => {
+            let hits = rng.range(2, 3);
+            let mut total = 0;
+            for _ in 0..hits {
+                total += (base - state.enemy.def / 2 + rng.range(-1, 2)).max(1);
+            }
+            state.enemy.hp -= total;
+            state.message = format!("「{name}」连绵 {hits} 段,共造成 {total} 点伤害!");
+            spawn_damage_text(
+                commands,
+                font,
+                ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
+                total,
+            );
+        }
+        SkillKind::Ward => {
+            state.player_shield = state.player_shield.max(base);
+            state.message = format!("「{name}」结成 {base} 点灵光护罩,先于气血抵伤。");
+        }
+        SkillKind::Mend => {
+            let heal = base.min(stats.max_hp - stats.hp).max(0);
+            stats.hp += heal;
+            state.message = format!("「{name}」灵息回环,恢复 {heal} 点气血。");
+            if heal > 0 {
+                spawn_heal_text(commands, font, HERO_POS + Vec3::new(10.0, 100.0, 0.0), heal);
+            }
+        }
+        SkillKind::Stun => {
+            let dmg = (base - state.enemy.def / 3).max(2);
+            state.enemy.hp -= dmg;
+            if rng.chance(0.5) {
+                state.enemy_stunned = true;
+                state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害——妖物被震慑住了!");
+            } else {
+                state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害,妖物稳住了身形。");
+            }
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+        }
+        SkillKind::Execute => {
+            let low = state.enemy.hp * 10 < state.enemy.max_hp * 3;
+            let mut dmg = (base - state.enemy.def / 2).max(2);
+            if low {
+                dmg *= 2;
+            }
+            state.enemy.hp -= dmg;
+            state.message = if low {
+                format!("「{name}」诛机已现——{dmg} 点致命一击!")
+            } else {
+                format!("「{name}」落下,造成 {dmg} 点伤害。")
+            };
+            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+        }
+    }
+    spawn_skill_vfx(commands, lights, def.element, def.kind);
+    state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
+    if let Some(line) = mirror_backlash(state, stats, def.power) {
+        state.message.push_str(&line);
+    }
+    true
+}
+
+/// 参数化技能特效:元素定色,形态定形——组合出 100 种视觉。
+fn spawn_skill_vfx(
+    commands: &mut Commands,
+    lights: &LightingAssets,
+    element: skill::Element,
+    kind: SkillKind,
+) {
+    let c = element.color().to_srgba();
+    let col = |a: f32| Color::srgba(c.red, c.green, c.blue, a);
+    let orb = |size: f32, alpha: f32| Sprite {
+        image: lights.orb.clone(),
+        color: col(alpha),
+        custom_size: Some(Vec2::splat(size)),
+        ..default()
+    };
+    let mut fx = |sprite: Sprite, pos: Vec3, rot: f32, e: BattleEffect| {
+        commands.spawn((
+            e,
+            sprite,
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_z(rot)),
+            DespawnOnExit(AppState::Battle),
+        ));
+    };
+    let at = |dx: f32, dy: f32, z: f32| ENEMY_POS + Vec3::new(dx, dy, z);
+    match kind {
+        SkillKind::Slash => {
+            // 两道交叉斩痕。
+            for (i, rot) in [0.6f32, -0.8].iter().enumerate() {
+                let mut sp = orb(30.0, 0.9);
+                sp.custom_size = Some(Vec2::new(190.0, 16.0));
+                fx(
+                    sp,
+                    at(0.0, 6.0 - i as f32 * 10.0, 2.2),
+                    *rot,
+                    BattleEffect::new(0.34, 0.4, 1.5, 0.0),
+                );
+            }
+        }
+        SkillKind::Burst => {
+            fx(
+                orb(180.0, 0.95),
+                at(0.0, 0.0, 2.2),
+                0.0,
+                BattleEffect::new(0.42, 0.3, 1.8, 0.0),
+            );
+            for k in 0..8 {
+                let ang = k as f32 * std::f32::consts::TAU / 8.0;
+                let mut sp = orb(26.0, 0.8);
+                sp.custom_size = Some(Vec2::new(64.0, 10.0));
+                fx(
+                    sp,
+                    at(ang.cos() * 70.0, ang.sin() * 70.0, 2.3),
+                    ang,
+                    BattleEffect::new(0.4, 0.5, 2.2, 0.0),
+                );
+            }
+        }
+        SkillKind::Corrode => {
+            for k in 0..5 {
+                let ang = k as f32 * 1.257 + 0.4;
+                fx(
+                    orb(56.0, 0.55),
+                    at(ang.cos() * 46.0, ang.sin() * 34.0 - 8.0, 2.1),
+                    0.0,
+                    BattleEffect::new(0.8, 0.4, 1.3, 1.2),
+                );
+            }
+        }
+        SkillKind::Bind => {
+            for k in 0..4 {
+                let mut sp = orb(24.0, 0.85);
+                sp.custom_size = Some(Vec2::new(150.0, 8.0));
+                fx(
+                    sp,
+                    at(0.0, k as f32 * 26.0 - 40.0, 2.2),
+                    0.15 * (k as f32 - 1.5),
+                    BattleEffect::new(0.5, 0.6, 1.15, 2.4),
+                );
+            }
+        }
+        SkillKind::Drain => {
+            fx(
+                orb(120.0, 0.7),
+                at(0.0, 0.0, 2.1),
+                0.0,
+                BattleEffect::new(0.5, 1.4, 0.3, 0.0),
+            );
+            fx(
+                orb(70.0, 0.6),
+                HERO_POS + Vec3::new(0.0, 30.0, 2.1),
+                0.0,
+                BattleEffect::new(0.55, 0.4, 1.2, 0.0),
+            );
+        }
+        SkillKind::Flurry => {
+            for k in 0..3 {
+                let mut sp = orb(26.0, 0.9);
+                sp.custom_size = Some(Vec2::new(120.0, 12.0));
+                fx(
+                    sp,
+                    at(k as f32 * 26.0 - 26.0, k as f32 * 18.0 - 18.0, 2.2),
+                    0.5 - k as f32 * 0.5,
+                    BattleEffect::new(0.28 + k as f32 * 0.12, 0.4, 1.6, 0.0),
+                );
+            }
+        }
+        SkillKind::Ward => {
+            fx(
+                orb(150.0, 0.55),
+                HERO_POS + Vec3::new(0.0, 40.0, 2.1),
+                0.0,
+                BattleEffect::new(0.7, 0.5, 1.25, 0.6),
+            );
+        }
+        SkillKind::Mend => {
+            for k in 0..3 {
+                fx(
+                    orb(46.0, 0.6),
+                    HERO_POS + Vec3::new(k as f32 * 20.0 - 20.0, 20.0 + k as f32 * 14.0, 2.1),
+                    0.0,
+                    BattleEffect::new(0.6 + k as f32 * 0.1, 0.5, 1.4, 0.0),
+                );
+            }
+        }
+        SkillKind::Stun => {
+            fx(
+                orb(130.0, 0.8),
+                at(0.0, 20.0, 2.2),
+                0.0,
+                BattleEffect::new(0.38, 1.6, 0.5, 0.0),
+            );
+            for k in 0..5 {
+                let ang = k as f32 * 1.257;
+                fx(
+                    orb(22.0, 0.9),
+                    at(ang.cos() * 60.0, ang.sin() * 60.0 + 20.0, 2.3),
+                    ang,
+                    BattleEffect::new(0.45, 0.6, 1.8, 3.0),
+                );
+            }
+        }
+        SkillKind::Execute => {
+            let mut sp = orb(30.0, 0.95);
+            sp.custom_size = Some(Vec2::new(20.0, 220.0));
+            fx(
+                sp,
+                at(0.0, 10.0, 2.3),
+                0.0,
+                BattleEffect::new(0.4, 0.5, 1.4, 0.0),
+            );
+            fx(
+                orb(140.0, 0.85),
+                at(0.0, -20.0, 2.2),
+                0.0,
+                BattleEffect::new(0.45, 0.4, 1.7, 0.0),
+            );
+        }
     }
 }
 
@@ -4891,6 +5348,11 @@ mod tests {
             boss_phase2: false,
             eclipse_heart: false,
             hex_first_hit_used: false,
+            skill_menu: false,
+            skill_cursor: 0,
+            player_shield: 0,
+            enemy_dot: (0, 0),
+            enemy_stunned: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -4933,6 +5395,11 @@ mod tests {
             boss_phase2: false,
             eclipse_heart: false,
             hex_first_hit_used: false,
+            skill_menu: false,
+            skill_cursor: 0,
+            player_shield: 0,
+            enemy_dot: (0, 0),
+            enemy_stunned: false,
             momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
@@ -4974,6 +5441,11 @@ mod tests {
             boss_phase2: false,
             eclipse_heart: false,
             hex_first_hit_used: false,
+            skill_menu: false,
+            skill_cursor: 0,
+            player_shield: 0,
+            enemy_dot: (0, 0),
+            enemy_stunned: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -5018,6 +5490,11 @@ mod tests {
             boss_phase2: false,
             eclipse_heart: false,
             hex_first_hit_used: false,
+            skill_menu: false,
+            skill_cursor: 0,
+            player_shield: 0,
+            enemy_dot: (0, 0),
+            enemy_stunned: false,
             momentum: 0,
             message: String::new(),
             blessing: None,

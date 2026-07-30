@@ -107,6 +107,10 @@ struct CaptureBattleDriver {
 #[derive(Resource, Default)]
 struct CaptureUseCombo(bool);
 
+/// 百技谱取证:战斗中按固定序列打开技谱子菜单并轮放技能。
+#[derive(Resource, Default)]
+struct CaptureSkillProof(bool);
+
 #[derive(Resource, Default)]
 struct CaptureTaskBoard(bool);
 
@@ -213,6 +217,7 @@ fn main() {
 
     app.add_plugins(GamePlugin);
     app.init_resource::<CaptureBattleDriver>();
+    app.init_resource::<CaptureSkillProof>();
     app.init_resource::<CaptureUseCombo>();
     app.init_resource::<CaptureTaskBoard>();
     app.init_resource::<CaptureTaskContact>();
@@ -403,6 +408,24 @@ fn main() {
             run.card_shown = true;
             run.accept_journey_task();
             run.record_chapter_vow(run.chapter, RunChapterVow::Heart);
+            run.skills = vec![
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Fire,
+                    love_rpg::game::roguelike::skill::SkillKind::Burst,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Ice,
+                    love_rpg::game::roguelike::skill::SkillKind::Stun,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Dark,
+                    love_rpg::game::roguelike::skill::SkillKind::Drain,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Wood,
+                    love_rpg::game::roguelike::skill::SkillKind::Corrode,
+                ),
+            ];
             app.world_mut().insert_resource(run);
             {
                 // 相当于打满一章的积累,让取证局能撑到 boss 二阶段。
@@ -425,6 +448,79 @@ fn main() {
                 facing_left: false,
                 markers: vec![SceneMarker {
                     kind: NodeKind::Boss,
+                    col: 15,
+                    row: 8,
+                    cleared: false,
+                }],
+                portals: Vec::new(),
+                flow: Vec::new(),
+                hazards: Vec::new(),
+                intro_shown: true,
+                cooldown: 0.0,
+            };
+            love_rpg::game::roguelike::scene::seed_flow(&mut scene);
+            app.world_mut().insert_resource(scene);
+            app.world_mut()
+                .resource_mut::<NextState<AppState>>()
+                .set(AppState::RunScene);
+        }
+        "rogue-skill" => {
+            use love_rpg::game::explore::MapKind;
+            use love_rpg::game::roguelike::{
+                RunChapterVow, RunState,
+                graph::NodeKind,
+                scene::{RunSceneState, SceneMarker},
+            };
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+            app.world_mut().resource_mut::<CaptureSkillProof>().0 = true;
+            let mut run = {
+                let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+                rng.0 = 0xB055_F16D;
+                RunState::new(&mut rng)
+            };
+            run.card_shown = true;
+            run.accept_journey_task();
+            run.record_chapter_vow(run.chapter, RunChapterVow::Heart);
+            run.skills = vec![
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Fire,
+                    love_rpg::game::roguelike::skill::SkillKind::Burst,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Ice,
+                    love_rpg::game::roguelike::skill::SkillKind::Stun,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Dark,
+                    love_rpg::game::roguelike::skill::SkillKind::Drain,
+                ),
+                love_rpg::game::roguelike::skill::skill_id(
+                    love_rpg::game::roguelike::skill::Element::Wood,
+                    love_rpg::game::roguelike::skill::SkillKind::Corrode,
+                ),
+            ];
+            app.world_mut().insert_resource(run);
+            {
+                // 相当于打满一章的积累,让取证局能撑到 boss 二阶段。
+                let mut stats = app
+                    .world_mut()
+                    .resource_mut::<love_rpg::game::PlayerStats>();
+                stats.atk += 8;
+                stats.def += 4;
+                stats.max_hp += 80;
+                stats.hp = stats.max_hp;
+                stats.potions = 6;
+            }
+            // 单魔门标记:直达对峙台词 → 章 boss 战(取证二阶段变身)。
+            let mut scene = RunSceneState {
+                map: MapKind::Bamboo,
+                tiles: Vec::new(),
+                revealed: Vec::new(),
+                col: -1,
+                row: -1,
+                facing_left: false,
+                markers: vec![SceneMarker {
+                    kind: NodeKind::Fight,
                     col: 15,
                     row: 8,
                     cleared: false,
@@ -2100,6 +2196,22 @@ fn set_intent(app: &mut App, f: u32) {
             None
         }
     };
+
+    // 百技谱取证:每 44 帧一轮——下移到「仙术」、开技谱、换式、施放。
+    if app.world().resource::<CaptureSkillProof>().0 {
+        if let Some(bf) = battle_frame {
+            let mut intent = app.world_mut().resource_mut::<Intent>();
+            intent.clear();
+            match bf % 44 {
+                6 | 12 => intent.down = true,
+                18 => intent.confirm = true,
+                26 => intent.down = true,
+                34 => intent.confirm = true,
+                _ => {}
+            }
+            return;
+        }
+    }
 
     // Roguelike run: cadence-driven confirms walk the whole loop (title →
     // chapter card → node picks → battles → rewards → events), with periodic
