@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const BASE = process.env.COMFY_BASE || "http://127.0.0.1:18188";
@@ -8,8 +8,14 @@ const RAW_DIR = "assets/generated/comfy/raw";
 const MANIFEST = "assets/generated/comfy/manifest.json";
 const STEPS = Number(process.env.COMFY_STEPS || 24);
 const GUIDANCE = Number(process.env.COMFY_GUIDANCE || 3.8);
+const SEED_OFFSET = Number(process.env.COMFY_SEED_OFFSET || 0);
+const ONLY_IDS = new Set(
+  String(process.env.COMFY_ONLY || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 
-const GREEN = "#00ff00";
 const AVOID =
   "No text, no watermark, no logo, no decorative border, not cropped, single subject only, sharp and high quality.";
 
@@ -18,9 +24,25 @@ const ASSETS = [
     id: "ai_sword_sister",
     kind: "cutout",
     out: "assets/npcs/ai_sword_sister.png",
-    size: 192,
+    size: 512,
     prompt:
-      "crisp 2D game asset, full body xianxia female sword cultivator companion, red and white travel robe, jade sword, anime RPG sprite illustration, centered, clean readable silhouette, sharp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "premium 2D game character cutout, full body young xianxia sword cultivator heroine, long black hair in a high warrior ponytail, layered crimson and ivory travel robes with restrained silver embroidery, holding a slender jade-hilt sword in a ready low guard, alert resolute expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "ai_linger_companion",
+    kind: "cutout",
+    out: "assets/npcs/ai_linger_companion.png",
+    size: 512,
+    prompt:
+      "premium 2D game character cutout, full body young xianxia healer heroine, long black hair tied with a large white ribbon, flowing moon-white and pale blue hanfu travel robes, holding a small golden spirit bell, warm gentle determined expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "ai_nanyao_companion",
+    kind: "cutout",
+    out: "assets/npcs/ai_nanyao_companion.png",
+    size: 512,
+    prompt:
+      "premium 2D game character cutout, full body young Baiyue spirit witch heroine, long dark braided hair with silver ornaments, layered indigo teal and white ceremonial travel robe, jade serpent motifs, holding a carved spirit staff and bronze bell, poised protective expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, no magenta anywhere on character, perfectly flat pure #ff00ff magenta screen background",
   },
   {
     id: "ai_herb_healer",
@@ -227,6 +249,62 @@ const ASSETS = [
       "crisp 2D game enemy asset, floating lotus spirit, pink petals, pale blue core, ribbon-like water wisps, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
   },
   {
+    id: "boss_mountain_fiend",
+    kind: "cutout",
+    out: "assets/creatures/boss_mountain_fiend.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, hulking red-haired mountain ogre demon, charred horned mask, iron club wrapped in prayer rope, scorched hide armor and ember cracks, menacing full body pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_moon_wraith",
+    kind: "cutout",
+    out: "assets/creatures/boss_moon_wraith.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, spectral moon wraith queen, pale female spirit rising from a coiling violet water-serpent tail, torn lunar robes, crescent crown, long black hair floating in ghost wind, cold glowing eyes, classic Chinese fantasy RPG hand-painted monster, full body front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_river_demon",
+    kind: "cutout",
+    out: "assets/creatures/boss_river_demon.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, black-scaled river flood dragon demon with long serpentine body, antler horns, torn river lanterns caught on fins, blue water streaming from claws, fierce full body coiled pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_miasma_root",
+    kind: "cutout",
+    out: "assets/creatures/boss_miasma_root.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, enormous plague banyan root demon, twisted blood-red and charcoal roots forming a snarling mask, hanging medicine talismans, poisonous violet spores and grasping root claws, classic Chinese fantasy RPG hand-painted monster, full body front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_mirror_minister",
+    kind: "cutout",
+    out: "assets/creatures/boss_mirror_minister.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, sinister imperial mirror sorcerer, tall masked minister in black violet and tarnished gold ceremonial robes, one hand casting with floating cracked bronze mirrors, hidden sword at waist, elegant threatening full body pose, classic Chinese fantasy RPG hand-painted villain, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_thunder_qilin",
+    kind: "cutout",
+    out: "assets/creatures/boss_thunder_qilin.png",
+    size: 512,
+    prompt:
+      "premium 2D game boss cutout, majestic thunder qilin spirit, blue-black scales, branching gold antlers, white mane lifted by lightning, bronze drum charms around the neck, powerful full body stance, classic Chinese fantasy RPG hand-painted beast, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
+    id: "boss_dream_eclipse",
+    kind: "cutout",
+    out: "assets/creatures/boss_dream_eclipse.png",
+    size: 512,
+    prompt:
+      "premium 2D game final boss cutout, colossal humanoid water-shadow deity formed from midnight waves, pale moon mask with one sorrowful eye and one wrathful eye, many flowing ribbon arms, broken palace lanterns orbiting the body, tragic and terrifying full silhouette, classic Chinese fantasy RPG hand-painted final monster, front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+  },
+  {
     id: "ai_quest_board",
     kind: "cutout",
     out: "assets/props/ai_quest_board.png",
@@ -289,25 +367,44 @@ const ASSETS = [
   },
 ];
 
+const selectedAssets = ONLY_IDS.size ? ASSETS.filter((asset) => ONLY_IDS.has(asset.id)) : ASSETS;
+if (ONLY_IDS.size && selectedAssets.length !== ONLY_IDS.size) {
+  const known = new Set(selectedAssets.map((asset) => asset.id));
+  const missing = [...ONLY_IDS].filter((id) => !known.has(id));
+  throw new Error(`Unknown COMFY_ONLY asset ids: ${missing.join(", ")}`);
+}
+if (!Number.isSafeInteger(SEED_OFFSET)) {
+  throw new Error(`COMFY_SEED_OFFSET must be an integer, got ${process.env.COMFY_SEED_OFFSET}`);
+}
+
 mkdirSync(RAW_DIR, { recursive: true });
-for (const asset of ASSETS) mkdirSync(dirname(asset.out), { recursive: true });
+for (const asset of selectedAssets) mkdirSync(dirname(asset.out), { recursive: true });
 
 const manifest = [];
-for (const [index, asset] of ASSETS.entries()) {
-  console.log(`\n[${index + 1}/${ASSETS.length}] ${asset.id}`);
+for (const asset of selectedAssets) {
+  const index = ASSETS.findIndex((candidate) => candidate.id === asset.id);
+  console.log(`\n[${manifest.length + 1}/${selectedAssets.length}] ${asset.id}`);
   const raw = join(RAW_DIR, `${asset.id}.png`);
   if (!existsSync(raw) || process.env.FORCE === "1") {
-    await generate(asset, raw, 92024000 + index * 97);
+    await generate(asset, raw, 92024000 + index * 97 + SEED_OFFSET);
   } else {
     console.log(`  reuse ${raw}`);
   }
 
   if (asset.kind === "cutout") {
-    removeGreen(raw, asset.out, asset.size);
+    removeBackground(raw, asset.out, asset.size);
   } else {
     execFileSync("magick", [raw, "-resize", "512x512!", asset.out], { stdio: "inherit" });
   }
   manifest.push({ ...asset, raw });
+}
+
+let manifestAssets = manifest;
+if (ONLY_IDS.size && existsSync(MANIFEST)) {
+  const previous = JSON.parse(readFileSync(MANIFEST, "utf8"));
+  const merged = new Map((previous.assets || []).map((asset) => [asset.id, asset]));
+  for (const asset of manifest) merged.set(asset.id, asset);
+  manifestAssets = ASSETS.map((asset) => merged.get(asset.id)).filter(Boolean);
 }
 
 mkdirSync(dirname(MANIFEST), { recursive: true });
@@ -319,8 +416,10 @@ writeFileSync(
       model: "flux1-dev-fp8.safetensors",
       steps: STEPS,
       guidance: GUIDANCE,
+      seedOffset: SEED_OFFSET,
+      cutoutMode: process.env.COMFY_CUTOUT_MODE || "rembg",
       generatedAt: new Date().toISOString(),
-      assets: manifest,
+      assets: manifestAssets,
     },
     null,
     2,
@@ -400,19 +499,45 @@ async function downloadImage(image, out) {
   writeFileSync(out, buffer);
 }
 
-function removeGreen(input, output, size) {
-  const key = sampleCornerColor(input);
-  const fuzz = process.env.COMFY_CUTOUT_FUZZ || "38%";
+function removeBackground(input, output, size) {
+  if ((process.env.COMFY_CUTOUT_MODE || "rembg") !== "chroma") {
+    execFileSync("bash", ["scripts/cutout_harness.sh", input, output, String(size)], {
+      stdio: "inherit",
+    });
+    return;
+  }
+
+  const fuzz = process.env.COMFY_CUTOUT_FUZZ || "8%";
+  const edgePoints = [
+    [0, 0],
+    [128, 0],
+    [256, 0],
+    [384, 0],
+    [511, 0],
+    [0, 128],
+    [511, 128],
+    [0, 256],
+    [511, 256],
+    [0, 384],
+    [511, 384],
+    [0, 511],
+    [128, 511],
+    [256, 511],
+    [384, 511],
+    [511, 511],
+  ];
+  const floodFills = edgePoints.flatMap(([x, y]) => ["-draw", `color ${x},${y} floodfill`]);
   execFileSync(
     "magick",
     [
       input,
       "-alpha",
-      "set",
+      "on",
       "-fuzz",
       fuzz,
-      "-transparent",
-      key,
+      "-fill",
+      "none",
+      ...floodFills,
       "-trim",
       "+repage",
       "-resize",
@@ -427,18 +552,6 @@ function removeGreen(input, output, size) {
     ],
     { stdio: "inherit" },
   );
-}
-
-function sampleCornerColor(input) {
-  try {
-    return (
-      execFileSync("magick", [input, "-format", "%[pixel:p{0,0}]", "info:"], {
-        encoding: "utf8",
-      }).trim() || GREEN
-    );
-  } catch {
-    return GREEN;
-  }
 }
 
 function sleep(ms) {

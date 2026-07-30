@@ -1,4 +1,13 @@
-use bevy::{ecs::system::SystemParam, prelude::*};
+use bevy::{
+    asset::RenderAssetUsages,
+    ecs::system::SystemParam,
+    image::ImageSampler,
+    prelude::*,
+    reflect::TypePath,
+    render::render_resource::{AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat},
+    shader::ShaderRef,
+    sprite_render::{Material2d, Material2dPlugin},
+};
 use bevy_firefly::prelude::{Occluder2d, PointLight2d};
 
 use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
@@ -6,14 +15,20 @@ use super::battle::{EncounterKind, EncounterZone, PendingEncounter};
 use super::core::{
     EncounterRate, GameFont, Intent, MAP_H, MAP_W, PlayerStats, Rng, TILE, tile_to_world,
 };
+use super::cutout::{
+    CutoutPart, brighten_color, cutout_part_motion, cutout_part_specs, cutout_source_px_for_path,
+};
 use super::fog;
 use super::lighting::{self, LightingAssets};
 use super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
 use super::quest::{
-    BondResponse, BondReward, BondScene, BossKind, CampBonus, CampScene, Chapter, Companion,
-    FinalLamp, MansionMirrorNode, MoonCrystal, PlagueWard, QuestLog, QuestRole, QuestStage,
-    RiverLantern, ShrineBlessing, SideQuest, SideQuestReward, ThunderDrum, TreasureCache,
-    TreasureReward,
+    BondResponse, BondReward, BondScene, BossKind, CampBonus, CampScene, CareAftermathReward,
+    Chapter, CommissionAftermathReward, Companion, CompanionAftermathReward, CompanionRevisit,
+    CompanionScene, CompanionSceneReward, FieldSupply, FinalLamp, MansionMirrorNode, MoonCrystal,
+    NpcErrand, NpcErrandReward, PlagueWard, QuestLog, QuestRole, QuestStage, RiverLantern,
+    RouteDetour, RouteDetourApproach, RouteDetourReportReward, RouteDetourReward, RouteMark,
+    ShopGear, ShrineBlessing, SideQuest, SideQuestFieldApproach, SideQuestResolution,
+    SideQuestReward, SupplyReward, ThunderDrum, TreasureCache, TreasureReward,
 };
 use super::state::AppState;
 
@@ -22,6 +37,13 @@ const FAVORED_POTION_PRICE: u32 = 12;
 const INN_PRICE: u32 = 24;
 const FAVORED_INN_PRICE: u32 = 12;
 const SHRINE_OFFERING_PRICE: u32 = 12;
+const VILLAGE_GEAR_PRICE: u32 = 54;
+const RIVER_GEAR_PRICE: u32 = 86;
+const CAPITAL_GEAR_PRICE: u32 = 128;
+const SOUTHERN_GEAR_PRICE: u32 = 166;
+const CHAPTER_CARD_LINE_COUNT: usize = 6;
+const CHAPTER_ART_FRAME_COUNT: usize = 32;
+const CHAPTER_ART_FRAME_TIME: f32 = 1.0 / 16.0;
 
 // ---------------------------------------------------------------------------
 // Map definition
@@ -128,96 +150,96 @@ const MAP_RIVER_TOWN: [&str; MAP_H as usize] = [
 
 const MAP_RIVER_REED_BED: [&str; MAP_H as usize] = [
     "##############################",
-    "#P..,,,,....~~~~...####.....>#",
-    "#...,,,,....~~~~.............#",
-    "#..N....####.....,,,,....###.#",
-    "#.......####.....,,,,....###.#",
-    "#..~~~~......N.......####....#",
-    "#..~~~~..............####....#",
-    "#......,,,,,,.....~~~~.....N.#",
-    "#..####.....~~~~.....####....#",
-    "#..####.....~~~~.....####....#",
-    "#....N......,,,,,,...........#",
-    "#...........,,,,,,...........#",
-    "#....####..........~~~~......#",
-    "#....####..........~~~~......#",
-    "#....,,,,,......####.........#",
+    "#P..~~~~....,,,,..####.....>.#",
+    "#...~~~~..N.,,,,.............#",
+    "#..N....~~~~.....####..###...#",
+    "#.......~~~~.....####..###...#",
+    "#..,,,,......N....~~~~.......#",
+    "#..,,,,..~~~~....N..~~~~.....#",
+    "#......####,,,,,,....N..N....#",
+    "#..~~~~####.....~~~~.........#",
+    "#..~~~~....,,,,..####........#",
+    "#....N....N,,,,..####........#",
+    "#......~~~~....####..N.......#",
+    "#..####..~~~~................#",
+    "#..####......,,,,,,..........#",
+    "#....,,,,,....~~~~...........#",
     "##############################",
 ];
 
 const MAP_PLAGUE_VILLAGE: [&str; MAP_H as usize] = [
     "##############################",
-    "#P.....####....,,,,.....N>...#",
-    "#......####....,,,,..........#",
-    "#..N.........~~~~~.....###...#",
-    "#............~~~~~.....###...#",
-    "#....####...........,,,,.....#",
-    "#....####....N......,,,,.....#",
-    "#............~~~~..........N.#",
-    "#..####......~~~~......####..#",
-    "#..####......~~~~......####..#",
-    "#........,,,,,,............N.#",
-    "#........,,,,,,..............#",
-    "#....N..............~~~~.....#",
-    "#.............####...~~~~....#",
-    "#....,,,,,....####...........#",
+    "#P..####..,,,,,,,,....N>.....#",
+    "#...####..,,,,,,,,...........#",
+    "#..N....~~~~~..####..........#",
+    "#.......~~~~~..####..........#",
+    "#..####......,,,,,,..........#",
+    "#..####....N.,,,,,,..........#",
+    "#......~~~~....####......N...#",
+    "#..,,,,~~~~....####..........#",
+    "#..,,,,....####.....~~~~.....#",
+    "#......N...####.....~~~~.....#",
+    "#....N.....,,,,,,............#",
+    "#....N.....,,,,,,..####......#",
+    "#..~~~~.........####.........#",
+    "#..~~~~....,,,,,####.........#",
     "##############################",
 ];
 
 const MAP_PLAGUE_SHRINE_PATH: [&str; MAP_H as usize] = [
     "##############################",
-    "#P..,,,,....~~~~....####...N>#",
-    "#...,,,,....~~~~.............#",
-    "#..####..N......,,,,....###..#",
-    "#.......####.....,,,,....###.#",
-    "#..~~~~......N.......####....#",
-    "#..~~~~....,,,,......####....#",
-    "#......,,,,,,.....~~~~.....N.#",
-    "#..####.....~~~~.....####....#",
-    "#..####..N..~~~~.....####....#",
-    "#....N......,,,,,,...........#",
-    "#...........,,,,,,......N....#",
-    "#....####..........~~~~......#",
-    "#....####..N.......~~~~......#",
-    "#....,,,,,......####.....N...#",
+    "#P..~~~~....####....,,,,..N>.#",
+    "#...~~~~....####....,,,,.....#",
+    "#..####..N..~~~~.....###.....#",
+    "#..####.....~~~~..,,,,.......#",
+    "#..,,,,......N...####........#",
+    "#..,,,,..~~~~....####........#",
+    "#......######..~~~~.....N....#",
+    "#..####..~~~~....N..,,,,.....#",
+    "#..####..N.......~~~~........#",
+    "#....N..,,,,,,....~~~~.......#",
+    "#.......,,,,,,..####...N.....#",
+    "#..~~~~....####......,,,,....#",
+    "#..~~~~..N.####......,,,,....#",
+    "#....####....,,,,.......N....#",
     "##############################",
 ];
 
 const MAP_CAPITAL: [&str; MAP_H as usize] = [
     "##############################",
-    "#P....####....,,,,.....N>....#",
-    "#.....####....,,,,...........#",
-    "#..N.........~~~~~.....###...#",
-    "#............~~~~~.....###...#",
-    "#....####...........,,,,.....#",
-    "#....####....N......,,,,.....#",
-    "#............~~~~..........N.#",
-    "#..####......~~~~......####..#",
-    "#..####......~~~~......####..#",
-    "#........,,,,,,............N.#",
-    "#........,,,,,,..............#",
-    "#....N..............~~~~.....#",
-    "#.............####...~~~~....#",
-    "#....,,,,,....####...........#",
+    "#P..####....,,,,.....N>......#",
+    "#...####....,,,,..####.......#",
+    "#..N....####.....~~~~..###...#",
+    "#.......####.....~~~~..###...#",
+    "#..,,,,......####............#",
+    "#..,,,,..N...####.....####...#",
+    "#.......~~~~.........N.####..#",
+    "#..####..~~~~....,,,,........#",
+    "#..####..........,,,,..####..#",
+    "#......####,,,,,,......N.....#",
+    "#......####,,,,,,............#",
+    "#....N.....~~~~....####......#",
+    "#..........~~~~....####......#",
+    "#....,,,,.............####...#",
     "##############################",
 ];
 
 const MAP_CAPITAL_MANSION: [&str; MAP_H as usize] = [
     "##############################",
-    "#P....####....,,,,.....N...>.#",
-    "#.....####....,,,,...........#",
-    "#..N.........~~~~~.....###...#",
-    "#............~~~~~.....###...#",
-    "#....####...........,,,,.....#",
-    "#....####....N......,,,,.....#",
-    "#............~~~~..........N.#",
-    "#..####......~~~~......####..#",
-    "#..####......~~~~......####..#",
-    "#........,,,,,,............N.#",
-    "#........,,,,,,..............#",
-    "#....N..............~~~~.....#",
-    "#.............####...~~~~....#",
-    "#....,,,,,....####...........#",
+    "#P..####..,,,,..####..N....>.#",
+    "#...####..,,,,..####.........#",
+    "#..N....~~~~~.....###........#",
+    "#..####.~~~~~..#######.......#",
+    "#....##......N....,,,,.......#",
+    "#....##..####.....,,,,.......#",
+    "#..~~~~..####.........N......#",
+    "#..~~~~......####..~~~~......#",
+    "#..####......####..~~~~......#",
+    "#......,,,,,,....####...N....#",
+    "#......,,,,,,....####........#",
+    "#....N...####.....~~~~.......#",
+    "#........####.....~~~~.......#",
+    "#....,,,,....####............#",
     "##############################",
 ];
 
@@ -261,58 +283,58 @@ const MAP_SOUTHERN_ROAD: [&str; MAP_H as usize] = [
 
 const MAP_THUNDER_DRUM_PATH: [&str; MAP_H as usize] = [
     "##############################",
-    "#P..,,,,....~~~~....####...N>#",
-    "#...,,,,....~~~~.............#",
-    "#..N....####.....,,,,....###.#",
-    "#.......####.....,,,,....###.#",
-    "#..~~~~......N.......####....#",
-    "#..~~~~..............####....#",
-    "#......,,,,,,.....~~~~.....N.#",
-    "#..####.....~~~~.....####....#",
-    "#..####.....~~~~.....####....#",
-    "#....N......,,,,,,...........#",
-    "#...........,,,,,,......N....#",
-    "#....####..........~~~~......#",
-    "#....####..N.......~~~~......#",
-    "#....,,,,,......####.....N...#",
+    "#P..~~~~....,,,,....####...N>#",
+    "#...~~~~....,,,,....####.....#",
+    "#..N..~~####.....,,,,....###.#",
+    "#.....~~####.....,,,,....###.#",
+    "#..####......N....~~~~.......#",
+    "#..####....,,,,....~~~~......#",
+    "#......~~~~~~....####.....N..#",
+    "#..####..~~~~....####........#",
+    "#..####..,,,,....~~~~........#",
+    "#....N..,,,,,,....~~~~.......#",
+    "#.......####,,,,,,....N......#",
+    "#..~~~~.####......,,,,.......#",
+    "#..~~~~....N..####,,,,.......#",
+    "#....,,,,....####.......N....#",
     "##############################",
 ];
 
 const MAP_FINAL_SANCTUM: [&str; MAP_H as usize] = [
     "##############################",
-    "#P....####....~~~~.....N>....#",
-    "#.....####....~~~~...........#",
-    "#..N.........,,,,,.....###...#",
-    "#............,,,,,.....###...#",
-    "#....####...........~~~~.....#",
-    "#....####....N......~~~~.....#",
-    "#............,,,,..........N.#",
-    "#..####......~~~~......####..#",
-    "#..####......~~~~......####..#",
-    "#........,,,,,,............N.#",
-    "#........,,,,,,..............#",
-    "#....N..............~~~~.....#",
-    "#.............####...~~~~....#",
-    "#....,,,,,....####...........#",
+    "#P....####~~~~....####.N>....#",
+    "#.....####~~~~....####.......#",
+    "#..N....,,,,....~~~~....###..#",
+    "#..####.,,,,....~~~~....###..#",
+    "#..####......N....####.......#",
+    "#......~~~~....N...####......#",
+    "#..~~~~....,,,,......####.N..#",
+    "#..~~~~....,,,,......####....#",
+    "#....####..~~~~....,,,,......#",
+    "#....####..~~~~..N.,,,,......#",
+    "#..N.......####....~~~~......#",
+    "#....N.....####....~~~~......#",
+    "#......,,,,....####..........#",
+    "#....,,,,......####..........#",
     "##############################",
 ];
 
 const MAP_DREAM_WATERWAY: [&str; MAP_H as usize] = [
     "##############################",
-    "#P....####....~~~~.....N>....#",
-    "#.....####....~~~~...........#",
-    "#..N.........,,,,,.....###...#",
-    "#............,,,,,.....###...#",
-    "#....####...........~~~~.....#",
-    "#....####....N......~~~~.....#",
-    "#............,,,,..........N.#",
-    "#..####......~~~~......####..#",
-    "#..####......~~~~......####..#",
-    "#........,,,,,,............N.#",
-    "#........,,,,,,..............#",
-    "#....N..............~~~~.....#",
-    "#.............####...~~~~....#",
-    "#....,,,,,....####.........N.#",
+    "#P..~~~~####....~~~~...N>....#",
+    "#...~~~~####....~~~~.........#",
+    "#..N....,,,,..~~~~....###....#",
+    "#..####.,,,,..~~~~....###....#",
+    "#..####.....N..,,,,..~~~~....#",
+    "#......~~~~....N....~~~~.....#",
+    "#..~~~~####....,,,,......N...#",
+    "#..~~~~####....,,,,..####....#",
+    "#....,,,,..~~~~....####......#",
+    "#....,,,,..~~~~..N.####......#",
+    "#..####......~~~~....,,,,....#",
+    "#....N....####~~~~....,,,,...#",
+    "#........####..~~~~.....N....#",
+    "#....~~~~....####.....N......#",
     "##############################",
 ];
 
@@ -750,6 +772,46 @@ impl ExploreAssets {
     }
 }
 
+#[derive(Clone, Copy, Debug, ShaderType)]
+struct TerrainMaterialParams {
+    floor_tint: Vec4,
+    grass_tint: Vec4,
+    wall_tint: Vec4,
+    water_tint: Vec4,
+    /// x/y = map dimensions, z = tile size, w = edge blend half-width.
+    map: Vec4,
+    /// x = source size, y = crop inset, z = ping-pong span, w = source step.
+    sample: Vec4,
+    /// x/y = map-specific source phase, z = continuous UV warp amplitude.
+    phase: Vec4,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub(crate) struct TerrainMaterial {
+    #[texture(0)]
+    tile_ids: Handle<Image>,
+    #[texture(1)]
+    #[sampler(2)]
+    floor: Handle<Image>,
+    #[texture(3)]
+    #[sampler(4)]
+    grass: Handle<Image>,
+    #[texture(5)]
+    #[sampler(6)]
+    wall: Handle<Image>,
+    #[texture(7)]
+    #[sampler(8)]
+    water: Handle<Image>,
+    #[uniform(9)]
+    params: TerrainMaterialParams,
+}
+
+impl Material2d for TerrainMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/terrain_material.wgsl".into()
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tile {
     Path,
@@ -875,6 +937,18 @@ enum NpcService {
 struct NpcServiceResult {
     line: String,
     rested: bool,
+}
+
+#[derive(Clone, Copy)]
+struct GearOffer {
+    gear: ShopGear,
+    price: u32,
+    atk: i32,
+    def: i32,
+    max_hp: i32,
+    max_mp: i32,
+    seller: &'static str,
+    flavor: &'static str,
 }
 
 const NPCS_VILLAGE: [NpcDef; 4] = [
@@ -1912,10 +1986,25 @@ fn npc_reaction_lines(kind: MapKind, npc: &NpcDef, quest: &QuestLog) -> Vec<Stri
 
     let mut lines = Vec::new();
     lines.extend(local_side_quest_reactions(kind, quest));
+    if let Some(line) = local_side_quest_route_reaction(kind, quest) {
+        lines.push(line);
+    }
+    if let Some(line) = local_npc_errand_route_reaction(kind, quest) {
+        lines.push(line);
+    }
     if let Some(line) = local_treasure_reaction(kind, quest) {
         lines.push(line.to_string());
     }
     if let Some(line) = local_care_reaction(kind, quest) {
+        lines.push(line);
+    }
+    if let Some(line) = local_companion_scene_reaction(kind, quest) {
+        lines.push(line);
+    }
+    if let Some(line) = local_companion_revisit_reaction(kind, quest) {
+        lines.push(line);
+    }
+    if let Some(line) = local_route_branch_reaction(kind, quest) {
         lines.push(line);
     }
     lines
@@ -1929,7 +2018,7 @@ fn local_side_quest_reactions(kind: MapKind, quest: &QuestLog) -> Vec<String> {
     }
 
     if side_board_completed_count(sides, quest) == sides.len() {
-        lines.push(match kind {
+        let mut line = match kind {
             MapKind::Village => {
                 "【街谈】村人说任务板两张红签都撤下了，夜里终于敢出门采药。".to_string()
             }
@@ -1944,6 +2033,9 @@ fn local_side_quest_reactions(kind: MapKind, quest: &QuestLog) -> Vec<String> {
                 "【街谈】府城暗线说巡查和暗帖都已交，镜阵余影少了许多。".to_string()
             }
             MapKind::SouthernRoad => "【街谈】百越族人说雷纹归位，战鼓也安静了。".to_string(),
+            MapKind::FinalSanctum => {
+                "【街谈】守灯人说梦灯余波和归潮灯签都已归位，终门外的归路亮了一整夜。".to_string()
+            }
             MapKind::Bamboo
             | MapKind::MoonEchoCorridor
             | MapKind::RiverReedBed
@@ -1951,9 +2043,17 @@ fn local_side_quest_reactions(kind: MapKind, quest: &QuestLog) -> Vec<String> {
             | MapKind::CapitalMansion
             | MapKind::MansionMirrorGallery
             | MapKind::ThunderDrumPath
-            | MapKind::FinalSanctum
             | MapKind::DreamWaterway => return lines,
-        });
+        };
+        if let Some(resolution) = local_commission_resolution_reaction(kind, quest) {
+            line.push(' ');
+            line.push_str(&resolution);
+        }
+        if let Some(field) = local_commission_field_reaction(kind, quest) {
+            line.push(' ');
+            line.push_str(&field);
+        }
+        lines.push(line);
         return lines;
     }
 
@@ -1973,7 +2073,21 @@ fn local_completed_side_quest_reaction(sides: &[SideQuest], quest: &QuestLog) ->
         .iter()
         .copied()
         .find(|side| quest.is_side_quest_completed(*side))
-        .map(|side| format!("【街谈】{}", quest.side_task_completed_line(side)))
+        .map(|side| {
+            let mut line = format!("【街谈】{}", quest.side_task_completed_line(side));
+            if let Some(resolution) = quest.side_task_resolution_reaction(side) {
+                line.push(' ');
+                line.push_str(&resolution);
+            }
+            if let Some(approach) = quest.side_quest_field_approach(side) {
+                line.push(' ');
+                line.push_str(&format!(
+                    "【现场回声】{}已写进委托签，地方人照此调整巡路。",
+                    approach.name()
+                ));
+            }
+            line
+        })
 }
 
 fn local_side_quest_status_reaction(sides: &[SideQuest], quest: &QuestLog) -> Option<String> {
@@ -2003,6 +2117,174 @@ fn local_side_quest_status_reaction(sides: &[SideQuest], quest: &QuestLog) -> Op
             quest.side_quest_name(side)
         ))
     }
+}
+
+fn local_side_quest_route_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    if !side_quests_for_map(kind).is_empty() {
+        return None;
+    }
+
+    let base = match side_quest_route_relief_state(kind, quest) {
+        SideQuestRouteReliefState::NoRoute => return None,
+        SideQuestRouteReliefState::Partial => match kind {
+            MapKind::Bamboo => "【委托回声】村郊一张委托已归档，守山人开始把竹灯往山路深处挪。",
+            MapKind::MoonEchoCorridor => {
+                "【委托回声】水月洞天已有委托归档，回廊巡灯敢多照亮一段石壁。"
+            }
+            MapKind::RiverReedBed => {
+                "【委托回声】江岸任务板压下一张水签，芦滩巡夜人敢重新靠近浅滩。"
+            }
+            MapKind::PlagueShrinePath => {
+                "【委托回声】瘴雨村药榜少了一张急签，祠道药童敢把铃挂得更远。"
+            }
+            MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+                "【委托回声】府城密榜已有回执，偏院暗线敢把巡夜粉记推进一扇门。"
+            }
+            MapKind::ThunderDrumPath => {
+                "【委托回声】百越灵道已有一段雷声安定，巡山人敢把路符压到鼓道边。"
+            }
+            MapKind::DreamWaterway => {
+                "【委托回声】终门灯簿已有一页合上，守灯人敢把小灯送进旧梦水声里。"
+            }
+            MapKind::Village
+            | MapKind::Cave
+            | MapKind::RiverTown
+            | MapKind::PlagueVillage
+            | MapKind::Capital
+            | MapKind::SouthernRoad
+            | MapKind::FinalSanctum => return None,
+        },
+        SideQuestRouteReliefState::Cleared => match kind {
+            MapKind::Bamboo => "【委托回声】山路余妖与药圃妖香都被压住，竹林外缘的夜路稳了许多。",
+            MapKind::MoonEchoCorridor => {
+                "【委托回声】晶尘和回声委托都已归档，水月回廊的妖影被巡灯逼退。"
+            }
+            MapKind::RiverReedBed => "【委托回声】河灯与湿货都找回来了，芦滩夜路重新有了人声。",
+            MapKind::PlagueShrinePath => {
+                "【委托回声】救急药和药童都平安，祠道瘴影不再敢贴着病屋绕路。"
+            }
+            MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+                "【委托回声】巡查与暗帖都交清，镜廊里的余影少了藏身的街谈。"
+            }
+            MapKind::ThunderDrumPath => {
+                "【委托回声】雷纹和旧鼓都安静了，百越巡山人说灵道路脉重新接上。"
+            }
+            MapKind::DreamWaterway => {
+                "【委托回声】梦灯余波与归潮旧愿都归簿，旧梦水廊的回卷退了一层。"
+            }
+            MapKind::Village
+            | MapKind::Cave
+            | MapKind::RiverTown
+            | MapKind::PlagueVillage
+            | MapKind::Capital
+            | MapKind::SouthernRoad
+            | MapKind::FinalSanctum => return None,
+        },
+    };
+
+    let mut line = base.to_string();
+    if let Some(resolution) = local_commission_resolution_reaction(kind, quest) {
+        line.push(' ');
+        line.push_str(&resolution);
+    }
+    if let Some(field) = local_commission_field_reaction(kind, quest) {
+        line.push(' ');
+        line.push_str(&field);
+    }
+    Some(line)
+}
+
+fn local_npc_errand_route_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let count = npc_errand_route_relief_count(kind, quest);
+    if count == 0 {
+        return None;
+    }
+
+    Some(match (kind, count) {
+        (MapKind::Cave | MapKind::MoonEchoCorridor, _) => {
+            "【托付回声】洞中采药人说竹露已入月寒药钵，水月路上的寒妖少追了几步。".to_string()
+        }
+        (MapKind::RiverTown, _) => {
+            "【托付回声】巡河卫把月苔压进渡口水符，江岸雾灯比昨夜亮了半寸。".to_string()
+        }
+        (MapKind::RiverReedBed, 1) => {
+            "【托付回声】月苔寒气稳住一盏渡口灯，芦滩水雾不再贴着脚踝打转。".to_string()
+        }
+        (MapKind::RiverReedBed, _) => {
+            "【托付回声】月苔和芦滩小信都送到，巡路人把新浅渡画进夜巡水图。".to_string()
+        }
+        (MapKind::PlagueVillage | MapKind::PlagueShrinePath, _) => {
+            "【托付回声】病童护符到了祠道，采药妇已经按护符纹路重配一锅苦药。".to_string()
+        }
+        (MapKind::CapitalMansion | MapKind::MansionMirrorGallery, _) => {
+            "【托付回声】星图密片交给偏院暗线，镜廊巡夜开始避开国师换镜的时辰。".to_string()
+        }
+        (MapKind::SouthernRoad, _) => {
+            "【托付回声】照影药引洒进南疆草路，镜阵残毒露出灰线，赶山人敢往前探。".to_string()
+        }
+        (MapKind::ThunderDrumPath, 1) => {
+            "【托付回声】照影药引辨出雷草里的灰毒，鼓道边缘少了一层京华残影。".to_string()
+        }
+        (MapKind::ThunderDrumPath, _) => {
+            "【托付回声】照影药引和雷草药酒都到位，祭道药炉压住雷声，守夜人重新靠近鼓架。"
+                .to_string()
+        }
+        (MapKind::DreamWaterway, _) => {
+            "【托付回声】旧梦灯芯接入誓灯，水廊回卷退开一线，守灯人影能看见归路。".to_string()
+        }
+        (MapKind::Village | MapKind::Bamboo | MapKind::Capital | MapKind::FinalSanctum, _) => {
+            return None;
+        }
+    })
+}
+
+fn local_commission_resolution_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let sides = side_quest_route_relief_sides(kind);
+    let pursued = sides
+        .iter()
+        .copied()
+        .filter(|side| quest.side_quest_resolution(*side) == Some(SideQuestResolution::Pursue))
+        .count();
+    let completed = sides
+        .iter()
+        .copied()
+        .filter(|side| quest.is_side_quest_completed(*side))
+        .count();
+    if completed == 0 {
+        return None;
+    }
+    let settled = completed.saturating_sub(pursued);
+
+    Some(match (settled, pursued) {
+        (_, 0) => format!("【裁断回声】{settled} 张委托稳妥封存，地方账簿先求安稳。"),
+        (0, _) => {
+            format!("【裁断回声】{pursued} 张委托转为追查余波，巡路人会继续盯着旧线。")
+        }
+        _ => format!(
+            "【裁断回声】{settled} 张委托封存，{pursued} 张委托追查余波，地方账簿分成安民与巡路两路。"
+        ),
+    })
+}
+
+fn local_commission_field_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let investigated =
+        side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Investigate);
+    let confronted = side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Confront);
+    if investigated == 0 && confronted == 0 {
+        return None;
+    }
+
+    Some(match (investigated, confronted) {
+        (_, 0) => {
+            format!("【现场回声】{investigated} 处现场按细查现场归档，巡路人按线索重画夜路。")
+        }
+        (0, _) => {
+            format!("【现场回声】{confronted} 处现场按快断余妖归档，守路人照速断法压住妖口。")
+        }
+        _ => format!(
+            "【现场回声】细查{investigated}处、快断{confronted}处，委托签把查线和断势分开归档。"
+        ),
+    })
 }
 
 fn map_treasure_cache(kind: MapKind) -> Option<TreasureCache> {
@@ -2086,6 +2368,226 @@ fn local_care_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
     ))
 }
 
+fn local_route_branch_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let detour = local_route_detour_for_map(kind)?;
+    let approach = quest.route_detour_approach(detour)?;
+    Some(match (detour, approach) {
+        (RouteDetour::MoonEchoPool, RouteDetourApproach::Scout) => {
+            "【街谈】水月洞人听说你细查过照水暗池，已经把池边布条画进巡夜路图。".to_string()
+        }
+        (RouteDetour::MoonEchoPool, RouteDetourApproach::PressOn) => {
+            "【街谈】水月洞人听说你快步穿过照水暗池，只提醒后来的弟子别学得太急。".to_string()
+        }
+        (RouteDetour::ReedHiddenFord, RouteDetourApproach::Scout) => {
+            "【街谈】江岸人说芦下隐渡的芦痕压得很稳，夜里巡货可以少绕一段水路。".to_string()
+        }
+        (RouteDetour::ReedHiddenFord, RouteDetourApproach::PressOn) => {
+            "【街谈】江岸人听说你从芦下隐渡快走过去，知道那条浅水线能通，但还不敢夜里走。"
+                .to_string()
+        }
+        (RouteDetour::PlagueHerbTrail, RouteDetourApproach::Scout) => {
+            "【街谈】瘴雨村人把你分出的祠旁药径记下，病屋药锅终于多了一味苦药。".to_string()
+        }
+        (RouteDetour::PlagueHerbTrail, RouteDetourApproach::PressOn) => {
+            "【街谈】瘴雨村人知道你冲过祠旁药径，薄瘴方向有了线索，只是采药还得小心。".to_string()
+        }
+        (RouteDetour::MirrorServantDoor, RouteDetourApproach::Scout) => {
+            "【街谈】府城暗线说镜仆暗门的粉记已抄下，偏院巡夜终于有了退路。".to_string()
+        }
+        (RouteDetour::MirrorServantDoor, RouteDetourApproach::PressOn) => {
+            "【街谈】府城暗线听说你借镜仆暗门快走，知道斜廊可用，却还缺完整转角记号。".to_string()
+        }
+        (RouteDetour::ThunderRidgeCache, RouteDetourApproach::Scout) => {
+            "【街谈】百越族人说雷脊旧藏已经启开，路符压住乱雷，巡山人敢再往前。".to_string()
+        }
+        (RouteDetour::ThunderRidgeCache, RouteDetourApproach::PressOn) => {
+            "【街谈】百越族人听说你越过雷脊旧藏，记下避雷步点，却仍劝后人等雷声落完。".to_string()
+        }
+        (RouteDetour::DreamBackwater, RouteDetourApproach::Scout) => {
+            "【街谈】灵渊守灯人说旧梦回湾的灯签顺水亮着，回程水线终于能看清。".to_string()
+        }
+        (RouteDetour::DreamBackwater, RouteDetourApproach::PressOn) => {
+            "【街谈】灵渊守灯人听说你冲出旧梦回湾，知道回卷有空隙，却还不敢久留。".to_string()
+        }
+    })
+}
+
+fn local_companion_scene_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    match companion_route_state(kind, quest) {
+        CompanionRouteState::NoRoute => None,
+        CompanionRouteState::Prepared | CompanionRouteState::Partial => {
+            local_completed_companion_scene_reaction(kind, quest)
+        }
+        CompanionRouteState::Missed => Some(local_missed_companion_scene_reaction(kind)),
+    }
+}
+
+fn local_companion_revisit_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let revisit = match kind {
+        MapKind::PlagueVillage | MapKind::PlagueShrinePath => CompanionRevisit::TrailEcho,
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => CompanionRevisit::MirrorTrace,
+        MapKind::FinalSanctum | MapKind::DreamWaterway => CompanionRevisit::TotemVow,
+        _ => return None,
+    };
+    if !quest.companion_revisit_resolved(revisit) {
+        return None;
+    }
+    Some(
+        match revisit {
+            CompanionRevisit::TrailEcho => {
+                "【补访回声】祠道人说月衡把竹绳结重新系紧，瘴雨里终于多了一条共同退路。"
+            }
+            CompanionRevisit::MirrorTrace => {
+                "【补访回声】赶山人说月衡已在雷光里问清旧案，照影碎片不再映出追兵。"
+            }
+            CompanionRevisit::TotemVow => {
+                "【补访回声】守灯人听见南瑶答完百越旧誓，归水不再反复追问她的名字。"
+            }
+        }
+        .to_string(),
+    )
+}
+
+fn local_completed_companion_scene_reaction(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    match kind {
+        MapKind::Village | MapKind::Bamboo | MapKind::MoonEchoCorridor
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterTrailGuard) =>
+        {
+            Some("【小传街谈】林月衡在旧栅前重系退路，巡山人说回声窄道少了截后的妖影。".to_string())
+        }
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterCapitalMirror) =>
+        {
+            Some("【小传街谈】府城暗线听说月衡看破照影旧案，镜廊里的假脚步少了许多。".to_string())
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath
+            if quest.has_seen_companion_scene(CompanionScene::SpiritWitchSouthernTotem) =>
+        {
+            Some(
+                "【小传街谈】百越族人说南瑶听懂雷纹旧愿，乱雷鼓道终于肯让行人先走半步。"
+                    .to_string(),
+            )
+        }
+        MapKind::FinalSanctum | MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterFinalReturn)
+                && quest.has_seen_companion_scene(CompanionScene::SpiritWitchFinalVow) =>
+        {
+            Some(
+                "【小传街谈】守灯人记下月衡归剑和南瑶灯誓，旧梦水廊的回声不再追着归路翻涌。"
+                    .to_string(),
+            )
+        }
+        MapKind::FinalSanctum | MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterFinalReturn) =>
+        {
+            Some("【小传街谈】守灯人说月衡把归剑压进终门，旧梦水廊少了一道截口。".to_string())
+        }
+        MapKind::FinalSanctum | MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SpiritWitchFinalVow) =>
+        {
+            Some("【小传街谈】守灯人说南瑶把归潮灯誓留在水声里，旧梦回卷慢了半拍。".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn local_missed_companion_scene_reaction(kind: MapKind) -> String {
+    match kind {
+        MapKind::Village | MapKind::Bamboo | MapKind::MoonEchoCorridor => {
+            "【小传街谈】旧栅前还有未问出口的小传，回头走这段路时，妖影更爱从后队贴近。".to_string()
+        }
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+            "【小传街谈】照影旧案无人细问，府城暗线说镜廊仍会把迟来的脚步绕回原处。".to_string()
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => {
+            "【小传街谈】雷纹旧愿没来得及听完，百越巡山人说乱雷比从前更会压住归路。".to_string()
+        }
+        MapKind::FinalSanctum | MapKind::DreamWaterway => {
+            "【小传街谈】终门灯下仍缺一段归路誓言，旧梦水声会趁沉默处卷回。".to_string()
+        }
+        MapKind::Cave
+        | MapKind::RiverTown
+        | MapKind::RiverReedBed
+        | MapKind::PlagueVillage
+        | MapKind::PlagueShrinePath => {
+            "【小传街谈】同行人的旧话没有接上，这段路的回声比从前更冷。".to_string()
+        }
+    }
+}
+
+fn local_companion_aftermath_line(scene: CompanionScene) -> &'static str {
+    match scene {
+        CompanionScene::SwordSisterTrailGuard => {
+            "【小传回访】竹林巡山人照着月衡重系的旧栅换上耐雨麻绳，又把省下的巡路钱塞给你。"
+        }
+        CompanionScene::SwordSisterCapitalMirror => {
+            "【小传回访】府城暗线循着月衡留下的镜痕清掉两处假脚印，将封口钱和护身药交来。"
+        }
+        CompanionScene::SpiritWitchSouthernTotem => {
+            "【小传回访】百越巡山人把南瑶听懂的雷纹拓成路符，连同药酒和谢仪系在符后。"
+        }
+        CompanionScene::SwordSisterFinalReturn => {
+            "【小传回访】守灯人拾起月衡留在归路灯边的剑穗，替她补好断线，也备下一份归程盘缠。"
+        }
+        CompanionScene::SpiritWitchFinalVow => {
+            "【小传回访】守灯人把南瑶念过的名字写进灯簿，托你带走一盏药灯和守誓人的谢礼。"
+        }
+    }
+}
+
+fn claim_local_companion_scene_followup(
+    kind: MapKind,
+    quest: &mut QuestLog,
+    stats: &mut PlayerStats,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for scene in companion_route_scenes(kind).iter().copied() {
+        if quest.companion_scene_has_pending_revisit_turn_in(scene) {
+            continue;
+        }
+        let Some(reward) = quest.claim_companion_aftermath(scene) else {
+            continue;
+        };
+        lines.push(local_companion_aftermath_line(scene).to_string());
+        lines.push(apply_companion_aftermath_reward(stats, reward));
+    }
+    lines
+}
+
+fn local_route_detour_for_map(kind: MapKind) -> Option<RouteDetour> {
+    match kind {
+        MapKind::Cave | MapKind::MoonEchoCorridor => Some(RouteDetour::MoonEchoPool),
+        MapKind::RiverTown | MapKind::RiverReedBed => Some(RouteDetour::ReedHiddenFord),
+        MapKind::PlagueVillage | MapKind::PlagueShrinePath => Some(RouteDetour::PlagueHerbTrail),
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+            Some(RouteDetour::MirrorServantDoor)
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => Some(RouteDetour::ThunderRidgeCache),
+        MapKind::FinalSanctum | MapKind::DreamWaterway => Some(RouteDetour::DreamBackwater),
+        MapKind::Village | MapKind::Bamboo => None,
+    }
+}
+
+fn claim_local_route_detour_report(
+    kind: MapKind,
+    quest: &mut QuestLog,
+    stats: &mut PlayerStats,
+) -> Vec<String> {
+    let Some(detour) = local_route_detour_for_map(kind) else {
+        return Vec::new();
+    };
+    if !quest.route_detour_report_ready(detour) {
+        return Vec::new();
+    }
+
+    let report = quest.claim_route_detour_report(detour);
+    let mut lines = report.lines;
+    if let Some(reward) = report.reward {
+        lines.push(apply_route_detour_report_reward(stats, reward));
+    }
+    lines
+}
+
 fn map_care_scenes(kind: MapKind) -> (BondScene, CampScene) {
     match kind {
         MapKind::Village | MapKind::Bamboo => {
@@ -2149,6 +2651,370 @@ struct PropDef {
     size: f32,
     light: [f32; 4],
 }
+
+#[derive(Clone, Copy)]
+struct FieldSupplyDef {
+    kind: MapKind,
+    col: i32,
+    row: i32,
+    supply: FieldSupply,
+    path: &'static str,
+    size: f32,
+    light: [f32; 4],
+}
+
+#[derive(Clone, Copy)]
+struct CommissionTraceDef {
+    kind: MapKind,
+    col: i32,
+    row: i32,
+    side: SideQuest,
+    name: &'static str,
+    path: &'static str,
+    size: f32,
+    light: [f32; 4],
+    source: &'static str,
+    inactive_line: &'static str,
+    active_line: &'static str,
+    repeat_line: &'static str,
+}
+
+static FIELD_SUPPLY_DEFS: [FieldSupplyDef; 15] = [
+    FieldSupplyDef {
+        kind: MapKind::Village,
+        col: 12,
+        row: 13,
+        supply: FieldSupply::VillageHerbs,
+        path: "props/ai_spring.png",
+        size: 36.0,
+        light: [0.54, 0.94, 0.44, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::Bamboo,
+        col: 6,
+        row: 13,
+        supply: FieldSupply::BambooDew,
+        path: "props/ai_spring.png",
+        size: 34.0,
+        light: [0.54, 0.94, 0.62, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::Cave,
+        col: 18,
+        row: 7,
+        supply: FieldSupply::CaveMoonMoss,
+        path: "props/ai_cave_crystal.png",
+        size: 34.0,
+        light: [0.42, 0.74, 1.0, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::MoonEchoCorridor,
+        col: 16,
+        row: 11,
+        supply: FieldSupply::MoonCorridorDust,
+        path: "props/ai_cave_crystal.png",
+        size: 34.0,
+        light: [0.54, 0.72, 1.0, 0.20],
+    },
+    FieldSupplyDef {
+        kind: MapKind::RiverTown,
+        col: 11,
+        row: 11,
+        supply: FieldSupply::RiverTeaChest,
+        path: "props/ai_chest.png",
+        size: 36.0,
+        light: [0.70, 0.92, 1.0, 0.14],
+    },
+    FieldSupplyDef {
+        kind: MapKind::RiverReedBed,
+        col: 5,
+        row: 14,
+        supply: FieldSupply::ReedLotusPods,
+        path: "props/ai_spring.png",
+        size: 34.0,
+        light: [0.64, 0.92, 0.54, 0.16],
+    },
+    FieldSupplyDef {
+        kind: MapKind::PlagueVillage,
+        col: 12,
+        row: 14,
+        supply: FieldSupply::PlagueCleanWater,
+        path: "props/ai_spring.png",
+        size: 36.0,
+        light: [0.54, 0.94, 0.58, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::PlagueShrinePath,
+        col: 23,
+        row: 12,
+        supply: FieldSupply::ShrineAshRoots,
+        path: "props/ai_spring.png",
+        size: 34.0,
+        light: [0.62, 0.96, 0.56, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::Capital,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::CapitalTeaPacket,
+        path: "props/ai_chest.png",
+        size: 36.0,
+        light: [0.92, 0.78, 1.0, 0.14],
+    },
+    FieldSupplyDef {
+        kind: MapKind::CapitalMansion,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::MansionPantry,
+        path: "props/ai_chest.png",
+        size: 36.0,
+        light: [0.92, 0.78, 1.0, 0.16],
+    },
+    FieldSupplyDef {
+        kind: MapKind::MansionMirrorGallery,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::MirrorPowder,
+        path: "props/ai_chest.png",
+        size: 36.0,
+        light: [0.64, 0.82, 1.0, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::SouthernRoad,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::SouthernPepper,
+        path: "props/ai_spring.png",
+        size: 36.0,
+        light: [0.78, 1.0, 0.48, 0.18],
+    },
+    FieldSupplyDef {
+        kind: MapKind::ThunderDrumPath,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::ThunderHerbWine,
+        path: "props/ai_chest.png",
+        size: 38.0,
+        light: [0.62, 0.92, 1.0, 0.20],
+    },
+    FieldSupplyDef {
+        kind: MapKind::FinalSanctum,
+        col: 7,
+        row: 14,
+        supply: FieldSupply::FinalIncense,
+        path: "props/ai_chest.png",
+        size: 38.0,
+        light: [0.70, 0.74, 1.0, 0.20],
+    },
+    FieldSupplyDef {
+        kind: MapKind::DreamWaterway,
+        col: 6,
+        row: 9,
+        supply: FieldSupply::DreamPearlMoss,
+        path: "props/ai_cave_crystal.png",
+        size: 36.0,
+        light: [0.52, 0.72, 1.0, 0.22],
+    },
+];
+
+static COMMISSION_TRACE_DEFS: [CommissionTraceDef; 14] = [
+    CommissionTraceDef {
+        kind: MapKind::Village,
+        col: 15,
+        row: 13,
+        side: SideQuest::VillageTrail,
+        name: "旧竹栅妖痕",
+        path: "props/ai_cave_crystal.png",
+        size: 30.0,
+        light: [0.92, 0.58, 0.32, 0.18],
+        source: "旧竹栅妖痕已查",
+        inactive_line: "竹栅边草叶断得很新，像是山路余妖留下的爪印。",
+        active_line: "你拨开草叶，妖爪从旧竹栅一路拖到村路边，正好写入委托签。",
+        repeat_line: "旧竹栅边的爪印已经用石粉圈住，巡山人会照着这里收尾。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::Village,
+        col: 13,
+        row: 12,
+        side: SideQuest::VillageHerbs,
+        name: "药圃香风",
+        path: "props/ai_spring.png",
+        size: 32.0,
+        light: [0.62, 0.94, 0.46, 0.20],
+        source: "药圃香风已稳",
+        inactive_line: "水塘边有一股药香外泄，像是药婆说过的护路麻烦。",
+        active_line: "你用湿泥压住药香外泄的缺口，闻香聚来的妖风弱了一截。",
+        repeat_line: "药圃边的泥封还稳着，药香不会再把小妖引到路上。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::Cave,
+        col: 16,
+        row: 6,
+        side: SideQuest::MoonCaveCrystals,
+        name: "晶尘冷斑",
+        path: "props/ai_cave_crystal.png",
+        size: 34.0,
+        light: [0.44, 0.78, 1.0, 0.24],
+        source: "晶尘冷斑已净",
+        inactive_line: "洞壁晶尘有一块发黑，像在等水月洞天石牌上的委托。",
+        active_line: "你把冷斑上的妖尘拂入符纸，晶路亮回半寸月光。",
+        repeat_line: "这块晶尘已经澄清，只剩水光贴着石壁慢慢流动。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::MoonEchoCorridor,
+        col: 16,
+        row: 14,
+        side: SideQuest::MoonCaveEchoes,
+        name: "二重回声",
+        path: "props/ai_spirit_lantern.png",
+        size: 34.0,
+        light: [0.58, 0.78, 1.0, 0.24],
+        source: "二重回声已压",
+        inactive_line: "窄廊尽头回声叠成两层，像是后续委托才会处理的妖影。",
+        active_line: "你按住灯火念诀，第二层回声沉进石缝，不再追着脚步走。",
+        repeat_line: "窄廊里只剩一层正常回音，灯火照到尽头也不再发抖。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::RiverReedBed,
+        col: 6,
+        row: 5,
+        side: SideQuest::RiverLanterns,
+        name: "逆流灯影",
+        path: "props/ai_spirit_lantern.png",
+        size: 34.0,
+        light: [0.48, 0.86, 1.0, 0.26],
+        source: "逆流灯影已巡",
+        inactive_line: "芦叶间有灯影逆水摇晃，像码头任务板上的巡夜线索。",
+        active_line: "你顺着灯影把系绳重新压进浅滩，逆流的光慢慢转回下游。",
+        repeat_line: "这盏灯影已经顺流，芦叶间不再有倒走的水光。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::RiverReedBed,
+        col: 12,
+        row: 10,
+        side: SideQuest::RiverCargo,
+        name: "湿货草印",
+        path: "props/ai_chest.png",
+        size: 34.0,
+        light: [0.66, 0.88, 1.0, 0.18],
+        source: "湿货草印已记",
+        inactive_line: "草滩上压着湿麻绳和箱角印，像货主丢失的湿货线索。",
+        active_line: "你把箱角印拓在委托签背面，妖风拖货的方向清楚了。",
+        repeat_line: "湿货草印已经拓下，水线旁只剩被踩平的芦草。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::PlagueVillage,
+        col: 5,
+        row: 8,
+        side: SideQuest::PlagueRelief,
+        name: "瘴草黑结",
+        path: "props/ai_spring.png",
+        size: 32.0,
+        light: [0.46, 0.84, 0.44, 0.22],
+        source: "瘴草黑结已清",
+        inactive_line: "黑雨草地结着瘴疙瘩，像村中救急榜会记下的病源。",
+        active_line: "你用净草压住黑结，瘴雨从草根处断开一小片。",
+        repeat_line: "这片黑结已经被净草压住，雨落下来不再冒出腥气。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::PlagueShrinePath,
+        col: 9,
+        row: 10,
+        side: SideQuest::PlagueMedicine,
+        name: "药童铃路",
+        path: "props/ai_spirit_lantern.png",
+        size: 34.0,
+        light: [0.58, 0.94, 0.56, 0.24],
+        source: "药童铃路已护",
+        inactive_line: "祠道草间挂着小铃，像送药童子会走过的瘴路。",
+        active_line: "你把小铃重新系牢，铃声顺着药路响了一段，瘴影退开。",
+        repeat_line: "小铃还在药路边轻响，药童下次经过会知道往哪边走。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::Capital,
+        col: 5,
+        row: 5,
+        side: SideQuest::CapitalPatrol,
+        name: "暗巷镜脚",
+        path: "props/ai_cave_crystal.png",
+        size: 32.0,
+        light: [0.64, 0.72, 1.0, 0.22],
+        source: "暗巷镜脚已辨",
+        inactive_line: "府城暗巷墙根映着半个脚印，像镜阵幻影巡过这里。",
+        active_line: "你用剑鞘点破镜脚，暗巷里少了一道会绕人的假影。",
+        repeat_line: "墙根镜脚已经碎成粉，巡查暗号也不再反光。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::MansionMirrorGallery,
+        col: 11,
+        row: 10,
+        side: SideQuest::CapitalRumors,
+        name: "茶肆暗帖",
+        path: "props/ai_chest.png",
+        size: 32.0,
+        light: [0.72, 0.74, 1.0, 0.18],
+        source: "茶肆暗帖已截",
+        inactive_line: "镜廊边压着半张茶肆暗帖，像府城暗线要追的东西。",
+        active_line: "你取下暗帖，帖角显出镜阵传手的花押。",
+        repeat_line: "暗帖已经收起，镜廊墙根只剩一点烧过的纸灰。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::SouthernRoad,
+        col: 8,
+        row: 7,
+        side: SideQuest::SouthernThunder,
+        name: "雷草焦纹",
+        path: "props/ai_cave_crystal.png",
+        size: 34.0,
+        light: [0.62, 0.94, 1.0, 0.26],
+        source: "雷草焦纹已安",
+        inactive_line: "雷草坡边焦纹乱跳，像百越巡路人说的灵道雷声。",
+        active_line: "你按南疆步点踏住焦纹，乱雷往石缝里缩回一截。",
+        repeat_line: "焦纹已经顺着石缝排好，雷草坡不再乱闪。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::ThunderDrumPath,
+        col: 9,
+        row: 10,
+        side: SideQuest::SouthernDrums,
+        name: "旧鼓低鸣",
+        path: "props/ai_spirit_lantern.png",
+        size: 34.0,
+        light: [0.70, 0.92, 1.0, 0.28],
+        source: "旧鼓低鸣已平",
+        inactive_line: "雷鼓道深处有低鼓声贴地滚动，像后续战鼓安魂委托。",
+        active_line: "你把灵灯压在鼓声起处，低鸣断成三拍后沉入山风。",
+        repeat_line: "这段低鼓声已经平下去，只剩远处雷云慢慢散开。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::DreamWaterway,
+        col: 16,
+        row: 7,
+        side: SideQuest::FinalDreamEchoes,
+        name: "旧梦水影",
+        path: "props/ai_cave_crystal.png",
+        size: 34.0,
+        light: [0.54, 0.72, 1.0, 0.26],
+        source: "旧梦水影已压",
+        inactive_line: "梦水里有一截倒影迟迟不散，像终门灯簿上的余波。",
+        active_line: "你用灯火压住倒影，旧梦水影从水阶下退开。",
+        repeat_line: "这截倒影已经淡了，梦水只映出归路灯色。",
+    },
+    CommissionTraceDef {
+        kind: MapKind::DreamWaterway,
+        col: 22,
+        row: 11,
+        side: SideQuest::FinalHomewardVows,
+        name: "归潮灯签",
+        path: "props/ai_spirit_lantern.png",
+        size: 34.0,
+        light: [0.88, 0.72, 1.0, 0.28],
+        source: "归潮灯签已护",
+        inactive_line: "回湾水面托着一枚灯签，像旧愿还没肯离水。",
+        active_line: "你扶正灯签，回潮从签尾分开，归路灯色稳住一段。",
+        repeat_line: "灯签已经顺着回潮亮着，旧愿不再把水面拽回去。",
+    },
+];
 
 const PROPS_VILLAGE: [PropDef; 4] = [
     PropDef {
@@ -2312,7 +3178,7 @@ const PROPS_RIVER_TOWN: [PropDef; 5] = [
     },
 ];
 
-const PROPS_RIVER_REED_BED: [PropDef; 6] = [
+const PROPS_RIVER_REED_BED: [PropDef; 7] = [
     PropDef {
         col: 9,
         row: 2,
@@ -2354,6 +3220,13 @@ const PROPS_RIVER_REED_BED: [PropDef; 6] = [
         path: "props/ai_bamboo_gate.png",
         size: 56.0,
         light: [0.52, 0.92, 0.55, 0.18],
+    },
+    PropDef {
+        col: 13,
+        row: 10,
+        path: "props/ai_cave_crystal.png",
+        size: 38.0,
+        light: [0.44, 0.88, 1.0, 0.22],
     },
 ];
 
@@ -2509,7 +3382,7 @@ const PROPS_CAPITAL_MANSION: [PropDef; 5] = [
     },
 ];
 
-const PROPS_MANSION_MIRROR_GALLERY: [PropDef; 5] = [
+const PROPS_MANSION_MIRROR_GALLERY: [PropDef; 6] = [
     PropDef {
         col: 26,
         row: 1,
@@ -2544,6 +3417,13 @@ const PROPS_MANSION_MIRROR_GALLERY: [PropDef; 5] = [
         path: "props/ai_spirit_lantern.png",
         size: 38.0,
         light: [1.0, 0.70, 0.28, 0.26],
+    },
+    PropDef {
+        col: 6,
+        row: 13,
+        path: "props/ai_bamboo_gate.png",
+        size: 52.0,
+        light: [0.58, 0.76, 1.0, 0.18],
     },
 ];
 
@@ -2623,13 +3503,20 @@ const PROPS_THUNDER_DRUM_PATH: [PropDef; 5] = [
     },
 ];
 
-const PROPS_FINAL_SANCTUM: [PropDef; 4] = [
+const PROPS_FINAL_SANCTUM: [PropDef; 5] = [
     PropDef {
         col: 26,
         row: 1,
         path: "props/ai_cave_crystal.png",
         size: 44.0,
         light: [0.42, 0.82, 1.0, 0.28],
+    },
+    PropDef {
+        col: 3,
+        row: 4,
+        path: "props/ai_quest_board.png",
+        size: 46.0,
+        light: [0.72, 0.86, 1.0, 0.18],
     },
     PropDef {
         col: 8,
@@ -2712,6 +3599,18 @@ fn prop_defs(kind: MapKind) -> &'static [PropDef] {
     }
 }
 
+fn field_supply_defs(kind: MapKind) -> impl Iterator<Item = &'static FieldSupplyDef> {
+    FIELD_SUPPLY_DEFS
+        .iter()
+        .filter(move |supply| supply.kind == kind)
+}
+
+fn commission_trace_defs(kind: MapKind) -> impl Iterator<Item = &'static CommissionTraceDef> {
+    COMMISSION_TRACE_DEFS
+        .iter()
+        .filter(move |trace| trace.kind == kind)
+}
+
 const SIDE_QUESTS_VILLAGE: [SideQuest; 2] = [SideQuest::VillageTrail, SideQuest::VillageHerbs];
 const SIDE_QUESTS_CAVE: [SideQuest; 2] = [SideQuest::MoonCaveCrystals, SideQuest::MoonCaveEchoes];
 const SIDE_QUESTS_RIVER_TOWN: [SideQuest; 2] = [SideQuest::RiverLanterns, SideQuest::RiverCargo];
@@ -2720,12 +3619,48 @@ const SIDE_QUESTS_PLAGUE_VILLAGE: [SideQuest; 2] =
 const SIDE_QUESTS_CAPITAL: [SideQuest; 2] = [SideQuest::CapitalPatrol, SideQuest::CapitalRumors];
 const SIDE_QUESTS_SOUTHERN_ROAD: [SideQuest; 2] =
     [SideQuest::SouthernThunder, SideQuest::SouthernDrums];
+const SIDE_QUESTS_FINAL_SANCTUM: [SideQuest; 2] =
+    [SideQuest::FinalDreamEchoes, SideQuest::FinalHomewardVows];
+const ALL_LOCAL_SIDE_QUESTS: [SideQuest; 14] = [
+    SideQuest::VillageTrail,
+    SideQuest::VillageHerbs,
+    SideQuest::MoonCaveCrystals,
+    SideQuest::MoonCaveEchoes,
+    SideQuest::RiverLanterns,
+    SideQuest::RiverCargo,
+    SideQuest::PlagueRelief,
+    SideQuest::PlagueMedicine,
+    SideQuest::CapitalPatrol,
+    SideQuest::CapitalRumors,
+    SideQuest::SouthernThunder,
+    SideQuest::SouthernDrums,
+    SideQuest::FinalDreamEchoes,
+    SideQuest::FinalHomewardVows,
+];
 const MAX_SIDE_BOARD_OPTIONS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SideBoardTaskOption {
     side: SideQuest,
     status: SideBoardTaskStatus,
+    progress: u32,
+    goal: u32,
+    receipt_id: &'static str,
+}
+
+struct SideQuestContactHandoff {
+    lines: Vec<String>,
+    choice: Option<DialogueChoice>,
+}
+
+struct NpcErrandHandoff {
+    lines: Vec<String>,
+    choice: Option<DialogueChoice>,
+}
+
+struct CompanionRevisitHandoff {
+    lines: Vec<String>,
+    choice: Option<DialogueChoice>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2733,6 +3668,7 @@ enum SideBoardTaskStatus {
     Ready,
     Active,
     Available,
+    Locked,
     Completed,
 }
 
@@ -2742,8 +3678,32 @@ impl SideBoardTaskStatus {
             Self::Ready => "可交付",
             Self::Active => "进行中",
             Self::Available => "可领取",
+            Self::Locked => "后续",
             Self::Completed => "已完成",
         }
+    }
+
+    fn action_label(self) -> &'static str {
+        match self {
+            Self::Ready => "交付领奖",
+            Self::Active => "查看进度",
+            Self::Available => "领取追踪",
+            Self::Locked => "查看后续",
+            Self::Completed => "查看归档",
+        }
+    }
+}
+
+impl SideBoardTaskOption {
+    fn option_label(self) -> String {
+        format!(
+            "{} · {} {}/{} · {}",
+            self.status.action_label(),
+            self.side.name(),
+            self.progress,
+            self.goal,
+            self.receipt_id
+        )
     }
 }
 
@@ -2763,6 +3723,7 @@ fn side_quests_for_map(kind: MapKind) -> &'static [SideQuest] {
         MapKind::PlagueVillage => &SIDE_QUESTS_PLAGUE_VILLAGE,
         MapKind::Capital => &SIDE_QUESTS_CAPITAL,
         MapKind::SouthernRoad => &SIDE_QUESTS_SOUTHERN_ROAD,
+        MapKind::FinalSanctum => &SIDE_QUESTS_FINAL_SANCTUM,
         MapKind::Bamboo
         | MapKind::MoonEchoCorridor
         | MapKind::RiverReedBed
@@ -2770,9 +3731,422 @@ fn side_quests_for_map(kind: MapKind) -> &'static [SideQuest] {
         | MapKind::CapitalMansion
         | MapKind::MansionMirrorGallery
         | MapKind::ThunderDrumPath
-        | MapKind::FinalSanctum
         | MapKind::DreamWaterway => &[],
     }
+}
+
+fn is_side_quest_contact(kind: MapKind, npc: &NpcDef) -> bool {
+    if npc.quest.is_some() {
+        return false;
+    }
+
+    matches!(
+        (kind, npc.col, npc.row),
+        (MapKind::Village, 6, 7)
+            | (MapKind::Cave, 24, 12)
+            | (MapKind::RiverTown, 25, 1)
+            | (MapKind::PlagueVillage, 25, 1)
+            | (MapKind::Capital, 13, 6)
+            | (MapKind::SouthernRoad, 11, 13)
+            | (MapKind::FinalSanctum, 5, 12)
+    )
+}
+
+fn npc_speaker_name(npc: &NpcDef) -> &'static str {
+    npc.lines
+        .iter()
+        .filter_map(|line| line.split_once('：').map(|(speaker, _)| speaker))
+        .find(|speaker| !speaker.is_empty() && *speaker != "李逍遥")
+        .filter(|speaker| !speaker.is_empty())
+        .unwrap_or("当地人")
+}
+
+fn side_quest_contact_focus(kind: MapKind, quest: &QuestLog) -> Option<SideBoardTaskOption> {
+    side_board_task_options(kind, quest)
+        .into_iter()
+        .flatten()
+        .find(|option| option.status != SideBoardTaskStatus::Completed)
+}
+
+fn npc_side_quest_contact_prompt(kind: MapKind, npc: &NpcDef, quest: &QuestLog) -> Option<String> {
+    if !is_side_quest_contact(kind, npc) {
+        return None;
+    }
+
+    let focus = side_quest_contact_focus(kind, quest)?;
+    let action = match focus.status {
+        SideBoardTaskStatus::Ready => "交付",
+        SideBoardTaskStatus::Active => "询问",
+        SideBoardTaskStatus::Available => "领取",
+        SideBoardTaskStatus::Locked => "打听",
+        SideBoardTaskStatus::Completed => "查看",
+    };
+    Some(format!(
+        "委托联系人 {} | {}[{}] | 空格{}",
+        npc_speaker_name(npc),
+        focus.side.name(),
+        focus.status.label(),
+        action
+    ))
+}
+
+fn npc_side_quest_handoff(
+    kind: MapKind,
+    npc: &NpcDef,
+    quest: &QuestLog,
+) -> Option<SideQuestContactHandoff> {
+    if !is_side_quest_contact(kind, npc) {
+        return None;
+    }
+
+    let focus = side_quest_contact_focus(kind, quest)?;
+    let speaker = npc_speaker_name(npc);
+    let side = focus.side;
+    let mut lines = vec![format!(
+        "【委托联系人】{}把《{}》指给你。",
+        speaker,
+        side.name()
+    )];
+
+    let choice = match focus.status {
+        SideBoardTaskStatus::Ready => {
+            lines.push(quest.side_task_detail(side));
+            lines.push(quest.side_task_contract(side));
+            lines.push(format!(
+                "【催交】{}确认条件已够，可以当场替任务板登记交付裁断。",
+                speaker
+            ));
+            side_quest_choice_for(quest, side)
+        }
+        SideBoardTaskStatus::Available => {
+            lines.push(format!(
+                "【领委托】{}说明委托不只是贴在板上，也能由当地人作保写入任务簿。",
+                speaker
+            ));
+            lines.extend(quest.side_task_accept_preview(side));
+            side_quest_choice_for(quest, side)
+        }
+        SideBoardTaskStatus::Active => {
+            let progress = quest
+                .side_quest_progress(side)
+                .min(quest.side_quest_goal(side));
+            lines.push(format!(
+                "【委托在身】{}核对《{}》进度 {}/{}。",
+                speaker,
+                side.name(),
+                progress,
+                quest.side_quest_goal(side)
+            ));
+            lines.push(quest.side_task_contract(side));
+            lines.push(format!("【路线线索】{}", quest.side_quest_route_hint(side)));
+            lines.push(quest.side_task_summary(side));
+            None
+        }
+        SideBoardTaskStatus::Locked => {
+            if let Some(required) = side.prerequisite() {
+                lines.push(format!(
+                    "【后续委托】{}说《{}》还不能揭，需先交清《{}》。",
+                    speaker,
+                    side.name(),
+                    required.name()
+                ));
+            }
+            lines.push(quest.side_task_contract(side));
+            lines.push(quest.side_task_summary(side));
+            None
+        }
+        SideBoardTaskStatus::Completed => None,
+    };
+
+    Some(SideQuestContactHandoff { lines, choice })
+}
+
+fn npc_errand_offer_for(kind: MapKind, npc: &NpcDef) -> Option<NpcErrand> {
+    if npc.quest.is_some() {
+        return None;
+    }
+
+    match (kind, npc.col, npc.row) {
+        (MapKind::Bamboo, 5, 6) => Some(NpcErrand::BambooDewToCave),
+        (MapKind::MoonEchoCorridor, 12, 13) => Some(NpcErrand::MoonMossToRiver),
+        (MapKind::RiverTown, 13, 6) => Some(NpcErrand::RiverReedLetter),
+        (MapKind::PlagueVillage, 27, 7) => Some(NpcErrand::PlagueChildCharm),
+        (MapKind::Capital, 13, 6) => Some(NpcErrand::CapitalStarSlip),
+        (MapKind::MansionMirrorGallery, 27, 7) => Some(NpcErrand::MirrorMedicineToSouth),
+        (MapKind::SouthernRoad, 27, 7) => Some(NpcErrand::SouthernThunderWine),
+        (MapKind::FinalSanctum, 27, 7) => Some(NpcErrand::FinalLampWick),
+        _ => None,
+    }
+}
+
+fn npc_errand_delivery_for(kind: MapKind, npc: &NpcDef) -> Option<NpcErrand> {
+    if npc.quest.is_some() {
+        return None;
+    }
+
+    match (kind, npc.col, npc.row) {
+        (MapKind::Cave, 24, 12) => Some(NpcErrand::BambooDewToCave),
+        (MapKind::RiverTown, 25, 1) => Some(NpcErrand::MoonMossToRiver),
+        (MapKind::RiverReedBed, 3, 3) => Some(NpcErrand::RiverReedLetter),
+        (MapKind::PlagueShrinePath, 13, 5) => Some(NpcErrand::PlagueChildCharm),
+        (MapKind::MansionMirrorGallery, 13, 6) => Some(NpcErrand::CapitalStarSlip),
+        (MapKind::SouthernRoad, 5, 10) => Some(NpcErrand::MirrorMedicineToSouth),
+        (MapKind::ThunderDrumPath, 27, 7) => Some(NpcErrand::SouthernThunderWine),
+        (MapKind::DreamWaterway, 13, 6) => Some(NpcErrand::FinalLampWick),
+        _ => None,
+    }
+}
+
+fn npc_errand_facing_prompt(kind: MapKind, pos: &PlayerPos, quest: &QuestLog) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    let npc = npc_defs(kind)
+        .iter()
+        .find(|npc| npc.col == tc && npc.row == tr)?;
+
+    if let Some(errand) = npc_errand_delivery_for(kind, npc) {
+        if quest.is_npc_errand_active(errand) {
+            return Some(format!(
+                "NPC托付 {} [{}] | 空格交付\n{}",
+                errand.name(),
+                quest.npc_errand_progress_label(errand),
+                quest.npc_errand_contract(errand)
+            ));
+        }
+        if quest.is_npc_errand_completed(errand) {
+            return Some(format!(
+                "NPC托付 {} [已送达] | 空格查看\n{}",
+                errand.name(),
+                quest.npc_errand_summary()
+            ));
+        }
+    }
+
+    let errand = npc_errand_offer_for(kind, npc)?;
+    if quest.is_npc_errand_available(errand) {
+        Some(format!(
+            "NPC托付 {} [可托付] | 空格领取\n{}",
+            errand.name(),
+            quest.npc_errand_contract(errand)
+        ))
+    } else if quest.is_npc_errand_active(errand) {
+        Some(format!(
+            "NPC托付 {} [进行中] | 空格查看\n{}",
+            errand.name(),
+            quest.npc_errand_contract(errand)
+        ))
+    } else if quest.is_npc_errand_completed(errand) {
+        Some(format!(
+            "NPC托付 {} [已送达] | 空格查看\n{}",
+            errand.name(),
+            quest.npc_errand_summary()
+        ))
+    } else {
+        None
+    }
+}
+
+fn npc_errand_handoff(kind: MapKind, npc: &NpcDef, quest: &QuestLog) -> Option<NpcErrandHandoff> {
+    if let Some(errand) = npc_errand_delivery_for(kind, npc) {
+        if quest.is_npc_errand_active(errand) {
+            return Some(NpcErrandHandoff {
+                lines: vec![
+                    format!(
+                        "【NPC托付】{}认出你带来的《{}》。",
+                        npc_speaker_name(npc),
+                        errand.name()
+                    ),
+                    quest.npc_errand_contract(errand),
+                    "确认交付后会结算托付回礼。".to_string(),
+                ],
+                choice: Some(DialogueChoice::npc_errand(
+                    errand,
+                    NpcErrandChoiceAction::TurnIn,
+                )),
+            });
+        }
+        if quest.is_npc_errand_completed(errand) {
+            return Some(NpcErrandHandoff {
+                lines: vec![
+                    format!("【NPC托付】《{}》已经送达。", errand.name()),
+                    quest.npc_errand_summary(),
+                ],
+                choice: None,
+            });
+        }
+    }
+
+    let errand = npc_errand_offer_for(kind, npc)?;
+    if quest.is_npc_errand_available(errand) {
+        return Some(NpcErrandHandoff {
+            lines: quest.npc_errand_accept_preview(errand),
+            choice: Some(DialogueChoice::npc_errand(
+                errand,
+                NpcErrandChoiceAction::Accept,
+            )),
+        });
+    }
+
+    if quest.is_npc_errand_active(errand) {
+        return Some(NpcErrandHandoff {
+            lines: vec![
+                format!("【NPC托付】《{}》已经在任务簿。", errand.name()),
+                quest.npc_errand_contract(errand),
+                quest.npc_errand_summary(),
+            ],
+            choice: None,
+        });
+    }
+
+    if quest.is_npc_errand_completed(errand) {
+        return Some(NpcErrandHandoff {
+            lines: vec![
+                format!("【NPC托付】《{}》已经送达。", errand.name()),
+                quest.npc_errand_summary(),
+            ],
+            choice: None,
+        });
+    }
+
+    None
+}
+
+fn npc_companion_revisit_for(kind: MapKind, npc: &NpcDef) -> Option<CompanionRevisit> {
+    if npc.quest.is_some() {
+        return None;
+    }
+
+    match (kind, npc.col, npc.row) {
+        (MapKind::PlagueVillage, 5, 12) => Some(CompanionRevisit::TrailEcho),
+        (MapKind::SouthernRoad, 25, 14) => Some(CompanionRevisit::MirrorTrace),
+        (MapKind::FinalSanctum, 24, 1) => Some(CompanionRevisit::TotemVow),
+        _ => None,
+    }
+}
+
+fn companion_revisit_giver_map(revisit: CompanionRevisit) -> MapKind {
+    match revisit {
+        CompanionRevisit::TrailEcho => MapKind::PlagueVillage,
+        CompanionRevisit::MirrorTrace => MapKind::SouthernRoad,
+        CompanionRevisit::TotemVow => MapKind::FinalSanctum,
+    }
+}
+
+fn companion_revisit_target_map(revisit: CompanionRevisit) -> MapKind {
+    match revisit {
+        CompanionRevisit::TrailEcho => MapKind::PlagueShrinePath,
+        CompanionRevisit::MirrorTrace => MapKind::ThunderDrumPath,
+        CompanionRevisit::TotemVow => MapKind::DreamWaterway,
+    }
+}
+
+fn npc_companion_revisit_facing_prompt(
+    kind: MapKind,
+    pos: &PlayerPos,
+    quest: &QuestLog,
+) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    let npc = npc_defs(kind)
+        .iter()
+        .find(|npc| npc.col == tc && npc.row == tr)?;
+    let revisit = npc_companion_revisit_for(kind, npc)?;
+    if quest.companion_revisit_completed(revisit)
+        || (!quest.companion_revisit_available(revisit)
+            && !quest.companion_revisit_active(revisit)
+            && !quest.companion_revisit_ready(revisit))
+    {
+        return None;
+    }
+
+    let action = if quest.companion_revisit_ready(revisit) {
+        "交付"
+    } else if quest.companion_revisit_active(revisit) {
+        "查看"
+    } else {
+        "领取"
+    };
+    Some(format!(
+        "同伴补访 {} [{}] | 空格{}\n{}",
+        revisit.name(),
+        quest.companion_revisit_status(revisit),
+        action,
+        quest.companion_revisit_contract(revisit)
+    ))
+}
+
+fn npc_companion_revisit_handoff(
+    kind: MapKind,
+    npc: &NpcDef,
+    quest: &QuestLog,
+) -> Option<CompanionRevisitHandoff> {
+    let revisit = npc_companion_revisit_for(kind, npc)?;
+    if quest.companion_revisit_available(revisit) {
+        return Some(CompanionRevisitHandoff {
+            lines: quest.companion_revisit_accept_preview(revisit),
+            choice: Some(DialogueChoice::companion_revisit(
+                revisit,
+                CompanionRevisitChoiceAction::Accept,
+            )),
+        });
+    }
+    if quest.companion_revisit_active(revisit) {
+        return Some(CompanionRevisitHandoff {
+            lines: vec![
+                format!("【同伴补访】《{}》仍在寻访中。", revisit.name()),
+                quest.companion_revisit_contract(revisit),
+                quest.companion_revisit_summary(),
+            ],
+            choice: None,
+        });
+    }
+    if quest.companion_revisit_ready(revisit) {
+        return Some(CompanionRevisitHandoff {
+            lines: vec![
+                format!("【补访待交】{}看见你带回的旧物回声。", revisit.issuer()),
+                quest.companion_revisit_contract(revisit),
+                "确认交付后会归档迟来小传并结算回礼。".to_string(),
+            ],
+            choice: Some(DialogueChoice::companion_revisit(
+                revisit,
+                CompanionRevisitChoiceAction::TurnIn,
+            )),
+        });
+    }
+
+    None
+}
+
+fn local_companion_revisit_intake_tracker(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let revisit = npc_defs(kind)
+        .iter()
+        .filter_map(|npc| npc_companion_revisit_for(kind, npc))
+        .find(|revisit| quest.companion_revisit_available(*revisit))?;
+    Some(format!(
+        "本地补访 · {} [可领取]\n补访签：{} · 交托：{}\n旧事：{}\n现场：{}\n领取：面对交托 NPC 按空格",
+        revisit.name(),
+        revisit.receipt_id(),
+        revisit.issuer(),
+        revisit.scene().title(),
+        revisit.target_place()
+    ))
+}
+
+fn local_npc_errand_intake_tracker(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let errand = npc_defs(kind)
+        .iter()
+        .filter_map(|npc| npc_errand_offer_for(kind, npc))
+        .find(|errand| quest.is_npc_errand_available(*errand))?;
+
+    Some(format!(
+        "本地托付 · {} [可托付]\n托付签：{} · {} -> {}\n目标：{}\n路线：{}\n领取：面对托付 NPC 按空格",
+        errand.name(),
+        quest.npc_errand_receipt_id(errand),
+        quest.npc_errand_issuer(errand),
+        quest.npc_errand_receiver(errand),
+        quest.npc_errand_objective(errand),
+        compact_hud_text(quest.npc_errand_route_hint(errand), 42),
+    ))
 }
 
 fn current_side_quest(sides: &[SideQuest], quest: &QuestLog) -> Option<SideQuest> {
@@ -2815,6 +4189,119 @@ fn local_favor_unlocked(kind: MapKind, quest: &QuestLog) -> bool {
     !sides.is_empty() && side_board_completed_count(sides, quest) == sides.len()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SideQuestRouteReliefState {
+    NoRoute,
+    Partial,
+    Cleared,
+}
+
+fn side_quest_route_relief_sides(kind: MapKind) -> &'static [SideQuest] {
+    match kind {
+        MapKind::Village | MapKind::Bamboo => &SIDE_QUESTS_VILLAGE,
+        MapKind::Cave | MapKind::MoonEchoCorridor => &SIDE_QUESTS_CAVE,
+        MapKind::RiverTown | MapKind::RiverReedBed => &SIDE_QUESTS_RIVER_TOWN,
+        MapKind::PlagueVillage | MapKind::PlagueShrinePath => &SIDE_QUESTS_PLAGUE_VILLAGE,
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+            &SIDE_QUESTS_CAPITAL
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => &SIDE_QUESTS_SOUTHERN_ROAD,
+        MapKind::FinalSanctum | MapKind::DreamWaterway => &SIDE_QUESTS_FINAL_SANCTUM,
+    }
+}
+
+fn side_quest_route_relief_state(kind: MapKind, quest: &QuestLog) -> SideQuestRouteReliefState {
+    let sides = side_quest_route_relief_sides(kind);
+    let completed = side_board_completed_count(sides, quest);
+    if completed == 0 {
+        SideQuestRouteReliefState::NoRoute
+    } else if completed == sides.len() {
+        SideQuestRouteReliefState::Cleared
+    } else {
+        SideQuestRouteReliefState::Partial
+    }
+}
+
+fn side_quest_route_pursuit_count(kind: MapKind, quest: &QuestLog) -> usize {
+    side_quest_route_relief_sides(kind)
+        .iter()
+        .copied()
+        .filter(|side| quest.side_quest_resolution(*side) == Some(SideQuestResolution::Pursue))
+        .count()
+}
+
+fn side_quest_route_field_count(
+    kind: MapKind,
+    quest: &QuestLog,
+    approach: SideQuestFieldApproach,
+) -> usize {
+    side_quest_route_relief_sides(kind)
+        .iter()
+        .copied()
+        .filter(|side| quest.is_side_quest_completed(*side))
+        .filter(|side| quest.side_quest_field_approach(*side) == Some(approach))
+        .count()
+}
+
+fn side_quest_route_field_tail(kind: MapKind, quest: &QuestLog) -> String {
+    let investigated =
+        side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Investigate);
+    let confronted = side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Confront);
+    let mut parts = Vec::new();
+    if investigated > 0 {
+        parts.push(format!("细查{investigated}"));
+    }
+    if confronted > 0 {
+        parts.push(format!("快断{confronted}"));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", parts.join(" · "))
+    }
+}
+
+fn side_quest_route_field_bonus_count(kind: MapKind, quest: &QuestLog) -> usize {
+    side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Investigate)
+        + side_quest_route_field_count(kind, quest, SideQuestFieldApproach::Confront)
+}
+
+fn side_quest_route_relief_multiplier(kind: MapKind, quest: &QuestLog) -> f32 {
+    let base = match side_quest_route_relief_state(kind, quest) {
+        SideQuestRouteReliefState::NoRoute => 1.0,
+        SideQuestRouteReliefState::Partial => 0.97,
+        SideQuestRouteReliefState::Cleared => 0.90,
+    };
+    let pursuit_bonus = side_quest_route_pursuit_count(kind, quest) as f32 * 0.02;
+    let field_bonus = side_quest_route_field_bonus_count(kind, quest) as f32 * 0.01;
+    (base - pursuit_bonus - field_bonus).max(0.82)
+}
+
+fn side_quest_route_relief_summary(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let pursuit = side_quest_route_pursuit_count(kind, quest);
+    let pursuit_tail = if pursuit > 0 {
+        format!(" · 追查{pursuit}")
+    } else {
+        String::new()
+    };
+    let field_count = side_quest_route_field_bonus_count(kind, quest);
+    let field_tail = side_quest_route_field_tail(kind, quest);
+    let tail = format!("{pursuit_tail}{field_tail}");
+    match side_quest_route_relief_state(kind, quest) {
+        SideQuestRouteReliefState::NoRoute => None,
+        SideQuestRouteReliefState::Partial => Some(format!(
+            "委托清障 半稳 遇妖-{}%{}",
+            3 + pursuit * 2 + field_count,
+            tail
+        )),
+        SideQuestRouteReliefState::Cleared => Some(format!(
+            "委托清障 已清 遇妖-{}%{}",
+            10 + pursuit * 2 + field_count,
+            tail
+        )),
+    }
+}
+
 fn side_board_task_status(quest: &QuestLog, side: SideQuest) -> SideBoardTaskStatus {
     if quest.is_side_quest_completed(side) {
         SideBoardTaskStatus::Completed
@@ -2824,6 +4311,8 @@ fn side_board_task_status(quest: &QuestLog, side: SideQuest) -> SideBoardTaskSta
         } else {
             SideBoardTaskStatus::Active
         }
+    } else if !quest.is_side_quest_unlocked(side) {
+        SideBoardTaskStatus::Locked
     } else {
         SideBoardTaskStatus::Available
     }
@@ -2834,7 +4323,8 @@ fn side_board_status_priority(status: SideBoardTaskStatus) -> usize {
         SideBoardTaskStatus::Ready => 0,
         SideBoardTaskStatus::Active => 1,
         SideBoardTaskStatus::Available => 2,
-        SideBoardTaskStatus::Completed => 3,
+        SideBoardTaskStatus::Locked => 3,
+        SideBoardTaskStatus::Completed => 4,
     }
 }
 
@@ -2845,9 +4335,21 @@ fn side_board_task_options(
     let mut ordered: Vec<SideBoardTaskOption> = side_quests_for_map(kind)
         .iter()
         .copied()
-        .map(|side| SideBoardTaskOption {
-            side,
-            status: side_board_task_status(quest, side),
+        .map(|side| {
+            let progress = if quest.is_side_quest_completed(side) {
+                quest.side_quest_goal(side)
+            } else {
+                quest
+                    .side_quest_progress(side)
+                    .min(quest.side_quest_goal(side))
+            };
+            SideBoardTaskOption {
+                side,
+                status: side_board_task_status(quest, side),
+                progress,
+                goal: quest.side_quest_goal(side),
+                receipt_id: quest.side_quest_receipt_id(side),
+            }
         })
         .collect();
     ordered.sort_by_key(|option| side_board_status_priority(option.status));
@@ -2890,6 +4392,316 @@ fn side_board_summary(kind: MapKind, quest: &QuestLog) -> String {
     )
 }
 
+fn side_quest_target_matches_map(side: SideQuest, kind: MapKind) -> bool {
+    match side {
+        SideQuest::VillageTrail => matches!(kind, MapKind::Village | MapKind::Bamboo),
+        SideQuest::VillageHerbs => kind == MapKind::Village,
+        SideQuest::MoonCaveCrystals => kind == MapKind::Cave,
+        SideQuest::MoonCaveEchoes => matches!(kind, MapKind::Cave | MapKind::MoonEchoCorridor),
+        SideQuest::RiverLanterns | SideQuest::RiverCargo => kind == MapKind::RiverReedBed,
+        SideQuest::PlagueRelief => kind == MapKind::PlagueVillage,
+        SideQuest::PlagueMedicine => {
+            matches!(kind, MapKind::PlagueVillage | MapKind::PlagueShrinePath)
+        }
+        SideQuest::CapitalPatrol => matches!(kind, MapKind::Capital | MapKind::CapitalMansion),
+        SideQuest::CapitalRumors => matches!(
+            kind,
+            MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery
+        ),
+        SideQuest::SouthernThunder => {
+            matches!(kind, MapKind::SouthernRoad | MapKind::ThunderDrumPath)
+        }
+        SideQuest::SouthernDrums => kind == MapKind::ThunderDrumPath,
+        SideQuest::FinalDreamEchoes | SideQuest::FinalHomewardVows => {
+            matches!(kind, MapKind::FinalSanctum | MapKind::DreamWaterway)
+        }
+    }
+}
+
+fn side_quest_turn_in_matches_map(side: SideQuest, kind: MapKind) -> bool {
+    side_quests_for_map(kind).contains(&side)
+}
+
+fn active_area_side_task_summary(kind: MapKind, quest: &QuestLog) -> String {
+    let Some(side) = ALL_LOCAL_SIDE_QUESTS.iter().copied().find(|side| {
+        quest.is_side_quest_active(*side)
+            && !quest.is_side_quest_completed(*side)
+            && side_quest_target_matches_map(*side, kind)
+    }) else {
+        return "当前委托区 无".to_string();
+    };
+
+    let progress = quest
+        .side_quest_progress(side)
+        .min(quest.side_quest_goal(side));
+    let status = if progress >= quest.side_quest_goal(side) {
+        "可交付"
+    } else {
+        "进行中"
+    };
+
+    format!(
+        "当前委托区 {} [{}] {}/{} · {}\n现场：{}",
+        quest.side_quest_name(side),
+        status,
+        progress,
+        quest.side_quest_goal(side),
+        quest.side_quest_route_hint(side),
+        quest.side_task_field_status(side)
+    )
+}
+
+fn local_task_intake_tracker(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    if quest.active_side_task_tracker().is_some() {
+        return None;
+    }
+
+    let option = side_board_task_options(kind, quest)
+        .into_iter()
+        .flatten()
+        .find(|option| {
+            matches!(
+                option.status,
+                SideBoardTaskStatus::Available | SideBoardTaskStatus::Locked
+            )
+        })?;
+    let side = option.side;
+
+    match option.status {
+        SideBoardTaskStatus::Available => Some(format!(
+            "本地可领 · {} [可领取]\n签号：{} · {}\n{}\n第一步：{}\n现场：{}\n路线：{}\n领取：面对委托板/联系人按空格",
+            side.name(),
+            option.receipt_id,
+            quest.side_quest_issuer(side),
+            compact_hud_text(&quest.side_task_summary(side), 48),
+            compact_hud_text(&quest.side_task_next_step(side), 48),
+            compact_hud_text(&quest.side_task_field_status(side), 48),
+            compact_hud_text(quest.side_quest_route_hint(side), 42)
+        )),
+        SideBoardTaskStatus::Locked => Some(format!(
+            "本地后续 · {} [未开放]\n签号：{} · {}\n{}\n先清前置委托后可领取",
+            side.name(),
+            option.receipt_id,
+            quest.side_quest_issuer(side),
+            compact_hud_text(&quest.side_task_summary(side), 54)
+        )),
+        SideBoardTaskStatus::Ready
+        | SideBoardTaskStatus::Active
+        | SideBoardTaskStatus::Completed => None,
+    }
+}
+
+fn main_task_target_matches_map(stage: QuestStage, kind: MapKind) -> bool {
+    match stage {
+        QuestStage::NotStarted
+        | QuestStage::TalkToLinger
+        | QuestStage::EscortMerchant
+        | QuestStage::ReturnToSister
+        | QuestStage::ReturnToLinger => kind == MapKind::Village,
+        QuestStage::FindStarMage
+        | QuestStage::DefeatMonsters { .. }
+        | QuestStage::FindBambooScout => kind == MapKind::Bamboo,
+        QuestStage::SeekCavePriestess | QuestStage::ConfrontMoonWraith => kind == MapKind::Cave,
+        QuestStage::CaveTrial { .. } => kind == MapKind::MoonEchoCorridor,
+        QuestStage::OpeningComplete
+        | QuestStage::GatherRiverHerbs { .. }
+        | QuestStage::ReturnToHerbHealer
+        | QuestStage::FindRiverBoatman
+        | QuestStage::ConfrontRiverDemon
+        | QuestStage::RiverTownComplete => kind == MapKind::RiverTown,
+        QuestStage::TuneRiverLanterns => kind == MapKind::RiverReedBed,
+        QuestStage::SeekPlagueElder
+        | QuestStage::SeekShrineKeeper
+        | QuestStage::ReturnToShrineKeeper
+        | QuestStage::ConfrontMiasmaRoot
+        | QuestStage::PlagueVillageComplete => kind == MapKind::PlagueVillage,
+        QuestStage::CleansePlagueShrines { .. } | QuestStage::SealPlagueWards => {
+            kind == MapKind::PlagueShrinePath
+        }
+        QuestStage::SeekCapitalEnvoy | QuestStage::CapitalIntrigueComplete => {
+            kind == MapKind::Capital
+        }
+        QuestStage::FindMansionSpy
+        | QuestStage::ReturnToMansionSpy
+        | QuestStage::ConfrontMirrorMinister => kind == MapKind::CapitalMansion,
+        QuestStage::GatherSecretLetters { .. } | QuestStage::AlignMansionMirrors => {
+            kind == MapKind::MansionMirrorGallery
+        }
+        QuestStage::SeekSpiritGuide
+        | QuestStage::SeekTribalChief
+        | QuestStage::ReturnToTribalChief
+        | QuestStage::ConfrontThunderQilin
+        | QuestStage::SouthernRoadComplete => kind == MapKind::SouthernRoad,
+        QuestStage::CleanseSpiritTotems { .. } | QuestStage::AlignThunderDrums => {
+            kind == MapKind::ThunderDrumPath
+        }
+        QuestStage::SeekFinalOracle
+        | QuestStage::ReturnToFinalOracle
+        | QuestStage::ConfrontDreamEclipse
+        | QuestStage::FinaleComplete => kind == MapKind::FinalSanctum,
+        QuestStage::LightFinalSoulLamps { .. } => kind == MapKind::DreamWaterway,
+    }
+}
+
+fn main_task_route_guidance(kind: MapKind, quest: &QuestLog) -> String {
+    let ledger = quest.main_task_ledger();
+    if main_task_target_matches_map(quest.stage(), kind) {
+        format!("主线 · 当前地图：{} · {}", ledger.action, ledger.contact)
+    } else {
+        format!("主线 · 前往：{} · {}", ledger.place, ledger.contact)
+    }
+}
+
+fn active_side_task_for_guidance(quest: &QuestLog) -> Option<SideQuest> {
+    ALL_LOCAL_SIDE_QUESTS
+        .iter()
+        .copied()
+        .find(|side| quest.is_side_quest_active(*side) && !quest.is_side_quest_completed(*side))
+}
+
+fn side_task_route_guidance(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let side = active_side_task_for_guidance(quest)?;
+    let progress = quest
+        .side_quest_progress(side)
+        .min(quest.side_quest_goal(side));
+    let goal = quest.side_quest_goal(side);
+
+    if progress >= goal {
+        let prefix = if side_quest_turn_in_matches_map(side, kind) {
+            "可交付 当前地图"
+        } else {
+            "可交付 前往"
+        };
+        return Some(format!(
+            "委托 · {prefix}：{}",
+            quest.side_quest_turn_in_place(side)
+        ));
+    }
+
+    if side_quest_target_matches_map(side, kind) {
+        Some(format!(
+            "委托 · 目标区 当前地图：{} {progress}/{goal}",
+            quest.side_quest_name(side)
+        ))
+    } else {
+        Some(format!(
+            "委托 · 前往目标区：{} · {progress}/{goal}",
+            compact_hud_text(quest.side_quest_route_hint(side), 48)
+        ))
+    }
+}
+
+fn active_npc_errand_for_guidance(quest: &QuestLog) -> Option<NpcErrand> {
+    TRACKED_NPC_ERRANDS
+        .iter()
+        .copied()
+        .find(|errand| quest.is_npc_errand_active(*errand))
+}
+
+fn npc_errand_delivery_matches_map(errand: NpcErrand, kind: MapKind) -> bool {
+    npc_defs(kind)
+        .iter()
+        .any(|npc| npc_errand_delivery_for(kind, npc) == Some(errand))
+}
+
+fn npc_errand_route_guidance(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let errand = active_npc_errand_for_guidance(quest)?;
+    if npc_errand_delivery_matches_map(errand, kind) {
+        Some(format!(
+            "托付 · 交付地 当前地图：{}",
+            quest.npc_errand_receiver(errand)
+        ))
+    } else {
+        Some(format!(
+            "托付 · 前往交付：{} · {}",
+            quest.npc_errand_turn_in_place(errand),
+            compact_hud_text(quest.npc_errand_route_hint(errand), 44)
+        ))
+    }
+}
+
+const TRACKED_COMPANION_REVISITS: [CompanionRevisit; 3] = [
+    CompanionRevisit::TrailEcho,
+    CompanionRevisit::MirrorTrace,
+    CompanionRevisit::TotemVow,
+];
+
+fn active_companion_revisit_for_guidance(quest: &QuestLog) -> Option<CompanionRevisit> {
+    TRACKED_COMPANION_REVISITS
+        .iter()
+        .copied()
+        .find(|revisit| quest.companion_revisit_ready(*revisit))
+        .or_else(|| {
+            TRACKED_COMPANION_REVISITS
+                .iter()
+                .copied()
+                .find(|revisit| quest.companion_revisit_active(*revisit))
+        })
+}
+
+fn companion_revisit_route_guidance(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let revisit = active_companion_revisit_for_guidance(quest)?;
+    if quest.companion_revisit_ready(revisit) {
+        if kind == companion_revisit_giver_map(revisit) {
+            Some(format!("补访 · 当前地图交付：{}", revisit.issuer()))
+        } else {
+            Some(format!("补访 · 返回交付：{}", revisit.turn_in_place()))
+        }
+    } else if kind == companion_revisit_target_map(revisit) {
+        Some(format!(
+            "补访 · 当前地图寻访：{} · {}",
+            revisit.name(),
+            revisit.target_mark().name()
+        ))
+    } else {
+        Some(format!(
+            "补访 · 前往{}：{}",
+            companion_revisit_target_map(revisit).def().name,
+            revisit.target_mark().name()
+        ))
+    }
+}
+
+fn task_route_guidance(kind: MapKind, quest: &QuestLog) -> String {
+    let mut lines = vec![
+        "任务引路".to_string(),
+        main_task_route_guidance(kind, quest),
+    ];
+    if let Some(side) = side_task_route_guidance(kind, quest) {
+        lines.push(side);
+    }
+    if let Some(errand) = npc_errand_route_guidance(kind, quest) {
+        lines.push(errand);
+    }
+    if let Some(revisit) = companion_revisit_route_guidance(kind, quest) {
+        lines.push(revisit);
+    }
+    lines.join("\n")
+}
+
+fn task_tracker_text(kind: MapKind, quest: &QuestLog) -> String {
+    let mut tracker = quest.active_task_tracker();
+    tracker.push_str("\n\n");
+    tracker.push_str(&task_route_guidance(kind, quest));
+    if let Some(local) = local_task_intake_tracker(kind, quest) {
+        tracker.push_str("\n\n");
+        tracker.push_str(&local);
+    }
+    if quest.active_npc_errand_tracker().is_none() {
+        if let Some(local_errand) = local_npc_errand_intake_tracker(kind, quest) {
+            tracker.push_str("\n\n");
+            tracker.push_str(&local_errand);
+        }
+    }
+    if quest.active_companion_revisit_tracker().is_none() {
+        if let Some(local_revisit) = local_companion_revisit_intake_tracker(kind, quest) {
+            tracker.push_str("\n\n");
+            tracker.push_str(&local_revisit);
+        }
+    }
+    tracker
+}
+
 fn side_board_prompt(kind: MapKind, quest: &QuestLog) -> Option<String> {
     let sides = side_quests_for_map(kind);
     if sides.is_empty() {
@@ -2910,10 +4722,11 @@ fn side_board_prompt(kind: MapKind, quest: &QuestLog) -> Option<String> {
         .next()
         .expect("non-empty side quest board");
     Some(format!(
-        "委托板 {completed}/{}完成 | 空格打开\n优先：{}[{}]\n{}",
+        "委托板 {completed}/{}完成 | 空格打开\n优先：{}[{}] · {}\n{}",
         sides.len(),
         focus.side.name(),
         focus.status.label(),
+        quest.side_task_action_label(focus.side),
         side_board_listing(kind, quest)
     ))
 }
@@ -2943,16 +4756,20 @@ fn side_board_overview_lines(kind: MapKind, quest: &QuestLog) -> Vec<String> {
                 .min(quest.side_quest_goal(option.side))
         };
         lines.push(format!(
-            "{}. [{}] {} {}/{} - {}",
+            "{}. {}",
             idx + 1,
-            option.status.label(),
-            option.side.name(),
+            quest.side_task_board_card(option.side)
+        ));
+        lines.push(format!(
+            "【选择提示】{} · 当前进度 {}/{} · 领取和交付都会再次确认。",
+            quest.side_task_board_option_label(option.side),
             progress,
-            quest.side_quest_goal(option.side),
-            quest.side_task_summary(option.side)
+            quest.side_quest_goal(option.side)
         ));
     }
-    lines.push("选择一份委托查看详情；领取和交付都会再次确认。".to_string());
+    lines.push(
+        "选择一份委托契约查看详情；领取后会写入任务簿、显示签收回执，并进入 HUD 追踪。".to_string(),
+    );
     lines
 }
 
@@ -3058,6 +4875,90 @@ fn moon_crystal_for_prop(kind: MapKind, prop: &PropDef) -> Option<MoonCrystal> {
     }
 }
 
+fn route_mark_for_prop(kind: MapKind, prop: &PropDef) -> Option<RouteMark> {
+    match (kind, prop.path, prop.col, prop.row) {
+        (MapKind::MoonEchoCorridor, "props/ai_bamboo_gate.png", 27, 1) => Some(RouteMark::MoonEcho),
+        (MapKind::RiverReedBed, "props/ai_bamboo_gate.png", 26, 1) => Some(RouteMark::ReedFord),
+        (MapKind::PlagueShrinePath, "props/ai_cave_crystal.png", 10, 13) => {
+            Some(RouteMark::PlagueBell)
+        }
+        (MapKind::MansionMirrorGallery, "props/ai_bamboo_gate.png", 26, 1) => {
+            Some(RouteMark::MirrorSideDoor)
+        }
+        (MapKind::ThunderDrumPath, "props/ai_cave_crystal.png", 18, 6) => {
+            Some(RouteMark::ThunderSwitchback)
+        }
+        (MapKind::DreamWaterway, "props/ai_cave_crystal.png", 18, 10) => {
+            Some(RouteMark::DreamReturn)
+        }
+        _ => None,
+    }
+}
+
+fn route_mark_for_map(kind: MapKind) -> Option<RouteMark> {
+    match kind {
+        MapKind::MoonEchoCorridor => Some(RouteMark::MoonEcho),
+        MapKind::RiverReedBed => Some(RouteMark::ReedFord),
+        MapKind::PlagueShrinePath => Some(RouteMark::PlagueBell),
+        MapKind::MansionMirrorGallery => Some(RouteMark::MirrorSideDoor),
+        MapKind::ThunderDrumPath => Some(RouteMark::ThunderSwitchback),
+        MapKind::DreamWaterway => Some(RouteMark::DreamReturn),
+        MapKind::Village
+        | MapKind::Bamboo
+        | MapKind::Cave
+        | MapKind::RiverTown
+        | MapKind::PlagueVillage
+        | MapKind::Capital
+        | MapKind::CapitalMansion
+        | MapKind::SouthernRoad
+        | MapKind::FinalSanctum => None,
+    }
+}
+
+fn route_detour_for_prop(kind: MapKind, prop: &PropDef) -> Option<RouteDetour> {
+    match (kind, prop.path, prop.col, prop.row) {
+        (MapKind::MoonEchoCorridor, "props/ai_cave_crystal.png", 18, 6) => {
+            Some(RouteDetour::MoonEchoPool)
+        }
+        (MapKind::RiverReedBed, "props/ai_cave_crystal.png", 13, 10) => {
+            Some(RouteDetour::ReedHiddenFord)
+        }
+        (MapKind::PlagueShrinePath, "props/ai_bamboo_gate.png", 26, 1) => {
+            Some(RouteDetour::PlagueHerbTrail)
+        }
+        (MapKind::MansionMirrorGallery, "props/ai_bamboo_gate.png", 6, 13) => {
+            Some(RouteDetour::MirrorServantDoor)
+        }
+        (MapKind::ThunderDrumPath, "props/ai_bamboo_gate.png", 26, 1) => {
+            Some(RouteDetour::ThunderRidgeCache)
+        }
+        (MapKind::DreamWaterway, "props/ai_bamboo_gate.png", 26, 1) => {
+            Some(RouteDetour::DreamBackwater)
+        }
+        _ => None,
+    }
+}
+
+fn route_detour_for_map(kind: MapKind) -> Option<RouteDetour> {
+    match kind {
+        MapKind::MoonEchoCorridor => Some(RouteDetour::MoonEchoPool),
+        MapKind::RiverReedBed => Some(RouteDetour::ReedHiddenFord),
+        MapKind::PlagueShrinePath => Some(RouteDetour::PlagueHerbTrail),
+        MapKind::MansionMirrorGallery => Some(RouteDetour::MirrorServantDoor),
+        MapKind::ThunderDrumPath => Some(RouteDetour::ThunderRidgeCache),
+        MapKind::DreamWaterway => Some(RouteDetour::DreamBackwater),
+        MapKind::Village
+        | MapKind::Bamboo
+        | MapKind::Cave
+        | MapKind::RiverTown
+        | MapKind::PlagueVillage
+        | MapKind::Capital
+        | MapKind::CapitalMansion
+        | MapKind::SouthernRoad
+        | MapKind::FinalSanctum => None,
+    }
+}
+
 fn treasure_for_prop(kind: MapKind, prop: &PropDef) -> Option<TreasureCache> {
     match (kind, prop.path, prop.col, prop.row) {
         (MapKind::Village, "props/ai_shrine_statue.png", 20, 4) => {
@@ -3124,6 +5025,45 @@ fn prop_dialogue(prop: &PropDef) -> Vec<String> {
     vec![line.to_string()]
 }
 
+fn append_side_objective_progress(
+    lines: &mut Vec<String>,
+    quest: &mut QuestLog,
+    side: SideQuest,
+    source: &str,
+    was_done: bool,
+    is_done: bool,
+) {
+    if was_done || !is_done {
+        return;
+    }
+
+    if let Some(line) = quest.record_side_objective(side, source) {
+        lines.push(line);
+    }
+}
+
+fn route_mark_side_objective(mark: RouteMark) -> Option<(SideQuest, &'static str)> {
+    match mark {
+        RouteMark::MoonEcho => Some((SideQuest::MoonCaveEchoes, "回声路印已记")),
+        RouteMark::ReedFord => Some((SideQuest::RiverCargo, "湿货浅渡已标")),
+        RouteMark::PlagueBell => Some((SideQuest::PlagueMedicine, "药路旧铃已记")),
+        RouteMark::MirrorSideDoor => Some((SideQuest::CapitalRumors, "暗帖偏门已标")),
+        RouteMark::ThunderSwitchback => Some((SideQuest::SouthernDrums, "旧鼓回坡已记")),
+        RouteMark::DreamReturn => Some((SideQuest::FinalHomewardVows, "归潮水线已记")),
+    }
+}
+
+fn route_detour_side_objective(detour: RouteDetour) -> Option<(SideQuest, &'static str)> {
+    match detour {
+        RouteDetour::MoonEchoPool => Some((SideQuest::MoonCaveEchoes, "回声岔路已压")),
+        RouteDetour::ReedHiddenFord => Some((SideQuest::RiverCargo, "湿货隐渡已查")),
+        RouteDetour::PlagueHerbTrail => Some((SideQuest::PlagueMedicine, "病屋药径已护")),
+        RouteDetour::MirrorServantDoor => Some((SideQuest::CapitalRumors, "暗帖斜廊已截")),
+        RouteDetour::ThunderRidgeCache => Some((SideQuest::SouthernDrums, "战鼓雷脊已安")),
+        RouteDetour::DreamBackwater => Some((SideQuest::FinalHomewardVows, "归潮回湾已护")),
+    }
+}
+
 fn is_bond_lantern(prop: &PropDef) -> bool {
     prop.path == "props/ai_spirit_lantern.png"
 }
@@ -3145,8 +5085,121 @@ fn apply_side_quest_reward(stats: &mut PlayerStats, reward: SideQuestReward) -> 
     }
 }
 
+fn apply_npc_errand_reward(stats: &mut PlayerStats, reward: NpcErrandReward) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    stats.hp = (stats.hp + reward.hp).clamp(0, stats.max_hp);
+    stats.mp = (stats.mp + reward.mp).clamp(0, stats.max_mp);
+
+    let mut gains = vec![format!("经验 +{}", reward.exp)];
+    if reward.potions > 0 {
+        gains.push(format!("药水 +{}", reward.potions));
+    }
+    if reward.gold > 0 {
+        gains.push(format!("钱 +{}", reward.gold));
+    }
+    if reward.hp > 0 {
+        gains.push(format!("气血 +{}", reward.hp));
+    }
+    if reward.mp > 0 {
+        gains.push(format!("灵力 +{}", reward.mp));
+    }
+    if levels > 0 {
+        gains.push(format!("境界提升至 Lv.{}", stats.level));
+    }
+
+    format!("【托付回礼】{}。", gains.join("，"))
+}
+
+#[derive(Clone, Copy)]
+struct SideQuestAdvanceSupply {
+    potions: u32,
+    gold: u32,
+    mp: i32,
+}
+
+fn side_quest_advance_supply(side: SideQuest) -> SideQuestAdvanceSupply {
+    match side {
+        SideQuest::VillageTrail | SideQuest::VillageHerbs => SideQuestAdvanceSupply {
+            potions: 1,
+            gold: 4,
+            mp: 2,
+        },
+        SideQuest::MoonCaveCrystals | SideQuest::MoonCaveEchoes => SideQuestAdvanceSupply {
+            potions: 1,
+            gold: 6,
+            mp: 4,
+        },
+        SideQuest::RiverLanterns | SideQuest::RiverCargo => SideQuestAdvanceSupply {
+            potions: 1,
+            gold: 8,
+            mp: 4,
+        },
+        SideQuest::PlagueRelief | SideQuest::PlagueMedicine => SideQuestAdvanceSupply {
+            potions: 2,
+            gold: 8,
+            mp: 6,
+        },
+        SideQuest::CapitalPatrol | SideQuest::CapitalRumors => SideQuestAdvanceSupply {
+            potions: 1,
+            gold: 12,
+            mp: 6,
+        },
+        SideQuest::SouthernThunder | SideQuest::SouthernDrums => SideQuestAdvanceSupply {
+            potions: 2,
+            gold: 12,
+            mp: 8,
+        },
+        SideQuest::FinalDreamEchoes | SideQuest::FinalHomewardVows => SideQuestAdvanceSupply {
+            potions: 2,
+            gold: 16,
+            mp: 10,
+        },
+    }
+}
+
+fn apply_side_quest_advance_supply(
+    stats: &mut PlayerStats,
+    quest: &QuestLog,
+    side: SideQuest,
+) -> String {
+    let supply = side_quest_advance_supply(side);
+    let mp_before = stats.mp;
+    stats.potions += supply.potions;
+    stats.gold += supply.gold;
+    stats.mp = (stats.mp + supply.mp).clamp(0, stats.max_mp);
+    let restored_mp = (stats.mp - mp_before).max(0);
+
+    let mut gains = Vec::new();
+    if supply.potions > 0 {
+        gains.push(format!("药水 +{}", supply.potions));
+    }
+    if supply.gold > 0 {
+        gains.push(format!("路费 +{}文", supply.gold));
+    }
+    if restored_mp > 0 {
+        gains.push(format!("灵力 +{}", restored_mp));
+    }
+
+    format!(
+        "【委托预支】{}先给了{}，签下《{}》后即可上路。当前药水 x{}，钱 {}文，灵力 {}/{}。",
+        quest.side_quest_issuer(side),
+        gains.join("、"),
+        quest.side_quest_name(side),
+        stats.potions,
+        stats.gold,
+        stats.mp,
+        stats.max_mp
+    )
+}
+
 fn side_quest_choice_for(quest: &QuestLog, side: SideQuest) -> Option<DialogueChoice> {
     if quest.is_side_quest_completed(side) {
+        return None;
+    }
+
+    if !quest.is_side_quest_active(side) && !quest.is_side_quest_unlocked(side) {
         return None;
     }
 
@@ -3222,11 +5275,18 @@ fn main_quest_preview(
     role: QuestRole,
     action: MainQuestChoiceAction,
 ) -> Vec<String> {
+    let ledger = quest.main_task_ledger();
     vec![
         format!(
-            "【主线任务】当前委托\n状态：{}\n操作：{}\n委托人：{}\n目标：{}",
+            "【主线任务】当前委托\n状态：{}\n操作：{}\n主线签：{}\n章程：{}/{} {}\n地点：{}\n联络：{}\n委托人：{}\n目标：{}",
             action.status(),
             action.operation(),
+            ledger.receipt,
+            ledger.step,
+            ledger.total,
+            ledger.action,
+            ledger.place,
+            ledger.contact,
             role.name(),
             quest.objective()
         ),
@@ -3280,6 +5340,54 @@ struct DialogueChoiceResult {
     lines: Vec<String>,
     after: DialogueAfter,
     choice: Option<DialogueChoice>,
+    chapter_art: Option<ChapterArtAssets>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChapterArtAssets {
+    still: &'static str,
+    sheet: &'static str,
+}
+
+fn chapter_art_assets(chapter: Chapter) -> ChapterArtAssets {
+    match chapter {
+        Chapter::VillageOath => ChapterArtAssets {
+            still: "ui/chapter1_art.png",
+            sheet: "ui/anim/chapter1_sheet.png",
+        },
+        Chapter::MoonCave => ChapterArtAssets {
+            still: "ui/chapter2_art.png",
+            sheet: "ui/anim/chapter2_sheet.png",
+        },
+        Chapter::RiverMedicine => ChapterArtAssets {
+            still: "ui/chapter3_art.png",
+            sheet: "ui/anim/chapter3_sheet.png",
+        },
+        Chapter::PlagueRain => ChapterArtAssets {
+            still: "ui/chapter4_art.png",
+            sheet: "ui/anim/chapter4_sheet.png",
+        },
+        Chapter::CapitalMirror => ChapterArtAssets {
+            still: "ui/chapter5_art.png",
+            sheet: "ui/anim/chapter5_sheet.png",
+        },
+        Chapter::SouthernThunder => ChapterArtAssets {
+            still: "ui/chapter6_art.png",
+            sheet: "ui/anim/chapter6_sheet.png",
+        },
+        Chapter::FinalDream => ChapterArtAssets {
+            still: "ui/chapter7_art.png",
+            sheet: "ui/anim/chapter7_sheet.png",
+        },
+    }
+}
+
+fn append_chapter_card(quest: &mut QuestLog, lines: &mut Vec<String>) -> Option<ChapterArtAssets> {
+    let chapter = quest.current_chapter();
+    quest.take_chapter_card().map(|chapter_card| {
+        lines.extend(chapter_card);
+        chapter_art_assets(chapter)
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -3338,52 +5446,138 @@ fn quest_notice_for_confirmed_choice(
 
     match choice.kind {
         DialogueChoiceKind::MainQuest { role, action } => match action {
-            MainQuestChoiceAction::Accept => Some(QuestNoticeMessage::new(
-                QuestNoticeKind::Main,
-                "任务簿更新 · 主线已接取",
-                format!(
-                    "{}托付：{}\n已加入主线追踪卡",
-                    role.name(),
-                    quest.objective()
-                ),
-            )),
-            MainQuestChoiceAction::Advance => Some(QuestNoticeMessage::new(
-                QuestNoticeKind::Main,
-                "任务簿更新 · 主线推进",
-                format!("下一步：{}\n主线追踪已更新", quest.objective()),
-            )),
-            MainQuestChoiceAction::TurnIn => Some(QuestNoticeMessage::new(
-                QuestNoticeKind::Complete,
-                "任务簿更新 · 主线已交付",
-                format!(
-                    "{}线索已结，下一步：{}\n主线追踪已更新",
-                    role.name(),
-                    quest.objective()
-                ),
-            )),
+            MainQuestChoiceAction::Accept => {
+                let ledger = quest.main_task_ledger();
+                Some(QuestNoticeMessage::new(
+                    QuestNoticeKind::Main,
+                    "任务簿更新 · 主线已接取",
+                    format!(
+                        "{}托付：{}\n{} · {}/{} {}\n已加入主线追踪卡",
+                        role.name(),
+                        quest.objective(),
+                        ledger.receipt,
+                        ledger.step,
+                        ledger.total,
+                        ledger.action
+                    ),
+                ))
+            }
+            MainQuestChoiceAction::Advance => {
+                let ledger = quest.main_task_ledger();
+                Some(QuestNoticeMessage::new(
+                    QuestNoticeKind::Main,
+                    "任务簿更新 · 主线推进",
+                    format!(
+                        "下一步：{}\n{} · {}/{} {} · 主线追踪已更新",
+                        quest.objective(),
+                        ledger.receipt,
+                        ledger.step,
+                        ledger.total,
+                        ledger.action
+                    ),
+                ))
+            }
+            MainQuestChoiceAction::TurnIn => {
+                let ledger = quest.main_task_ledger();
+                Some(QuestNoticeMessage::new(
+                    QuestNoticeKind::Complete,
+                    "任务簿更新 · 主线已交付",
+                    format!(
+                        "{}线索已结，下一步：{}\n{} · {}/{} {} · 主线追踪已更新",
+                        role.name(),
+                        quest.objective(),
+                        ledger.receipt,
+                        ledger.step,
+                        ledger.total,
+                        ledger.action
+                    ),
+                ))
+            }
             MainQuestChoiceAction::Boss => None,
         },
         DialogueChoiceKind::SideQuest { side, action } => match action {
             SideQuestChoiceAction::Accept => Some(QuestNoticeMessage::new(
                 QuestNoticeKind::Side,
-                "任务簿更新 · 委托已领取",
+                "任务簿更新 · 委托契约已领取",
                 format!(
-                    "《{}》 {}/{} · 已加入委托追踪卡",
+                    "《{}》 {}/{} · 委托签 {}\n下一步：{}\n现场：{}\n{} · 回委托点交付领奖\nHUD 委托追踪卡已更新",
                     quest.side_quest_name(side),
                     quest
                         .side_quest_progress(side)
                         .min(quest.side_quest_goal(side)),
-                    quest.side_quest_goal(side)
+                    quest.side_quest_goal(side),
+                    quest.side_quest_receipt_id(side),
+                    quest.side_task_next_step(side),
+                    quest.side_task_field_status(side),
+                    compact_hud_text(quest.side_quest_route_hint(side), 48)
                 ),
             )),
-            SideQuestChoiceAction::TurnIn => Some(QuestNoticeMessage::new(
+            SideQuestChoiceAction::TurnIn => {
+                let resolution = choice.selected_side_quest_resolution();
+                Some(QuestNoticeMessage::new(
+                    QuestNoticeKind::Complete,
+                    "任务簿更新 · 委托契约已交付",
+                    format!(
+                        "《{}》完成 · {} · 委托签归档\n报酬已入袋，追踪卡已移除",
+                        quest.side_quest_name(side),
+                        resolution.name()
+                    ),
+                ))
+            }
+        },
+        DialogueChoiceKind::NpcErrand { errand, action } => match action {
+            NpcErrandChoiceAction::Accept => Some(QuestNoticeMessage::new(
+                QuestNoticeKind::Side,
+                "任务簿更新 · NPC托付已接下",
+                format!(
+                    "《{}》 · {}\n{} -> {}\n目标：{}\n路线：{}\n交付：{}\n已加入 HUD 托付追踪卡",
+                    errand.name(),
+                    quest.npc_errand_receipt_id(errand),
+                    quest.npc_errand_issuer(errand),
+                    quest.npc_errand_receiver(errand),
+                    quest.npc_errand_objective(errand),
+                    compact_hud_text(quest.npc_errand_route_hint(errand), 48),
+                    quest.npc_errand_turn_in_place(errand)
+                ),
+            )),
+            NpcErrandChoiceAction::TurnIn => Some(QuestNoticeMessage::new(
                 QuestNoticeKind::Complete,
-                "任务簿更新 · 委托已交付",
-                format!("《{}》完成 · 报酬已入袋", quest.side_quest_name(side)),
+                "任务簿更新 · NPC托付已送达",
+                format!(
+                    "《{}》完成 · {}\n回礼已入袋，托付追踪已移除",
+                    errand.name(),
+                    quest.npc_errand_turn_in_place(errand)
+                ),
+            )),
+        },
+        DialogueChoiceKind::CompanionRevisit { revisit, action } => match action {
+            CompanionRevisitChoiceAction::Accept => Some(QuestNoticeMessage::new(
+                QuestNoticeKind::Side,
+                "任务簿更新 · 同伴补访已领取",
+                format!(
+                    "《{}》 · {}\n补访对象：{}\n现场：{}\n路线：{}\n交付：{}\n已加入 HUD 补访追踪卡",
+                    revisit.name(),
+                    revisit.receipt_id(),
+                    revisit.scene().speaker(),
+                    revisit.target_place(),
+                    compact_hud_text(revisit.route_hint(), 48),
+                    revisit.turn_in_place()
+                ),
+            )),
+            CompanionRevisitChoiceAction::TurnIn => Some(QuestNoticeMessage::new(
+                QuestNoticeKind::Complete,
+                "任务簿更新 · 同伴补访已归档",
+                format!(
+                    "《{}》完成 · {}\n迟来小传已补回，回礼已入袋",
+                    revisit.name(),
+                    revisit.receipt_id()
+                ),
             )),
         },
         DialogueChoiceKind::BondResponse
         | DialogueChoiceKind::CampTactic
+        | DialogueChoiceKind::RouteDetour { .. }
+        | DialogueChoiceKind::CommissionTrace { .. }
         | DialogueChoiceKind::SideBoard { .. } => None,
     }
 }
@@ -3398,18 +5592,39 @@ fn resolve_dialogue_choice(
             lines: quest.record_bond_response(choice.selected_response()),
             after: DialogueAfter::None,
             choice: None,
+            chapter_art: None,
         },
         DialogueChoiceKind::CampTactic => DialogueChoiceResult {
             lines: quest.record_camp_tactic(choice.selected_camp_bonus()),
             after: DialogueAfter::None,
             choice: None,
+            chapter_art: None,
         },
+        DialogueChoiceKind::RouteDetour { detour } => {
+            let was_done = quest.has_route_detour(detour);
+            let resolution = quest.complete_route_detour(detour, choice.selected_detour_approach());
+            let mut lines = resolution.lines;
+            let is_done = quest.has_route_detour(detour);
+            if let Some((side, source)) = route_detour_side_objective(detour) {
+                append_side_objective_progress(&mut lines, quest, side, source, was_done, is_done);
+            }
+            if let Some(reward) = resolution.reward {
+                lines.push(apply_route_detour_reward(stats, reward));
+            }
+            DialogueChoiceResult {
+                lines,
+                after: DialogueAfter::None,
+                choice: None,
+                chapter_art: None,
+            }
+        }
         DialogueChoiceKind::SideBoard { .. } => {
             let Some(task) = choice.selected_side_board_task() else {
                 return DialogueChoiceResult {
                     lines: vec!["【委托板】没有可查看的委托。".to_string()],
                     after: DialogueAfter::None,
                     choice: None,
+                    chapter_art: None,
                 };
             };
 
@@ -3424,8 +5639,9 @@ fn resolve_dialogue_choice(
                         ..
                     } => vec![
                         quest.side_task_detail(task.side),
+                        quest.side_task_contract(task.side),
                         format!(
-                            "【交付确认】《{}》条件已达成，确认后发放报酬。",
+                            "【交付确认】《{}》条件已达成，可选择稳妥封存或追查余波后发放报酬。",
                             task.side.name()
                         ),
                     ],
@@ -3443,6 +5659,7 @@ fn resolve_dialogue_choice(
                     lines,
                     after: DialogueAfter::None,
                     choice: Some(next_choice),
+                    chapter_art: None,
                 };
             }
 
@@ -3456,6 +5673,7 @@ fn resolve_dialogue_choice(
                 lines,
                 after: DialogueAfter::None,
                 choice: None,
+                chapter_art: None,
             }
         }
         DialogueChoiceKind::MainQuest { role, action } => {
@@ -3467,21 +5685,22 @@ fn resolve_dialogue_choice(
                     ],
                     after: DialogueAfter::None,
                     choice: None,
+                    chapter_art: None,
                 };
             }
 
             let stage_before = quest.stage();
             let mut lines = quest.talk(role);
+            let mut chapter_art = None;
             if quest.stage() != stage_before {
-                if let Some(chapter_card) = quest.take_chapter_card() {
-                    lines.extend(chapter_card);
-                }
+                chapter_art = append_chapter_card(quest, &mut lines);
             }
             lines.push(quest.main_task_summary());
             DialogueChoiceResult {
                 lines,
                 after: main_quest_battle_after(role, stage_before),
                 choice: None,
+                chapter_art,
             }
         }
         DialogueChoiceKind::SideQuest { side, action } => {
@@ -3502,11 +5721,27 @@ fn resolve_dialogue_choice(
                     ],
                     after: DialogueAfter::None,
                     choice: None,
+                    chapter_art: None,
                 };
             }
 
-            let interaction = quest.interact_side_quest(side);
+            let was_active = quest.is_side_quest_active(side);
+            let was_completed = quest.is_side_quest_completed(side);
+            let interaction = match action {
+                SideQuestChoiceAction::Accept => quest.interact_side_quest(side),
+                SideQuestChoiceAction::TurnIn => quest.interact_side_quest_with_resolution(
+                    side,
+                    choice.selected_side_quest_resolution(),
+                ),
+            };
             let mut lines = interaction.lines;
+            if matches!(action, SideQuestChoiceAction::Accept)
+                && !was_active
+                && !was_completed
+                && quest.is_side_quest_active(side)
+            {
+                lines.push(apply_side_quest_advance_supply(stats, quest, side));
+            }
             if let Some(reward) = interaction.reward {
                 lines.push(apply_side_quest_reward(stats, reward));
             }
@@ -3516,6 +5751,118 @@ fn resolve_dialogue_choice(
                 lines,
                 after: DialogueAfter::None,
                 choice: None,
+                chapter_art: None,
+            }
+        }
+        DialogueChoiceKind::CommissionTrace {
+            side,
+            name,
+            active_line,
+            source,
+            inactive_line,
+            repeat_line,
+        } => {
+            if !choice.accepted() {
+                return DialogueChoiceResult {
+                    lines: vec![
+                        format!("【委托现场暂缓】暂不处理《{name}》。"),
+                        quest.side_task_summary(side),
+                        quest.main_task_summary(),
+                    ],
+                    after: DialogueAfter::None,
+                    choice: None,
+                    chapter_art: None,
+                };
+            }
+
+            let approach = choice.selected_commission_trace_approach();
+            let mut lines = quest.interact_commission_trace_with_approach(
+                side,
+                name,
+                active_line,
+                source,
+                inactive_line,
+                repeat_line,
+                approach,
+            );
+            lines.push(quest.side_task_summary(side));
+            lines.push(quest.main_task_summary());
+            DialogueChoiceResult {
+                lines,
+                after: DialogueAfter::None,
+                choice: None,
+                chapter_art: None,
+            }
+        }
+        DialogueChoiceKind::NpcErrand { errand, action } => {
+            if !choice.accepted() {
+                let action_text = match action {
+                    NpcErrandChoiceAction::Accept => "接下",
+                    NpcErrandChoiceAction::TurnIn => "交付",
+                };
+                return DialogueChoiceResult {
+                    lines: vec![
+                        format!("【托付暂缓】{} 暂不{}。", errand.name(), action_text),
+                        quest.npc_errand_summary(),
+                        quest.main_task_summary(),
+                    ],
+                    after: DialogueAfter::None,
+                    choice: None,
+                    chapter_art: None,
+                };
+            }
+
+            let interaction = match action {
+                NpcErrandChoiceAction::Accept => quest.accept_npc_errand(errand),
+                NpcErrandChoiceAction::TurnIn => quest.complete_npc_errand(errand),
+            };
+            let mut lines = interaction.lines;
+            if let Some(reward) = interaction.reward {
+                lines.push(apply_npc_errand_reward(stats, reward));
+            }
+            lines.push(quest.main_task_summary());
+            DialogueChoiceResult {
+                lines,
+                after: DialogueAfter::None,
+                choice: None,
+                chapter_art: None,
+            }
+        }
+        DialogueChoiceKind::CompanionRevisit { revisit, action } => {
+            if !choice.accepted() {
+                let action_text = match action {
+                    CompanionRevisitChoiceAction::Accept => "领取",
+                    CompanionRevisitChoiceAction::TurnIn => "交付",
+                };
+                return DialogueChoiceResult {
+                    lines: vec![
+                        format!("【补访暂缓】《{}》暂不{}。", revisit.name(), action_text),
+                        quest.companion_revisit_summary(),
+                        quest.main_task_summary(),
+                    ],
+                    after: DialogueAfter::None,
+                    choice: None,
+                    chapter_art: None,
+                };
+            }
+
+            let mut lines = match action {
+                CompanionRevisitChoiceAction::Accept => quest.accept_companion_revisit(revisit),
+                CompanionRevisitChoiceAction::TurnIn => {
+                    let turn_in = quest.complete_companion_revisit(revisit);
+                    let mut lines = turn_in.lines;
+                    if let Some(reward) = turn_in.reward {
+                        lines.push(apply_companion_aftermath_reward(stats, reward));
+                    }
+                    lines
+                }
+            };
+            lines.push(quest.main_task_summary());
+            DialogueChoiceResult {
+                lines,
+                after: DialogueAfter::None,
+                choice: None,
+                chapter_art: None,
             }
         }
     }
@@ -3538,6 +5885,149 @@ fn apply_treasure_reward(stats: &mut PlayerStats, reward: TreasureReward) -> Str
     }
 }
 
+fn apply_supply_reward(stats: &mut PlayerStats, reward: SupplyReward) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    stats.hp = (stats.hp + reward.hp).clamp(0, stats.max_hp);
+    stats.mp = (stats.mp + reward.mp).clamp(0, stats.max_mp);
+
+    let mut gains = vec![format!("经验 +{}", reward.exp)];
+    if reward.potions > 0 {
+        gains.push(format!("药水 +{}", reward.potions));
+    }
+    if reward.gold > 0 {
+        gains.push(format!("钱 +{}", reward.gold));
+    }
+    if reward.hp > 0 {
+        gains.push(format!("气血 +{}", reward.hp));
+    }
+    if reward.mp > 0 {
+        gains.push(format!("灵力 +{}", reward.mp));
+    }
+
+    if levels > 0 {
+        gains.push(format!("境界提升至 Lv.{}", stats.level));
+    }
+
+    format!("【采集奖励】{}。", gains.join("，"))
+}
+
+fn apply_care_aftermath_reward(stats: &mut PlayerStats, reward: CareAftermathReward) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    if levels > 0 {
+        format!(
+            "【照应回礼】经验 +{}，药水 +{}，钱 +{}，境界提升至 Lv.{}。",
+            reward.exp, reward.potions, reward.gold, stats.level
+        )
+    } else {
+        format!(
+            "【照应回礼】经验 +{}，药水 +{}，钱 +{}。",
+            reward.exp, reward.potions, reward.gold
+        )
+    }
+}
+
+fn apply_companion_aftermath_reward(
+    stats: &mut PlayerStats,
+    reward: CompanionAftermathReward,
+) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+
+    let mut gains = vec![format!("经验 +{}", reward.exp)];
+    if reward.potions > 0 {
+        gains.push(format!("药水 +{}", reward.potions));
+    }
+    if reward.gold > 0 {
+        gains.push(format!("钱 +{}", reward.gold));
+    }
+    if levels > 0 {
+        gains.push(format!("境界提升至 Lv.{}", stats.level));
+    }
+    format!("【小传回礼】{}。", gains.join("，"))
+}
+
+fn apply_commission_aftermath_reward(
+    stats: &mut PlayerStats,
+    reward: CommissionAftermathReward,
+) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    if levels > 0 {
+        format!(
+            "【清账回礼】经验 +{}，药水 +{}，钱 +{}，境界提升至 Lv.{}。",
+            reward.exp, reward.potions, reward.gold, stats.level
+        )
+    } else {
+        format!(
+            "【清账回礼】经验 +{}，药水 +{}，钱 +{}。",
+            reward.exp, reward.potions, reward.gold
+        )
+    }
+}
+
+fn local_commission_aftermath_line(kind: MapKind) -> &'static str {
+    match map_chapter(kind) {
+        Chapter::VillageOath => {
+            "【地方回礼】村人把两张委托签都收进旧木匣，替你们备下一份赶路药钱。"
+        }
+        Chapter::MoonCave => "【地方回礼】洞天守夜人说晶尘与回声都稳了，便把月露和铜钱托你带上。",
+        Chapter::RiverMedicine => {
+            "【地方回礼】江岸人把河灯和湿货账一并销去，码头凑出一份夜巡谢礼。"
+        }
+        Chapter::PlagueRain => "【地方回礼】瘴雨村药锅重新沸起，病屋里的人把省下的药钱交给你们。",
+        Chapter::CapitalMirror => {
+            "【地方回礼】府城暗线烧掉最后一张密榜，留下封好的线报钱和护身药。"
+        }
+        Chapter::SouthernThunder => {
+            "【地方回礼】百越族人把安静下来的雷纹拓成符，连同药酒交到你手里。"
+        }
+        Chapter::FinalDream => "【地方回礼】守灯人合上终门灯簿，说归路有人记得你们替人间守过灯。",
+    }
+}
+
+fn apply_route_detour_reward(stats: &mut PlayerStats, reward: RouteDetourReward) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    if levels > 0 {
+        format!(
+            "【分支收获】经验 +{}，药水 +{}，钱 +{}，境界提升至 Lv.{}。",
+            reward.exp, reward.potions, reward.gold, stats.level
+        )
+    } else {
+        format!(
+            "【分支收获】经验 +{}，药水 +{}，钱 +{}。",
+            reward.exp, reward.potions, reward.gold
+        )
+    }
+}
+
+fn apply_route_detour_report_reward(
+    stats: &mut PlayerStats,
+    reward: RouteDetourReportReward,
+) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    stats.gold += reward.gold;
+    if levels > 0 {
+        format!(
+            "【报路回礼】经验 +{}，药水 +{}，钱 +{}，境界提升至 Lv.{}。",
+            reward.exp, reward.potions, reward.gold, stats.level
+        )
+    } else {
+        format!(
+            "【报路回礼】经验 +{}，药水 +{}，钱 +{}。",
+            reward.exp, reward.potions, reward.gold
+        )
+    }
+}
+
 fn apply_shrine_offering(
     stats: &mut PlayerStats,
     quest: &mut QuestLog,
@@ -3547,6 +6037,7 @@ fn apply_shrine_offering(
         return vec![
             format!("【供奉】{}仍在。", active.name()),
             active.battle_line().to_string(),
+            format!("【行路护持】{}", active.route_line()),
         ];
     }
 
@@ -3563,7 +6054,451 @@ fn apply_shrine_offering(
             blessing.name()
         ),
         blessing.battle_line().to_string(),
+        format!("【行路护持】{}", blessing.route_line()),
     ]
+}
+
+fn route_encounter_rate(base: f32, kind: MapKind, quest: &QuestLog) -> f32 {
+    let route = route_mark_for_map(kind)
+        .map(|mark| quest.route_mark_encounter_multiplier(mark))
+        .unwrap_or(1.0);
+    let branch = route_detour_for_map(kind)
+        .map(|detour| quest.route_detour_encounter_multiplier(detour))
+        .unwrap_or(1.0);
+    (base
+        * quest.shrine_encounter_rate_multiplier()
+        * route
+        * branch
+        * side_quest_route_relief_multiplier(kind, quest)
+        * npc_errand_route_relief_multiplier(kind, quest)
+        * route_care_encounter_multiplier(kind, quest)
+        * companion_route_encounter_multiplier(kind, quest)
+        * companion_revisit_route_multiplier(kind, quest))
+    .clamp(0.0, 1.0)
+}
+
+const NPC_ERRAND_ROUTE_NONE: [NpcErrand; 0] = [];
+const NPC_ERRAND_ROUTE_MOON: [NpcErrand; 1] = [NpcErrand::BambooDewToCave];
+const NPC_ERRAND_ROUTE_RIVER_TOWN: [NpcErrand; 1] = [NpcErrand::MoonMossToRiver];
+const NPC_ERRAND_ROUTE_REED: [NpcErrand; 2] =
+    [NpcErrand::MoonMossToRiver, NpcErrand::RiverReedLetter];
+const NPC_ERRAND_ROUTE_PLAGUE: [NpcErrand; 1] = [NpcErrand::PlagueChildCharm];
+const NPC_ERRAND_ROUTE_MIRROR: [NpcErrand; 1] = [NpcErrand::CapitalStarSlip];
+const NPC_ERRAND_ROUTE_SOUTHERN: [NpcErrand; 1] = [NpcErrand::MirrorMedicineToSouth];
+const NPC_ERRAND_ROUTE_THUNDER: [NpcErrand; 2] = [
+    NpcErrand::MirrorMedicineToSouth,
+    NpcErrand::SouthernThunderWine,
+];
+const NPC_ERRAND_ROUTE_DREAM: [NpcErrand; 1] = [NpcErrand::FinalLampWick];
+const TRACKED_NPC_ERRANDS: [NpcErrand; 8] = [
+    NpcErrand::BambooDewToCave,
+    NpcErrand::MoonMossToRiver,
+    NpcErrand::RiverReedLetter,
+    NpcErrand::PlagueChildCharm,
+    NpcErrand::CapitalStarSlip,
+    NpcErrand::MirrorMedicineToSouth,
+    NpcErrand::SouthernThunderWine,
+    NpcErrand::FinalLampWick,
+];
+
+fn npc_errand_route_relief_errands(kind: MapKind) -> &'static [NpcErrand] {
+    match kind {
+        MapKind::Cave | MapKind::MoonEchoCorridor => &NPC_ERRAND_ROUTE_MOON,
+        MapKind::RiverTown => &NPC_ERRAND_ROUTE_RIVER_TOWN,
+        MapKind::RiverReedBed => &NPC_ERRAND_ROUTE_REED,
+        MapKind::PlagueVillage | MapKind::PlagueShrinePath => &NPC_ERRAND_ROUTE_PLAGUE,
+        MapKind::CapitalMansion | MapKind::MansionMirrorGallery => &NPC_ERRAND_ROUTE_MIRROR,
+        MapKind::SouthernRoad => &NPC_ERRAND_ROUTE_SOUTHERN,
+        MapKind::ThunderDrumPath => &NPC_ERRAND_ROUTE_THUNDER,
+        MapKind::DreamWaterway => &NPC_ERRAND_ROUTE_DREAM,
+        MapKind::Village | MapKind::Bamboo | MapKind::Capital | MapKind::FinalSanctum => {
+            &NPC_ERRAND_ROUTE_NONE
+        }
+    }
+}
+
+fn npc_errand_route_relief_count(kind: MapKind, quest: &QuestLog) -> usize {
+    npc_errand_route_relief_errands(kind)
+        .iter()
+        .filter(|errand| quest.is_npc_errand_completed(**errand))
+        .count()
+}
+
+fn npc_errand_route_relief_multiplier(kind: MapKind, quest: &QuestLog) -> f32 {
+    match npc_errand_route_relief_count(kind, quest) {
+        0 => 1.0,
+        1 => 0.97,
+        _ => 0.94,
+    }
+}
+
+fn npc_errand_route_relief_summary(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let count = npc_errand_route_relief_count(kind, quest);
+    if count == 0 {
+        return None;
+    }
+    let label = if count >= npc_errand_route_relief_errands(kind).len() && count > 1 {
+        "连稳"
+    } else {
+        "已稳"
+    };
+    Some(format!("托付回声 {label} 遇妖-{}%", count.min(2) * 3))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RouteCareState {
+    NoRoute,
+    Prepared,
+    Partial,
+    Unprepared,
+    Missed,
+}
+
+fn route_care_state(kind: MapKind, quest: &QuestLog) -> RouteCareState {
+    if route_mark_for_map(kind).is_none() {
+        return RouteCareState::NoRoute;
+    }
+
+    let route_chapter = map_chapter(kind);
+    let current_rank = chapter_rank(quest.current_chapter());
+    let route_rank = chapter_rank(route_chapter);
+    if current_rank < route_rank {
+        return RouteCareState::NoRoute;
+    }
+
+    let (bond_scene, camp_scene) = map_care_scenes(kind);
+    let bond_seen = quest.has_seen_bond_scene(bond_scene);
+    let camp_seen = quest.has_seen_camp_scene(camp_scene);
+
+    match (bond_seen, camp_seen) {
+        (true, true) => RouteCareState::Prepared,
+        (true, false) | (false, true) => RouteCareState::Partial,
+        (false, false) if current_rank > route_rank => RouteCareState::Missed,
+        (false, false) => RouteCareState::Unprepared,
+    }
+}
+
+fn route_care_encounter_multiplier(kind: MapKind, quest: &QuestLog) -> f32 {
+    match route_care_state(kind, quest) {
+        RouteCareState::NoRoute => 1.0,
+        RouteCareState::Prepared => 0.86,
+        RouteCareState::Partial => 0.94,
+        RouteCareState::Unprepared => 1.06,
+        RouteCareState::Missed => 1.12,
+    }
+}
+
+fn route_care_summary(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    match route_care_state(kind, quest) {
+        RouteCareState::NoRoute => None,
+        RouteCareState::Prepared => Some("路线照应 周全 遇妖-14%"),
+        RouteCareState::Partial => Some("路线照应 半备 遇妖-6%"),
+        RouteCareState::Unprepared => Some("路线照应 欠备 遇妖+6%"),
+        RouteCareState::Missed => Some("路线照应 错过 遇妖+12%"),
+    }
+}
+
+fn route_care_checkpoint_line(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    match route_care_state(kind, quest) {
+        RouteCareState::NoRoute => None,
+        RouteCareState::Prepared => {
+            Some("【同行照应】夜谈和歇脚处的暗号都接上了，灵儿与月衡分头看路，本路遇妖压力降低。")
+        }
+        RouteCareState::Partial => {
+            Some("【同行照应】这段路只记住了一半暗号，队伍仍能互相提醒，但防不住所有妖影。")
+        }
+        RouteCareState::Unprepared => {
+            Some("【同行照应】还没有把本章夜谈和营地休整补齐，草中妖影更容易截住去路。")
+        }
+        RouteCareState::Missed => {
+            Some("【同行照应】这段旧路错过了当时该说的话和该歇的脚，回头再走时妖影更缠人。")
+        }
+    }
+}
+
+const COMPANION_ROUTE_NONE: [CompanionScene; 0] = [];
+const COMPANION_ROUTE_TRAIL: [CompanionScene; 1] = [CompanionScene::SwordSisterTrailGuard];
+const COMPANION_ROUTE_CAPITAL: [CompanionScene; 1] = [CompanionScene::SwordSisterCapitalMirror];
+const COMPANION_ROUTE_SOUTHERN: [CompanionScene; 1] = [CompanionScene::SpiritWitchSouthernTotem];
+const COMPANION_ROUTE_FINAL: [CompanionScene; 2] = [
+    CompanionScene::SwordSisterFinalReturn,
+    CompanionScene::SpiritWitchFinalVow,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompanionRouteState {
+    NoRoute,
+    Partial,
+    Prepared,
+    Missed,
+}
+
+fn companion_route_scenes(kind: MapKind) -> &'static [CompanionScene] {
+    match kind {
+        MapKind::Village | MapKind::Bamboo | MapKind::MoonEchoCorridor => &COMPANION_ROUTE_TRAIL,
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+            &COMPANION_ROUTE_CAPITAL
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => &COMPANION_ROUTE_SOUTHERN,
+        MapKind::FinalSanctum | MapKind::DreamWaterway => &COMPANION_ROUTE_FINAL,
+        MapKind::Cave
+        | MapKind::RiverTown
+        | MapKind::RiverReedBed
+        | MapKind::PlagueVillage
+        | MapKind::PlagueShrinePath => &COMPANION_ROUTE_NONE,
+    }
+}
+
+fn companion_route_state(kind: MapKind, quest: &QuestLog) -> CompanionRouteState {
+    let scenes = companion_route_scenes(kind);
+    if scenes.is_empty() {
+        return CompanionRouteState::NoRoute;
+    }
+
+    let route_chapter = map_chapter(kind);
+    let current_rank = chapter_rank(quest.current_chapter());
+    let route_rank = chapter_rank(route_chapter);
+    if current_rank < route_rank {
+        return CompanionRouteState::NoRoute;
+    }
+
+    let seen = scenes
+        .iter()
+        .filter(|scene| quest.has_seen_companion_scene(**scene))
+        .count();
+    if seen == scenes.len() {
+        CompanionRouteState::Prepared
+    } else if seen > 0 {
+        CompanionRouteState::Partial
+    } else if current_rank > route_rank {
+        CompanionRouteState::Missed
+    } else {
+        CompanionRouteState::NoRoute
+    }
+}
+
+fn companion_route_encounter_multiplier(kind: MapKind, quest: &QuestLog) -> f32 {
+    if route_mark_for_map(kind).is_none() {
+        return 1.0;
+    }
+
+    match companion_route_state(kind, quest) {
+        CompanionRouteState::NoRoute => 1.0,
+        CompanionRouteState::Partial => 0.96,
+        CompanionRouteState::Prepared => 0.92,
+        CompanionRouteState::Missed => 1.04,
+    }
+}
+
+fn companion_revisit_for_route(kind: MapKind) -> Option<CompanionRevisit> {
+    match kind {
+        MapKind::PlagueShrinePath => Some(CompanionRevisit::TrailEcho),
+        MapKind::ThunderDrumPath => Some(CompanionRevisit::MirrorTrace),
+        MapKind::DreamWaterway => Some(CompanionRevisit::TotemVow),
+        _ => None,
+    }
+}
+
+fn companion_revisit_route_multiplier(kind: MapKind, quest: &QuestLog) -> f32 {
+    companion_revisit_for_route(kind)
+        .filter(|revisit| quest.companion_revisit_resolved(*revisit))
+        .map(|_| 0.96)
+        .unwrap_or(1.0)
+}
+
+fn companion_revisit_route_summary(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    let revisit = companion_revisit_for_route(kind)?;
+    if quest.companion_revisit_resolved(revisit) {
+        Some("小传补访 已补 遇妖-4%")
+    } else if quest.companion_revisit_active(revisit) {
+        Some("小传补访 寻访中")
+    } else {
+        None
+    }
+}
+
+fn companion_revisit_checkpoint_line(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    let revisit = companion_revisit_for_route(kind)?;
+    if !quest.companion_revisit_resolved(revisit) {
+        return None;
+    }
+    Some(match revisit {
+        CompanionRevisit::TrailEcho => {
+            "【补访照应】月衡把旧栅退路重新记进祠道，瘴雨妖影不再轻易截住后队。"
+        }
+        CompanionRevisit::MirrorTrace => "【补访照应】月衡借雷光照清旧案，回坡镜影更难从背后绕回。",
+        CompanionRevisit::TotemVow => {
+            "【补访照应】南瑶接回雷纹旧愿，归水回卷会提前避开同行人的名字。"
+        }
+    })
+}
+
+fn companion_route_summary(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    route_mark_for_map(kind)?;
+
+    match companion_route_state(kind, quest) {
+        CompanionRouteState::NoRoute => None,
+        CompanionRouteState::Partial => Some("小传照应 半备 遇妖-4%"),
+        CompanionRouteState::Prepared => Some("小传照应 周全 遇妖-8%"),
+        CompanionRouteState::Missed => Some("小传照应 错过 遇妖+4%"),
+    }
+}
+
+fn route_pressure_summary(kind: MapKind, quest: &QuestLog) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(care) = route_care_summary(kind, quest) {
+        parts.push(care.to_string());
+    }
+    if let Some(companion) = companion_route_summary(kind, quest) {
+        parts.push(companion.to_string());
+    }
+    if let Some(revisit) = companion_revisit_route_summary(kind, quest) {
+        parts.push(revisit.to_string());
+    }
+    if let Some(relief) = side_quest_route_relief_summary(kind, quest) {
+        parts.push(relief);
+    }
+    if let Some(errand) = npc_errand_route_relief_summary(kind, quest) {
+        parts.push(errand);
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
+}
+
+fn companion_route_checkpoint_line(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    match kind {
+        MapKind::MoonEchoCorridor
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterTrailGuard) =>
+        {
+            Some("【小传照应】林月衡记下旧栅退路，回声路上的妖影更难截断后队。")
+        }
+        MapKind::MansionMirrorGallery
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterCapitalMirror) =>
+        {
+            Some("【小传照应】林月衡认得照影案的旧破口，镜廊巡路更容易看穿虚影。")
+        }
+        MapKind::ThunderDrumPath
+            if quest.has_seen_companion_scene(CompanionScene::SpiritWitchSouthernTotem) =>
+        {
+            Some("【小传照应】南瑶听懂雷纹旧愿，鼓道乱雷会提前避开你们半步。")
+        }
+        MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterFinalReturn)
+                && quest.has_seen_companion_scene(CompanionScene::SpiritWitchFinalVow) =>
+        {
+            Some("【小传照应】月衡与南瑶都把归路记进灯里，旧梦水廊的回卷轻了许多。")
+        }
+        MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SwordSisterFinalReturn) =>
+        {
+            Some("【小传照应】林月衡的归剑压住水廊一侧，旧梦妖影少了一个截口。")
+        }
+        MapKind::DreamWaterway
+            if quest.has_seen_companion_scene(CompanionScene::SpiritWitchFinalVow) =>
+        {
+            Some("【小传照应】南瑶的归潮灯誓稳住水声，旧梦回卷会慢半拍。")
+        }
+        MapKind::MoonEchoCorridor
+            if companion_route_state(kind, quest) == CompanionRouteState::Missed =>
+        {
+            Some("【小传照应】旧栅小传错过了，回声路上少了月衡留下的后队退路。")
+        }
+        MapKind::MansionMirrorGallery
+            if companion_route_state(kind, quest) == CompanionRouteState::Missed =>
+        {
+            Some("【小传照应】照影旧案没有问清，镜廊里的虚影仍会绕回你们身后。")
+        }
+        MapKind::ThunderDrumPath
+            if companion_route_state(kind, quest) == CompanionRouteState::Missed =>
+        {
+            Some("【小传照应】雷纹旧愿错过了，鼓道乱雷会趁沉默处压住归路。")
+        }
+        MapKind::DreamWaterway
+            if companion_route_state(kind, quest) == CompanionRouteState::Missed =>
+        {
+            Some("【小传照应】终门小传没有补齐，旧梦水廊的回卷仍会追上后队。")
+        }
+        _ => None,
+    }
+}
+
+fn side_quest_route_checkpoint_line(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    match (kind, side_quest_route_relief_state(kind, quest)) {
+        (MapKind::MoonEchoCorridor, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】水月洞天已有一张委托归档，路印旁的巡灯亮得更远。")
+        }
+        (MapKind::MoonEchoCorridor, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】晶尘与回声都已交清，回廊路印把残余妖影压回石壁。")
+        }
+        (MapKind::RiverReedBed, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】江岸已有一张水签归档，芦滩夜路少了一处逆流灯影。")
+        }
+        (MapKind::RiverReedBed, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】河灯与湿货都归位，芦滩路印顺着人声亮起。")
+        }
+        (MapKind::PlagueShrinePath, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】瘴雨村急榜少了一张，旧铃路印能压住半段瘴风。")
+        }
+        (MapKind::PlagueShrinePath, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】救急药与药童都已安稳，祠道路印把病屋外的瘴影逼散。")
+        }
+        (MapKind::MansionMirrorGallery, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】府城密榜已有回执，镜廊偏门的粉记多了一处退路。")
+        }
+        (MapKind::MansionMirrorGallery, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】巡查与暗帖都交清，镜廊路印照出余影藏身处。")
+        }
+        (MapKind::ThunderDrumPath, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】灵道一段雷声已定，回坡路印暂时压低鼓道乱雷。")
+        }
+        (MapKind::ThunderDrumPath, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】雷纹与战鼓都安静了，回坡路印把灵道脉络接稳。")
+        }
+        (MapKind::DreamWaterway, SideQuestRouteReliefState::Partial) => {
+            Some("【委托清障】终门灯簿合上一页，归水路印少受一段旧梦回卷。")
+        }
+        (MapKind::DreamWaterway, SideQuestRouteReliefState::Cleared) => {
+            Some("【委托清障】梦灯余波与归潮旧愿都归簿，旧梦路印照住回程水线。")
+        }
+        _ => None,
+    }
+}
+
+fn npc_errand_route_checkpoint_line(kind: MapKind, quest: &QuestLog) -> Option<&'static str> {
+    match (kind, npc_errand_route_relief_count(kind, quest)) {
+        (MapKind::MoonEchoCorridor, 1..) => {
+            Some("【托付回声】竹露送到后，路印旁的月寒药香把回声妖影逼远了一圈。")
+        }
+        (MapKind::RiverReedBed, 1) => {
+            Some("【托付回声】月苔水符压住渡口寒雾，芦叶间的伏妖声低了半拍。")
+        }
+        (MapKind::RiverReedBed, 2..) => {
+            Some("【托付回声】月苔与芦滩小信都已归位，新浅渡路图让夜巡少绕一段险水。")
+        }
+        (MapKind::PlagueShrinePath, 1..) => {
+            Some("【托付回声】病童护符牵住药篮，祠道瘴源不再贴着路印冒气。")
+        }
+        (MapKind::MansionMirrorGallery, 1..) => {
+            Some("【托付回声】星图密片点明换镜时辰，镜廊路印能提前避开假脚步。")
+        }
+        (MapKind::SouthernRoad, 1..) => {
+            Some("【托付回声】照影药引显出草路灰毒，南疆路印少了一层京华残影。")
+        }
+        (MapKind::ThunderDrumPath, 1) => {
+            Some("【托付回声】照影药引压住雷草灰毒，鼓道边缘的伏影退开半步。")
+        }
+        (MapKind::ThunderDrumPath, 2..) => {
+            Some("【托付回声】药引和雷草酒都已送到，雷鼓路印旁的药炉稳住守夜火。")
+        }
+        (MapKind::DreamWaterway, 1..) => {
+            Some("【托付回声】旧梦灯芯亮进誓灯，水廊路印不再被回卷完全吞没。")
+        }
+        _ => None,
+    }
 }
 
 fn service_price(service: NpcService, kind: MapKind, quest: &QuestLog) -> u32 {
@@ -3576,10 +6511,125 @@ fn service_price(service: NpcService, kind: MapKind, quest: &QuestLog) -> u32 {
     }
 }
 
+fn gear_offer_for_map(kind: MapKind) -> Option<GearOffer> {
+    match kind {
+        MapKind::Village => Some(GearOffer {
+            gear: ShopGear::VillageSwordTassel,
+            price: VILLAGE_GEAR_PRICE,
+            atk: 2,
+            def: 1,
+            max_hp: 0,
+            max_mp: 0,
+            seller: "余杭药铺",
+            flavor: "旧剑穗压住剑柄浮躁，出手更稳。",
+        }),
+        MapKind::RiverTown => Some(GearOffer {
+            gear: ShopGear::RiverSilkVest,
+            price: RIVER_GEAR_PRICE,
+            atk: 0,
+            def: 2,
+            max_hp: 12,
+            max_mp: 4,
+            seller: "江岸绣铺",
+            flavor: "水绫缝进护衣，行船遇妖时能护住心口。",
+        }),
+        MapKind::Capital => Some(GearOffer {
+            gear: ShopGear::CapitalMirrorGuard,
+            price: CAPITAL_GEAR_PRICE,
+            atk: 1,
+            def: 4,
+            max_hp: 10,
+            max_mp: 0,
+            seller: "云都暗铺",
+            flavor: "护心镜把照影术反光压低，近战不易被虚招绕住。",
+        }),
+        MapKind::SouthernRoad => Some(GearOffer {
+            gear: ShopGear::SouthernThunderCharm,
+            price: SOUTHERN_GEAR_PRICE,
+            atk: 3,
+            def: 1,
+            max_hp: 0,
+            max_mp: 8,
+            seller: "南疆行商",
+            flavor: "雷纹护符贴在腕上，剑势和灵力都会多一分余震。",
+        }),
+        MapKind::Bamboo
+        | MapKind::Cave
+        | MapKind::MoonEchoCorridor
+        | MapKind::RiverReedBed
+        | MapKind::PlagueVillage
+        | MapKind::PlagueShrinePath
+        | MapKind::CapitalMansion
+        | MapKind::MansionMirrorGallery
+        | MapKind::ThunderDrumPath
+        | MapKind::FinalSanctum
+        | MapKind::DreamWaterway => None,
+    }
+}
+
+fn stat_delta_text(offer: GearOffer) -> String {
+    let mut deltas = Vec::new();
+    if offer.atk != 0 {
+        deltas.push(format!("攻击 +{}", offer.atk));
+    }
+    if offer.def != 0 {
+        deltas.push(format!("防御 +{}", offer.def));
+    }
+    if offer.max_hp != 0 {
+        deltas.push(format!("气血上限 +{}", offer.max_hp));
+    }
+    if offer.max_mp != 0 {
+        deltas.push(format!("灵力上限 +{}", offer.max_mp));
+    }
+    deltas.join("，")
+}
+
+fn apply_gear_offer(
+    offer: GearOffer,
+    quest: &mut QuestLog,
+    stats: &mut PlayerStats,
+) -> NpcServiceResult {
+    if stats.gold < offer.price {
+        return NpcServiceResult {
+            line: format!(
+                "【装备铺】{}留着{}，要 {} 文；你现在只有 {} 文。",
+                offer.seller,
+                offer.gear.name(),
+                offer.price,
+                stats.gold
+            ),
+            rested: false,
+        };
+    }
+
+    stats.gold -= offer.price;
+    stats.atk += offer.atk;
+    stats.def += offer.def;
+    stats.max_hp += offer.max_hp;
+    stats.hp += offer.max_hp;
+    stats.max_mp += offer.max_mp;
+    stats.mp += offer.max_mp;
+    quest.record_shop_gear(offer.gear);
+
+    NpcServiceResult {
+        line: format!(
+            "【装备铺】花 {} 文买下{}，{} 剩余 {} 文。{}\n【装备成长】{} · {}",
+            offer.price,
+            offer.gear.name(),
+            offer.flavor,
+            stats.gold,
+            stat_delta_text(offer),
+            quest.shop_gear_summary(),
+            "之后再找此处商人会改买药水"
+        ),
+        rested: false,
+    }
+}
+
 fn apply_npc_service(
     service: NpcService,
     kind: MapKind,
-    quest: &QuestLog,
+    quest: &mut QuestLog,
     stats: &mut PlayerStats,
 ) -> NpcServiceResult {
     match service {
@@ -3643,6 +6693,12 @@ fn apply_npc_service(
             }
         }
         NpcService::Shop => {
+            if let Some(offer) = gear_offer_for_map(kind) {
+                if !quest.has_shop_gear(offer.gear) {
+                    return apply_gear_offer(offer, quest, stats);
+                }
+            }
+
             let price = service_price(NpcService::Shop, kind, quest);
             if stats.spend_gold(price) {
                 stats.potions += 1;
@@ -3693,6 +6749,22 @@ fn apply_bond_reward(stats: &mut PlayerStats, reward: BondReward) -> String {
     }
 }
 
+fn apply_companion_scene_reward(stats: &mut PlayerStats, reward: CompanionSceneReward) -> String {
+    let levels = stats.gain_exp(reward.exp);
+    stats.potions += reward.potions;
+    if levels > 0 {
+        format!(
+            "【小传奖励】经验 +{}，药水 +{}，境界提升至 Lv.{}。",
+            reward.exp, reward.potions, stats.level
+        )
+    } else {
+        format!(
+            "【小传奖励】经验 +{}，药水 +{}。",
+            reward.exp, reward.potions
+        )
+    }
+}
+
 fn portal_gate_message(
     current: MapKind,
     target: MapKind,
@@ -3722,6 +6794,97 @@ fn portal_gate_message(
     }
 }
 
+fn portal_transition_flavor(current: MapKind, target: MapKind) -> &'static str {
+    match (current, target) {
+        (MapKind::Village, MapKind::Bamboo) => {
+            "村灯被竹影吞在身后，山径妖雾把第一段江湖路推到脚前。"
+        }
+        (MapKind::Bamboo, MapKind::Cave) => "青竹尽头的水声忽然贴近，月洞石门在雾里开出冷光。",
+        (MapKind::Cave, MapKind::MoonEchoCorridor) => {
+            "洞壁水纹向东退开，回声窄廊把每一步都还给你们。"
+        }
+        (MapKind::MoonEchoCorridor, MapKind::Cave) => {
+            "回廊水光渐稳，月洞祭司那边仍留着一盏引路灯。"
+        }
+        (MapKind::Cave, MapKind::RiverTown) => "月魄水色散进江雾，远处药庐与码头灯火一起亮起。",
+        (MapKind::RiverTown, MapKind::RiverReedBed) => {
+            "镇口水灯倒映成线，芦滩里的浅水把脚步声压得很低。"
+        }
+        (MapKind::RiverReedBed, MapKind::PlagueVillage) => {
+            "芦叶后的江风忽然发苦，瘴雨村的旧铃声从雾里传来。"
+        }
+        (MapKind::PlagueVillage, MapKind::PlagueShrinePath) => {
+            "黑草贴着祠道生长，净瘴铃在前方断断续续地回应。"
+        }
+        (MapKind::PlagueShrinePath, MapKind::PlagueVillage) => {
+            "祠道瘴声被抛在身后，村中药火仍在苦雨里守着。"
+        }
+        (MapKind::PlagueVillage, MapKind::Capital) => {
+            "瘴雨退成远雾，云都高墙把所有传闻都压进灯下。"
+        }
+        (MapKind::Capital, MapKind::CapitalMansion) => {
+            "府邸门灯无风自晃，照影案的冷光从偏院石阶下渗出。"
+        }
+        (MapKind::CapitalMansion, MapKind::MansionMirrorGallery) => {
+            "偏院纸灯照出第二道人影，镜廊深处传来翻账声。"
+        }
+        (MapKind::MansionMirrorGallery, MapKind::CapitalMansion) => {
+            "镜光退回廊柱之间，偏院内线仍在等密札合拢。"
+        }
+        (MapKind::Capital, MapKind::SouthernRoad) => {
+            "京华灯影在背后熄成一点，南疆雷云贴着山脊压来。"
+        }
+        (MapKind::SouthernRoad, MapKind::ThunderDrumPath) => {
+            "灵道路旁的雷草一齐伏低，鼓声从石坡深处滚上来。"
+        }
+        (MapKind::ThunderDrumPath, MapKind::SouthernRoad) => {
+            "鼓道乱雷被山风带远，南疆灵道重新露出归路。"
+        }
+        (MapKind::SouthernRoad, MapKind::FinalSanctum) => {
+            "雷云尽处水声倒卷，灵渊终门把来路照成一线。"
+        }
+        (MapKind::FinalSanctum, MapKind::DreamWaterway) => {
+            "终门灯火沉入水面，旧梦水廊把未说完的话卷回来。"
+        }
+        (MapKind::DreamWaterway, MapKind::FinalSanctum) => {
+            "水廊回声渐轻，守灯人的灯影仍停在终门之前。"
+        }
+        _ => "光门把脚下道路换成另一段风声，任务簿也随之翻到当前页。",
+    }
+}
+
+fn portal_transition_lines(current: MapKind, target: MapKind, quest: &QuestLog) -> Vec<String> {
+    let ledger = quest.main_task_ledger();
+    let landing = if main_task_target_matches_map(quest.stage(), target) {
+        format!(
+            "【落点】{}就是当前主线目标地，先找{}。",
+            target.def().name,
+            ledger.contact
+        )
+    } else {
+        format!(
+            "【落点】抵达{}，任务引路仍指向{}。",
+            target.def().name,
+            ledger.place
+        )
+    };
+
+    vec![
+        format!("【界门】{} -> {}", current.def().name, target.def().name),
+        portal_transition_flavor(current, target).to_string(),
+        format!(
+            "【章程】{} · {} {}/{} · {}",
+            quest.chapter_title(),
+            ledger.receipt,
+            ledger.step,
+            ledger.total,
+            ledger.action
+        ),
+        landing,
+        format!("【目标】{}", quest.objective()),
+    ]
+}
+
 fn encounter_zone(kind: MapKind) -> EncounterZone {
     match kind {
         MapKind::Village => EncounterZone::Village,
@@ -3746,6 +6909,15 @@ fn companion_style(companion: Companion) -> PaperdollStyle {
     match companion {
         Companion::Linger => PaperdollStyle::Linger,
         Companion::SwordSister => PaperdollStyle::Ranger,
+        Companion::SpiritWitch => PaperdollStyle::Mystic,
+    }
+}
+
+fn companion_afterimage_color(companion: Companion) -> Color {
+    match companion {
+        Companion::Linger => Color::srgba(0.90, 0.70, 1.0, 0.32),
+        Companion::SwordSister => Color::srgba(0.62, 0.86, 1.0, 0.34),
+        Companion::SpiritWitch => Color::srgba(0.68, 1.0, 0.78, 0.32),
     }
 }
 
@@ -3756,6 +6928,9 @@ fn desired_party_followers(quest: &QuestLog) -> Vec<Companion> {
     }
     if quest.has_companion(Companion::SwordSister) {
         followers.push(Companion::SwordSister);
+    }
+    if quest.has_companion(Companion::SpiritWitch) {
+        followers.push(Companion::SpiritWitch);
     }
     followers
 }
@@ -3819,6 +6994,23 @@ pub struct Dialogue {
     after: DialogueAfter,
     choice: Option<DialogueChoice>,
     portrait_path: Option<&'static str>,
+    chapter_art: Option<ChapterArtAssets>,
+}
+
+impl Dialogue {
+    fn showing_chapter_art(&self) -> bool {
+        if !self.active || self.choice.is_some() {
+            return false;
+        }
+        self.chapter_art.is_some()
+            && self
+                .lines
+                .iter()
+                .position(|line| line.starts_with("【卷章展开】"))
+                .is_some_and(|start| {
+                    self.idx >= start && self.idx < start + CHAPTER_CARD_LINE_COUNT
+                })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3842,10 +7034,41 @@ enum DialogueChoiceKind {
         side: SideQuest,
         action: SideQuestChoiceAction,
     },
+    CommissionTrace {
+        side: SideQuest,
+        name: &'static str,
+        active_line: &'static str,
+        source: &'static str,
+        inactive_line: &'static str,
+        repeat_line: &'static str,
+    },
+    NpcErrand {
+        errand: NpcErrand,
+        action: NpcErrandChoiceAction,
+    },
+    CompanionRevisit {
+        revisit: CompanionRevisit,
+        action: CompanionRevisitChoiceAction,
+    },
+    RouteDetour {
+        detour: RouteDetour,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SideQuestChoiceAction {
+    Accept,
+    TurnIn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NpcErrandChoiceAction {
+    Accept,
+    TurnIn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompanionRevisitChoiceAction {
     Accept,
     TurnIn,
 }
@@ -3909,6 +7132,34 @@ impl DialogueChoice {
         }
     }
 
+    fn commission_trace(trace: &CommissionTraceDef) -> Self {
+        Self {
+            kind: DialogueChoiceKind::CommissionTrace {
+                side: trace.side,
+                name: trace.name,
+                active_line: trace.active_line,
+                source: trace.source,
+                inactive_line: trace.inactive_line,
+                repeat_line: trace.repeat_line,
+            },
+            selected: 0,
+        }
+    }
+
+    fn npc_errand(errand: NpcErrand, action: NpcErrandChoiceAction) -> Self {
+        Self {
+            kind: DialogueChoiceKind::NpcErrand { errand, action },
+            selected: 0,
+        }
+    }
+
+    fn companion_revisit(revisit: CompanionRevisit, action: CompanionRevisitChoiceAction) -> Self {
+        Self {
+            kind: DialogueChoiceKind::CompanionRevisit { revisit, action },
+            selected: 0,
+        }
+    }
+
     fn side_board(kind: MapKind, quest: &QuestLog) -> Self {
         Self {
             kind: DialogueChoiceKind::SideBoard {
@@ -3925,6 +7176,13 @@ impl DialogueChoice {
         }
     }
 
+    fn route_detour(detour: RouteDetour) -> Self {
+        Self {
+            kind: DialogueChoiceKind::RouteDetour { detour },
+            selected: 0,
+        }
+    }
+
     fn selected_response(self) -> BondResponse {
         match self.selected {
             0 => BondResponse::Courage,
@@ -3934,6 +7192,27 @@ impl DialogueChoice {
 
     fn selected_camp_bonus(self) -> CampBonus {
         camp_tactic_bonus(self.selected)
+    }
+
+    fn selected_detour_approach(self) -> RouteDetourApproach {
+        match self.selected {
+            0 => RouteDetourApproach::Scout,
+            _ => RouteDetourApproach::PressOn,
+        }
+    }
+
+    fn selected_side_quest_resolution(self) -> SideQuestResolution {
+        match self.selected {
+            1 => SideQuestResolution::Pursue,
+            _ => SideQuestResolution::Settle,
+        }
+    }
+
+    fn selected_commission_trace_approach(self) -> SideQuestFieldApproach {
+        match self.selected {
+            1 => SideQuestFieldApproach::Confront,
+            _ => SideQuestFieldApproach::Investigate,
+        }
     }
 
     fn selected_side_board_task(self) -> Option<SideBoardTaskOption> {
@@ -3949,16 +7228,31 @@ impl DialogueChoice {
     }
 
     fn accepted(self) -> bool {
-        self.selected == 0
+        match self.kind {
+            DialogueChoiceKind::SideQuest {
+                action: SideQuestChoiceAction::TurnIn,
+                ..
+            } => self.selected < 2,
+            DialogueChoiceKind::CommissionTrace { .. } => self.selected < 2,
+            _ => self.selected == 0,
+        }
     }
 
     fn option_count(self) -> usize {
         match self.kind {
             DialogueChoiceKind::CampTactic => 3,
             DialogueChoiceKind::SideBoard { options } => options.into_iter().flatten().count(),
+            DialogueChoiceKind::SideQuest {
+                action: SideQuestChoiceAction::TurnIn,
+                ..
+            } => 3,
+            DialogueChoiceKind::CommissionTrace { .. } => 3,
             DialogueChoiceKind::BondResponse
+            | DialogueChoiceKind::RouteDetour { .. }
             | DialogueChoiceKind::MainQuest { .. }
-            | DialogueChoiceKind::SideQuest { .. } => 2,
+            | DialogueChoiceKind::SideQuest { .. }
+            | DialogueChoiceKind::NpcErrand { .. }
+            | DialogueChoiceKind::CompanionRevisit { .. } => 2,
         }
     }
 
@@ -3966,7 +7260,8 @@ impl DialogueChoice {
         match self.kind {
             DialogueChoiceKind::BondResponse => "你要怎样回应赵灵儿？".to_string(),
             DialogueChoiceKind::CampTactic => "下一场战斗采用哪种营地战术？".to_string(),
-            DialogueChoiceKind::SideBoard { .. } => "要查看哪一份委托？".to_string(),
+            DialogueChoiceKind::SideBoard { .. } => "要查看哪一份委托契约？".to_string(),
+            DialogueChoiceKind::RouteDetour { .. } => "要怎样处理这条路线分支？".to_string(),
             DialogueChoiceKind::MainQuest {
                 action: MainQuestChoiceAction::Accept,
                 ..
@@ -3986,11 +7281,30 @@ impl DialogueChoice {
             DialogueChoiceKind::SideQuest {
                 action: SideQuestChoiceAction::Accept,
                 ..
-            } => "要领取这份委托并写入任务簿吗？".to_string(),
+            } => "要签下这份委托契约并开始追踪吗？".to_string(),
             DialogueChoiceKind::SideQuest {
                 action: SideQuestChoiceAction::TurnIn,
                 ..
-            } => "要交付这份委托并领取报酬吗？".to_string(),
+            } => "要怎样交付这份委托契约？".to_string(),
+            DialogueChoiceKind::CommissionTrace { name, .. } => {
+                format!("要怎样处理《{name}》这处委托现场？")
+            }
+            DialogueChoiceKind::NpcErrand {
+                action: NpcErrandChoiceAction::Accept,
+                ..
+            } => "要接下这份 NPC 托付并写入任务簿吗？".to_string(),
+            DialogueChoiceKind::NpcErrand {
+                action: NpcErrandChoiceAction::TurnIn,
+                ..
+            } => "要交付这份 NPC 托付吗？".to_string(),
+            DialogueChoiceKind::CompanionRevisit {
+                action: CompanionRevisitChoiceAction::Accept,
+                ..
+            } => "要领取这份同伴补访签并开始追踪吗？".to_string(),
+            DialogueChoiceKind::CompanionRevisit {
+                action: CompanionRevisitChoiceAction::TurnIn,
+                ..
+            } => "要交付这份同伴补访签吗？".to_string(),
         }
     }
 
@@ -4001,10 +7315,14 @@ impl DialogueChoice {
                 _ => "我们慢慢来。".to_string(),
             },
             DialogueChoiceKind::CampTactic => camp_tactic_bonus(index).tactic_label().to_string(),
+            DialogueChoiceKind::RouteDetour { .. } => match index {
+                0 => RouteDetourApproach::Scout.action_label().to_string(),
+                _ => RouteDetourApproach::PressOn.action_label().to_string(),
+            },
             DialogueChoiceKind::SideBoard { options } => options
                 .get(index)
                 .and_then(|option| *option)
-                .map(|option| format!("{} · {}", option.side.name(), option.status.label()))
+                .map(|option| option.option_label())
                 .unwrap_or_else(|| "返回".to_string()),
             DialogueChoiceKind::MainQuest {
                 action: MainQuestChoiceAction::Accept,
@@ -4045,7 +7363,43 @@ impl DialogueChoice {
                 action: SideQuestChoiceAction::TurnIn,
                 ..
             } => match index {
-                0 => "交付领奖".to_string(),
+                0 => "稳妥封存".to_string(),
+                1 => "追查余波".to_string(),
+                _ => "先不处理".to_string(),
+            },
+            DialogueChoiceKind::CommissionTrace { .. } => match index {
+                0 => SideQuestFieldApproach::Investigate
+                    .action_label()
+                    .to_string(),
+                1 => SideQuestFieldApproach::Confront.action_label().to_string(),
+                _ => "先不处理".to_string(),
+            },
+            DialogueChoiceKind::NpcErrand {
+                action: NpcErrandChoiceAction::Accept,
+                ..
+            } => match index {
+                0 => "接下托付".to_string(),
+                _ => "先不处理".to_string(),
+            },
+            DialogueChoiceKind::NpcErrand {
+                action: NpcErrandChoiceAction::TurnIn,
+                ..
+            } => match index {
+                0 => "交付托付".to_string(),
+                _ => "先不处理".to_string(),
+            },
+            DialogueChoiceKind::CompanionRevisit {
+                action: CompanionRevisitChoiceAction::Accept,
+                ..
+            } => match index {
+                0 => "领取补访签".to_string(),
+                _ => "先不处理".to_string(),
+            },
+            DialogueChoiceKind::CompanionRevisit {
+                action: CompanionRevisitChoiceAction::TurnIn,
+                ..
+            } => match index {
+                0 => "交付补访签".to_string(),
                 _ => "先不处理".to_string(),
             },
         }
@@ -4084,6 +7438,39 @@ struct PlayerLight;
 #[derive(Component)]
 struct PartyFollower {
     companion: Companion,
+    trail_timer: f32,
+}
+
+#[derive(Component, Clone, Copy)]
+struct LayeredNpcPart {
+    part: CutoutPart,
+    origin: Vec3,
+    base_offset: Vec2,
+    base_size: Vec2,
+    phase: f32,
+}
+
+#[derive(Component, Clone, Copy)]
+struct CharacterGroundShadow {
+    owner: Option<Entity>,
+    origin: Vec3,
+    offset: Vec2,
+    base_size: Vec2,
+    base_alpha: f32,
+    phase: f32,
+    speed: f32,
+    z: f32,
+    track_scene_motion: bool,
+}
+
+#[derive(Component, Clone, Copy)]
+struct CharacterAfterimage {
+    age: f32,
+    duration: f32,
+    base_color: Color,
+    velocity: Vec2,
+    start_scale: Vec3,
+    end_scale: Vec3,
 }
 
 #[derive(Component)]
@@ -4139,6 +7526,14 @@ struct DialogueLine;
 #[derive(Component)]
 struct DialoguePortrait;
 
+#[derive(Component)]
+struct ChapterArtRoot {
+    layout: Handle<TextureAtlasLayout>,
+    timer: f32,
+    frame: usize,
+    active_sheet: Option<&'static str>,
+}
+
 #[derive(Component, Clone, Copy)]
 struct QuestMarker {
     kind: QuestMarkerKind,
@@ -4150,12 +7545,21 @@ struct QuestMarker {
 enum QuestMarkerKind {
     Role(QuestRole),
     SideBoard(MapKind),
+    SideContact(MapKind),
+    NpcErrandOffer(NpcErrand),
+    NpcErrandDelivery(NpcErrand),
+    CompanionRevisitGiver(CompanionRevisit),
+    CompanionRevisitField(CompanionRevisit),
+    CommissionTrace(SideQuest),
     Lamp(FinalLamp),
     RiverLantern(RiverLantern),
     PlagueWard(PlagueWard),
     MansionMirror(MansionMirrorNode),
     ThunderDrum(ThunderDrum),
     Crystal(MoonCrystal),
+    RouteMark(RouteMark),
+    RouteDetour(RouteDetour),
+    FieldSupply(FieldSupply),
 }
 
 #[derive(Component, Clone, Copy)]
@@ -4258,6 +7662,18 @@ struct CharacterBodyMotion {
     brightness: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CharacterShadowFrame {
+    scale: Vec3,
+    alpha: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CharacterAfterimageFrame {
+    progress: f32,
+    alpha_scale: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AmbientKind {
     Firefly,
@@ -4291,6 +7707,9 @@ struct MapSpawnParams<'w, 's> {
     lights: Res<'w, LightingAssets>,
     anims: Res<'w, AnimationAssets>,
     explore_assets: Res<'w, ExploreAssets>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    terrain_materials: ResMut<'w, Assets<TerrainMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
     map_content: Query<'w, 's, Entity, With<MapContent>>,
     area_banners: Query<'w, 's, Entity, With<AreaBanner>>,
     fog_memory: ResMut<'w, fog::FogMemory>,
@@ -4301,7 +7720,8 @@ pub struct ExplorePlugin;
 impl Plugin for ExplorePlugin {
     fn build(&self, app: &mut App) {
         let assets = app.world().resource::<AssetServer>().clone();
-        app.init_resource::<PlayerPos>()
+        app.add_plugins(Material2dPlugin::<TerrainMaterial>::default())
+            .init_resource::<PlayerPos>()
             .init_resource::<CurrentMap>()
             .init_resource::<MoveCooldown>()
             .init_resource::<Dialogue>()
@@ -4315,6 +7735,9 @@ impl Plugin for ExplorePlugin {
                     sync_player_transform,
                     sync_party_followers,
                     update_scene_motions,
+                    update_layered_npc_parts,
+                    update_character_shadows,
+                    update_character_afterimages,
                     update_ambient_particles,
                     update_area_banners,
                     update_quest_notice,
@@ -4345,6 +7768,10 @@ fn spawn_explore(
     dolls: Res<PaperdollAssets>,
     lights: Res<LightingAssets>,
     anims: Res<AnimationAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     mut fog_memory: ResMut<fog::FogMemory>,
 ) {
     let map = MapData::build(current.0);
@@ -4362,6 +7789,9 @@ fn spawn_explore(
         &anims,
         &explore_assets,
         &map,
+        &mut meshes,
+        &mut terrain_materials,
+        &mut images,
     );
     spawn_area_banner(&mut commands, &font, &map, &quest);
     commands.insert_resource(map);
@@ -4497,6 +7927,35 @@ fn spawn_explore(
             ));
         });
 
+    // --- Chapter art (only visible while a one-time chapter card is being read) ---
+    let chapter_art_layout = layouts.add(TextureAtlasLayout::from_grid(
+        UVec2::new(640, 352),
+        8,
+        4,
+        None,
+        None,
+    ));
+    commands.spawn((
+        ChapterArtRoot {
+            layout: chapter_art_layout,
+            timer: 0.0,
+            frame: 0,
+            active_sheet: None,
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            top: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            ..default()
+        },
+        ImageNode::solid_color(Color::NONE),
+        Visibility::Hidden,
+        GlobalZIndex(42),
+        DespawnOnExit(AppState::Explore),
+    ));
+
     // --- Dialogue box (hidden until active) ---
     commands
         .spawn((
@@ -4515,6 +7974,7 @@ fn spawn_explore(
             },
             BackgroundColor(Color::srgba(0.05, 0.05, 0.12, 0.92)),
             Visibility::Hidden,
+            GlobalZIndex(55),
             DespawnOnExit(AppState::Explore),
         ))
         .with_children(|p| {
@@ -4599,91 +8059,32 @@ fn spawn_map_content(
     anims: &AnimationAssets,
     explore_assets: &ExploreAssets,
     map: &MapData,
+    meshes: &mut Assets<Mesh>,
+    terrain_materials: &mut Assets<TerrainMaterial>,
+    images: &mut Assets<Image>,
 ) {
+    let terrain = spawn_terrain_map(
+        commands,
+        meshes,
+        terrain_materials,
+        images,
+        explore_assets,
+        map,
+        1.0,
+        AppState::Explore,
+    );
+    commands.entity(terrain.backdrop).insert(MapContent);
+    commands.entity(terrain.surface).insert(MapContent);
+
     for row in 0..MAP_H {
         for col in 0..MAP_W {
             let tile = map.at(col, row);
             let p = tile_to_world(col, row);
-            let mut tile_entity = commands.spawn((
-                MapContent,
-                tile_sprite(tile, map.kind, explore_assets),
-                Transform::from_xyz(p.x, p.y, 0.0),
-                DespawnOnExit(AppState::Explore),
-            ));
-
             if tile == Tile::Wall {
-                tile_entity
-                    .insert(Occluder2d::rectangle(TILE * 0.92, TILE * 0.92).with_opacity(0.82));
-                let (detail_image, detail_color) = match map.kind {
-                    MapKind::Village => {
-                        (explore_assets.forest.clone(), Color::srgb(0.34, 0.58, 0.35))
-                    }
-                    MapKind::Bamboo => (
-                        explore_assets.bamboo_thicket.clone(),
-                        Color::srgb(0.38, 0.70, 0.38),
-                    ),
-                    MapKind::Cave => (
-                        explore_assets.moon_cave_wall.clone(),
-                        Color::srgb(0.54, 0.48, 0.72),
-                    ),
-                    MapKind::MoonEchoCorridor => (
-                        explore_assets.moon_cave_wall.clone(),
-                        Color::srgb(0.42, 0.52, 0.78),
-                    ),
-                    MapKind::RiverTown => (
-                        explore_assets.shrine_floor.clone(),
-                        Color::srgb(0.58, 0.62, 0.52),
-                    ),
-                    MapKind::RiverReedBed => (
-                        explore_assets.bamboo_thicket.clone(),
-                        Color::srgb(0.42, 0.58, 0.36),
-                    ),
-                    MapKind::PlagueVillage => (
-                        explore_assets.mystic_grass.clone(),
-                        Color::srgb(0.42, 0.52, 0.34),
-                    ),
-                    MapKind::PlagueShrinePath => (
-                        explore_assets.bamboo_thicket.clone(),
-                        Color::srgb(0.30, 0.50, 0.30),
-                    ),
-                    MapKind::Capital => (
-                        explore_assets.stone_road.clone(),
-                        Color::srgb(0.46, 0.46, 0.58),
-                    ),
-                    MapKind::CapitalMansion => (
-                        explore_assets.stone_road.clone(),
-                        Color::srgb(0.34, 0.34, 0.48),
-                    ),
-                    MapKind::MansionMirrorGallery => (
-                        explore_assets.moon_cave_wall.clone(),
-                        Color::srgb(0.38, 0.44, 0.66),
-                    ),
-                    MapKind::SouthernRoad => (
-                        explore_assets.bamboo_thicket.clone(),
-                        Color::srgb(0.30, 0.64, 0.44),
-                    ),
-                    MapKind::ThunderDrumPath => (
-                        explore_assets.bamboo_thicket.clone(),
-                        Color::srgb(0.34, 0.70, 0.58),
-                    ),
-                    MapKind::FinalSanctum => (
-                        explore_assets.moon_cave_wall.clone(),
-                        Color::srgb(0.40, 0.42, 0.66),
-                    ),
-                    MapKind::DreamWaterway => (
-                        explore_assets.moon_cave_wall.clone(),
-                        Color::srgb(0.38, 0.46, 0.70),
-                    ),
-                };
                 commands.spawn((
                     MapContent,
-                    Sprite {
-                        image: detail_image,
-                        color: detail_color,
-                        custom_size: Some(Vec2::splat(TILE * 0.62)),
-                        ..default()
-                    },
-                    Transform::from_xyz(p.x, p.y, 0.5),
+                    Occluder2d::rectangle(TILE * 0.92, TILE * 0.92).with_opacity(0.82),
+                    Transform::from_xyz(p.x, p.y, 0.1),
                     DespawnOnExit(AppState::Explore),
                 ));
             }
@@ -4738,8 +8139,16 @@ fn spawn_map_content(
         spawn_prop(commands, font, asset_server, lights, map.kind, prop);
     }
 
+    for supply in field_supply_defs(map.kind) {
+        spawn_field_supply(commands, font, asset_server, lights, supply);
+    }
+
+    for trace in commission_trace_defs(map.kind) {
+        spawn_commission_trace(commands, font, asset_server, lights, trace);
+    }
+
     for npc in npc_defs(map.kind) {
-        spawn_npc(commands, font, asset_server, dolls, lights, npc);
+        spawn_npc(commands, font, asset_server, dolls, lights, map.kind, npc);
     }
 
     spawn_map_ambience(commands, lights, map.kind);
@@ -4754,6 +8163,18 @@ fn spawn_map_content(
         AppState::Explore,
     );
     commands.entity(player).insert((MapContent, PlayerSprite));
+    spawn_owned_character_shadow(
+        commands,
+        lights,
+        player,
+        Vec3::new(pp.x, pp.y, 10.0),
+        Vec2::new(0.0, -32.0),
+        Vec2::new(58.0, 14.0),
+        0.35,
+        0.28,
+        5.4,
+        4.35,
+    );
     let player_light = lighting::spawn_light(
         commands,
         lights,
@@ -4767,6 +8188,118 @@ fn spawn_map_content(
         .insert((MapContent, PlayerLight));
 
     fog::spawn_explore_fog(commands);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_owned_character_shadow(
+    commands: &mut Commands,
+    lights: &LightingAssets,
+    owner: Entity,
+    origin: Vec3,
+    offset: Vec2,
+    base_size: Vec2,
+    phase: f32,
+    base_alpha: f32,
+    speed: f32,
+    z: f32,
+) {
+    spawn_character_shadow(
+        commands,
+        lights,
+        CharacterGroundShadow {
+            owner: Some(owner),
+            origin,
+            offset,
+            base_size,
+            base_alpha,
+            phase,
+            speed,
+            z,
+            track_scene_motion: false,
+        },
+    );
+}
+
+fn spawn_scene_character_shadow(
+    commands: &mut Commands,
+    lights: &LightingAssets,
+    origin: Vec3,
+    offset: Vec2,
+    base_size: Vec2,
+    phase: f32,
+    base_alpha: f32,
+) {
+    spawn_character_shadow(
+        commands,
+        lights,
+        CharacterGroundShadow {
+            owner: None,
+            origin,
+            offset,
+            base_size,
+            base_alpha,
+            phase,
+            speed: 2.25,
+            z: 4.05,
+            track_scene_motion: true,
+        },
+    );
+}
+
+fn spawn_character_shadow(
+    commands: &mut Commands,
+    lights: &LightingAssets,
+    shadow: CharacterGroundShadow,
+) {
+    commands.spawn((
+        MapContent,
+        shadow,
+        Sprite {
+            image: lights.orb.clone(),
+            color: Color::srgba(0.0, 0.0, 0.0, shadow.base_alpha),
+            custom_size: Some(shadow.base_size),
+            ..default()
+        },
+        Transform::from_translation(Vec3::new(
+            shadow.origin.x + shadow.offset.x,
+            shadow.origin.y + shadow.offset.y,
+            shadow.z,
+        )),
+        DespawnOnExit(AppState::Explore),
+    ));
+}
+
+fn spawn_sprite_afterimage(
+    commands: &mut Commands,
+    source: &Sprite,
+    source_transform: &Transform,
+    tint: Color,
+    duration: f32,
+    velocity: Vec2,
+) {
+    let mut sprite = source.clone();
+    sprite.color = tint;
+    let mut transform = source_transform.clone();
+    transform.translation.z -= 0.42;
+
+    commands.spawn((
+        MapContent,
+        sprite,
+        transform,
+        CharacterAfterimage {
+            age: 0.0,
+            duration,
+            base_color: tint,
+            velocity,
+            start_scale: source_transform.scale,
+            end_scale: Vec3::new(
+                source_transform.scale.x * 1.08,
+                source_transform.scale.y * 1.03,
+                source_transform.scale.z,
+            ),
+        },
+        DespawnOnExit(AppState::Explore),
+    ));
 }
 
 fn spawn_map_ambience(commands: &mut Commands, lights: &LightingAssets, kind: MapKind) {
@@ -4968,7 +8501,56 @@ fn ambient_profile(kind: MapKind) -> AmbientProfile {
     }
 }
 
-pub(crate) fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> Sprite {
+const TERRAIN_SOURCE_SIZE: f32 = 512.0;
+// A prime-sized sample de-correlates common AI-art divisions (64/128/256px)
+// from the 40-unit gameplay grid. The centered crop also discards vignette
+// edges that do not belong in a repeating terrain field.
+const TERRAIN_SAMPLE_SIZE: f32 = 61.0;
+const TERRAIN_SAMPLES_PER_AXIS: i32 = 7;
+const TERRAIN_SOURCE_INSET: f32 =
+    (TERRAIN_SOURCE_SIZE - TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLES_PER_AXIS as f32) * 0.5;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TerrainSample {
+    pub rect: Rect,
+    pub flip_x: bool,
+    pub flip_y: bool,
+}
+
+fn terrain_axis_sample(index: i32) -> (i32, bool) {
+    let phase = index.rem_euclid(TERRAIN_SAMPLES_PER_AXIS * 2);
+    if phase < TERRAIN_SAMPLES_PER_AXIS {
+        (phase, false)
+    } else {
+        (TERRAIN_SAMPLES_PER_AXIS * 2 - 1 - phase, true)
+    }
+}
+
+/// Samples terrain in world space using a mirrored 7-cell sweep. Reversing
+/// both the source index and the sprite orientation keeps every shared edge
+/// continuous, including textures whose outer edges are not perfectly tiled.
+pub(crate) fn terrain_sample(col: i32, row: i32) -> TerrainSample {
+    let (source_col, flip_x) = terrain_axis_sample(col);
+    let (source_row, flip_y) = terrain_axis_sample(row);
+    let x0 = TERRAIN_SOURCE_INSET + source_col as f32 * TERRAIN_SAMPLE_SIZE;
+    let y0 = TERRAIN_SOURCE_INSET + source_row as f32 * TERRAIN_SAMPLE_SIZE;
+    debug_assert!(x0 + TERRAIN_SAMPLE_SIZE <= TERRAIN_SOURCE_SIZE);
+    debug_assert!(y0 + TERRAIN_SAMPLE_SIZE <= TERRAIN_SOURCE_SIZE);
+
+    TerrainSample {
+        rect: Rect::new(x0, y0, x0 + TERRAIN_SAMPLE_SIZE, y0 + TERRAIN_SAMPLE_SIZE),
+        flip_x,
+        flip_y,
+    }
+}
+
+pub(crate) fn tile_sprite(
+    tile: Tile,
+    kind: MapKind,
+    assets: &ExploreAssets,
+    col: i32,
+    row: i32,
+) -> Sprite {
     let (image, color) = match tile {
         Tile::Wall => match kind {
             MapKind::Village => (assets.forest.clone(), Color::srgb(0.22, 0.43, 0.23)),
@@ -5048,12 +8630,143 @@ pub(crate) fn tile_sprite(tile: Tile, kind: MapKind, assets: &ExploreAssets) -> 
         },
     };
 
+    let sample = terrain_sample(col, row);
     Sprite {
         image,
         color,
         custom_size: Some(Vec2::splat(TILE + 0.5)),
+        rect: Some(sample.rect),
+        flip_x: sample.flip_x,
+        flip_y: sample.flip_y,
         ..default()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TerrainRenderEntities {
+    pub backdrop: Entity,
+    pub surface: Entity,
+}
+
+fn terrain_id(tile: Tile) -> u8 {
+    match tile {
+        Tile::Grass => 1,
+        Tile::Wall => 2,
+        Tile::Water => 3,
+        Tile::Npc | Tile::Path | Tile::Portal => 0,
+    }
+}
+
+fn terrain_tint(color: Color, scale: f32) -> Vec4 {
+    let color = color.to_linear();
+    Vec4::new(
+        color.red * scale,
+        color.green * scale,
+        color.blue * scale,
+        color.alpha,
+    )
+}
+
+fn terrain_id_image(map: &MapData) -> Image {
+    let mut data = Vec::with_capacity((MAP_W * MAP_H * 4) as usize);
+    for row in 0..MAP_H {
+        for col in 0..MAP_W {
+            data.extend_from_slice(&[terrain_id(map.at(col, row)), 0, 0, 255]);
+        }
+    }
+    let mut image = Image::new(
+        Extent3d {
+            width: MAP_W as u32,
+            height: MAP_H as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    image
+}
+
+/// Renders the entire logical map as one continuous material. Terrain IDs stay
+/// tile-based for gameplay, while the shader samples textures in world space
+/// and feathers neighboring terrain types across their shared boundary.
+pub(crate) fn spawn_terrain_map(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<TerrainMaterial>,
+    images: &mut Assets<Image>,
+    assets: &ExploreAssets,
+    map: &MapData,
+    wall_dim: f32,
+    state: AppState,
+) -> TerrainRenderEntities {
+    let floor = tile_sprite(Tile::Path, map.kind, assets, 0, 0);
+    let grass = tile_sprite(Tile::Grass, map.kind, assets, 0, 0);
+    let mut wall = tile_sprite(Tile::Wall, map.kind, assets, 0, 0);
+    let water = tile_sprite(Tile::Water, map.kind, assets, 0, 0);
+
+    let wall_tint = terrain_tint(wall.color, wall_dim);
+    let wall_image = wall.image.clone();
+    let wall_color = wall.color.to_srgba();
+    wall.rect = None;
+    wall.flip_x = false;
+    wall.flip_y = false;
+    wall.custom_size = Some(Vec2::new(
+        (MAP_W as f32 + 14.0) * TILE,
+        (MAP_H as f32 + 14.0) * TILE,
+    ));
+    wall.color = Color::srgba(
+        wall_color.red * wall_dim * 0.72,
+        wall_color.green * wall_dim * 0.72,
+        wall_color.blue * wall_dim * 0.72,
+        0.96,
+    );
+    let backdrop = commands
+        .spawn((
+            wall,
+            Transform::from_xyz(0.0, 0.0, -1.0),
+            DespawnOnExit(state),
+        ))
+        .id();
+
+    let kind_seed = map.kind as u32;
+    let phase_x = ((kind_seed * 5 + 2) % 14) as f32 + 0.37;
+    let phase_y = ((kind_seed * 9 + 4) % 14) as f32 + 0.61;
+    let tile_ids = images.add(terrain_id_image(map));
+    let material = materials.add(TerrainMaterial {
+        tile_ids,
+        floor: floor.image,
+        grass: grass.image,
+        wall: wall_image,
+        water: water.image,
+        params: TerrainMaterialParams {
+            floor_tint: terrain_tint(floor.color, 1.0),
+            grass_tint: terrain_tint(grass.color, 1.0),
+            wall_tint,
+            water_tint: terrain_tint(water.color, 1.0),
+            map: Vec4::new(MAP_W as f32, MAP_H as f32, TILE, 0.22),
+            sample: Vec4::new(
+                TERRAIN_SOURCE_SIZE,
+                TERRAIN_SOURCE_INSET,
+                TERRAIN_SAMPLE_SIZE * TERRAIN_SAMPLES_PER_AXIS as f32,
+                TERRAIN_SAMPLE_SIZE,
+            ),
+            phase: Vec4::new(phase_x, phase_y, 0.075, 0.0),
+        },
+    });
+    let mesh = meshes.add(Rectangle::new(MAP_W as f32 * TILE, MAP_H as f32 * TILE));
+    let surface = commands
+        .spawn((
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            DespawnOnExit(state),
+        ))
+        .id();
+
+    TerrainRenderEntities { backdrop, surface }
 }
 
 fn spawn_quest_marker(
@@ -5250,6 +8963,159 @@ fn spawn_prop(
             prop.col as f32 * 0.19 + prop.row as f32 * 0.07,
         );
     }
+
+    if let Some(mark) = route_mark_for_prop(kind, prop) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::RouteMark(mark),
+            p,
+            TILE * 0.76,
+            prop.col as f32 * 0.19 + prop.row as f32 * 0.07,
+        );
+        if let Some(revisit) = CompanionRevisit::for_target_mark(mark) {
+            spawn_quest_marker(
+                commands,
+                font,
+                lights,
+                QuestMarkerKind::CompanionRevisitField(revisit),
+                p,
+                TILE * 1.18,
+                prop.col as f32 * 0.19 + prop.row as f32 * 0.07 + 0.43,
+            );
+        }
+    }
+
+    if let Some(detour) = route_detour_for_prop(kind, prop) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::RouteDetour(detour),
+            p,
+            TILE * 0.76,
+            prop.col as f32 * 0.19 + prop.row as f32 * 0.07,
+        );
+    }
+}
+
+fn spawn_field_supply(
+    commands: &mut Commands,
+    font: &GameFont,
+    asset_server: &AssetServer,
+    lights: &LightingAssets,
+    supply: &FieldSupplyDef,
+) {
+    let p = tile_to_world(supply.col, supply.row);
+    let origin = Vec3::new(p.x, p.y + 2.0, 4.15);
+    let phase = scene_phase(supply.col, supply.row);
+    let motion_kind = match supply.path {
+        "props/ai_cave_crystal.png" => SceneMotionKind::Crystal,
+        "props/ai_spring.png" => SceneMotionKind::SpiritLantern,
+        _ => SceneMotionKind::Shrine,
+    };
+
+    commands.spawn((
+        MapContent,
+        SceneMotion::new(motion_kind, origin, phase),
+        Sprite {
+            image: asset_server.load(supply.path),
+            custom_size: Some(Vec2::splat(supply.size)),
+            ..default()
+        },
+        Transform::from_translation(origin),
+        DespawnOnExit(AppState::Explore),
+    ));
+
+    if supply.light[3] > 0.0 {
+        let light_origin = Vec3::new(p.x, p.y, 2.7);
+        let light_color = Color::srgba(
+            supply.light[0],
+            supply.light[1],
+            supply.light[2],
+            supply.light[3],
+        );
+        let supply_light = lighting::spawn_light(
+            commands,
+            lights,
+            light_origin,
+            TILE * 2.2,
+            light_color,
+            AppState::Explore,
+        );
+        commands.entity(supply_light).insert((
+            MapContent,
+            SceneLightPulse::new(motion_kind, light_origin, phase, TILE * 2.2, light_color),
+        ));
+    }
+
+    spawn_quest_marker(
+        commands,
+        font,
+        lights,
+        QuestMarkerKind::FieldSupply(supply.supply),
+        p,
+        TILE * 0.58,
+        phase + 0.37,
+    );
+}
+
+fn spawn_commission_trace(
+    commands: &mut Commands,
+    font: &GameFont,
+    asset_server: &AssetServer,
+    lights: &LightingAssets,
+    trace: &CommissionTraceDef,
+) {
+    let p = tile_to_world(trace.col, trace.row);
+    let origin = Vec3::new(p.x, p.y + 2.0, 4.18);
+    let phase = scene_phase(trace.col, trace.row) + 0.61;
+    let motion_kind = scene_motion_for_prop_path(trace.path);
+
+    commands.spawn((
+        MapContent,
+        SceneMotion::new(motion_kind, origin, phase),
+        Sprite {
+            image: asset_server.load(trace.path),
+            custom_size: Some(Vec2::splat(trace.size)),
+            ..default()
+        },
+        Transform::from_translation(origin),
+        DespawnOnExit(AppState::Explore),
+    ));
+
+    if trace.light[3] > 0.0 {
+        let light_origin = Vec3::new(p.x, p.y, 2.72);
+        let light_color = Color::srgba(
+            trace.light[0],
+            trace.light[1],
+            trace.light[2],
+            trace.light[3],
+        );
+        let trace_light = lighting::spawn_light(
+            commands,
+            lights,
+            light_origin,
+            TILE * 2.35,
+            light_color,
+            AppState::Explore,
+        );
+        commands.entity(trace_light).insert((
+            MapContent,
+            SceneLightPulse::new(motion_kind, light_origin, phase, TILE * 2.35, light_color),
+        ));
+    }
+
+    spawn_quest_marker(
+        commands,
+        font,
+        lights,
+        QuestMarkerKind::CommissionTrace(trace.side),
+        p,
+        TILE * 0.58,
+        phase + 0.21,
+    );
 }
 
 fn spawn_npc(
@@ -5258,11 +9124,12 @@ fn spawn_npc(
     asset_server: &AssetServer,
     dolls: &PaperdollAssets,
     lights: &LightingAssets,
+    kind: MapKind,
     npc: &NpcDef,
 ) {
     let p = tile_to_world(npc.col, npc.row);
     let phase = scene_phase(npc.col, npc.row);
-    let (entity, light_color, origin) = match npc.visual {
+    let (motion_entity, light_color, origin) = match npc.visual {
         NpcVisual::Paperdoll(style) => {
             let origin = Vec3::new(p.x, p.y, 5.0);
             let entity = paperdoll::spawn_paperdoll(
@@ -5273,33 +9140,40 @@ fn spawn_npc(
                 paperdoll::OVERWORLD_SIZE,
                 AppState::Explore,
             );
-            (entity, Color::srgba(1.0, 0.82, 0.42, 0.25), origin)
+            spawn_owned_character_shadow(
+                commands,
+                lights,
+                entity,
+                origin,
+                Vec2::new(0.0, -paperdoll::OVERWORLD_SIZE * 0.42),
+                Vec2::new(
+                    paperdoll::OVERWORLD_SIZE * 0.72,
+                    paperdoll::OVERWORLD_SIZE * 0.18,
+                ),
+                phase,
+                0.25,
+                2.0,
+                4.12,
+            );
+            (Some(entity), Color::srgba(1.0, 0.82, 0.42, 0.25), origin)
         }
         NpcVisual::Image { path, size, light } => {
             let origin = Vec3::new(p.x, p.y + 6.0, 5.0);
-            let entity = commands
-                .spawn((
-                    Sprite {
-                        image: asset_server.load(path),
-                        custom_size: Some(Vec2::splat(size)),
-                        ..default()
-                    },
-                    Transform::from_translation(origin),
-                    DespawnOnExit(AppState::Explore),
-                ))
-                .id();
+            spawn_layered_npc_cutout(commands, asset_server, lights, path, origin, size, phase);
             (
-                entity,
+                None,
                 Color::srgba(light[0], light[1], light[2], light[3]),
                 origin,
             )
         }
     };
 
-    commands.entity(entity).insert((
-        MapContent,
-        SceneMotion::new(SceneMotionKind::Npc, origin, phase),
-    ));
+    if let Some(entity) = motion_entity {
+        commands.entity(entity).insert((
+            MapContent,
+            SceneMotion::new(SceneMotionKind::Npc, origin, phase),
+        ));
+    }
     let light_origin = Vec3::new(p.x, p.y, 3.5);
     let npc_light = lighting::spawn_light(
         commands,
@@ -5329,6 +9203,95 @@ fn spawn_npc(
             TILE * 0.72,
             npc.col as f32 * 0.23 + npc.row as f32 * 0.11,
         );
+    }
+    if is_side_quest_contact(kind, npc) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::SideContact(kind),
+            p,
+            TILE * 0.72,
+            npc.col as f32 * 0.23 + npc.row as f32 * 0.11 + 0.53,
+        );
+    }
+    if let Some(errand) = npc_errand_offer_for(kind, npc) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::NpcErrandOffer(errand),
+            p,
+            TILE * 0.72,
+            npc.col as f32 * 0.23 + npc.row as f32 * 0.11 + 0.91,
+        );
+    }
+    if let Some(errand) = npc_errand_delivery_for(kind, npc) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::NpcErrandDelivery(errand),
+            p,
+            TILE * 0.72,
+            npc.col as f32 * 0.23 + npc.row as f32 * 0.11 + 1.19,
+        );
+    }
+    if let Some(revisit) = npc_companion_revisit_for(kind, npc) {
+        spawn_quest_marker(
+            commands,
+            font,
+            lights,
+            QuestMarkerKind::CompanionRevisitGiver(revisit),
+            p,
+            TILE * 0.96,
+            npc.col as f32 * 0.23 + npc.row as f32 * 0.11 + 1.43,
+        );
+    }
+}
+
+fn spawn_layered_npc_cutout(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    lights: &LightingAssets,
+    path: &'static str,
+    origin: Vec3,
+    size: f32,
+    phase: f32,
+) {
+    let image = asset_server.load(path);
+    spawn_scene_character_shadow(
+        commands,
+        lights,
+        origin,
+        Vec2::new(0.0, -size * 0.43),
+        Vec2::new(size * 0.64, size * 0.15),
+        phase,
+        0.24,
+    );
+    for spec in cutout_part_specs(cutout_source_px_for_path(path), size) {
+        commands.spawn((
+            MapContent,
+            LayeredNpcPart {
+                part: spec.part,
+                origin,
+                base_offset: spec.offset,
+                base_size: spec.size,
+                phase,
+            },
+            Sprite {
+                image: image.clone(),
+                rect: Some(spec.rect),
+                custom_size: Some(spec.size),
+                ..default()
+            },
+            Transform::from_xyz(
+                origin.x + spec.offset.x,
+                origin.y + spec.offset.y,
+                origin.z + spec.part.z_offset(),
+            ),
+            DespawnOnExit(AppState::Explore),
+        ));
     }
 }
 
@@ -5470,6 +9433,30 @@ fn follower_body_motion(slot: usize, moving: bool, phase: f32) -> CharacterBodyM
     }
 }
 
+fn character_shadow_frame(base_alpha: f32, t: f32) -> CharacterShadowFrame {
+    let breath = pulse01(t);
+    let step = (t * 1.7).sin().abs();
+    CharacterShadowFrame {
+        scale: Vec3::new(
+            0.90 + breath * 0.10 + step * 0.08,
+            0.90 - breath * 0.08 + step * 0.025,
+            1.0,
+        ),
+        alpha: (base_alpha * (0.78 + (1.0 - breath) * 0.18 + step * 0.10)).clamp(0.02, 0.62),
+    }
+}
+
+fn character_afterimage_frame(age: f32, duration: f32) -> Option<CharacterAfterimageFrame> {
+    if duration <= 0.0 || age >= duration {
+        return None;
+    }
+    let progress = (age / duration).clamp(0.0, 1.0);
+    Some(CharacterAfterimageFrame {
+        progress,
+        alpha_scale: (1.0 - progress).powf(1.35),
+    })
+}
+
 fn area_route_label(kind: MapKind, stage: QuestStage) -> String {
     let target = kind.portal_target(stage);
     if portal_gate_message(kind, target, stage).is_some() {
@@ -5549,6 +9536,7 @@ fn explore_input(
                     dialogue.after = result.after;
                     dialogue.choice = result.choice;
                     dialogue.idx = 0;
+                    dialogue.chapter_art = result.chapter_art;
                 }
             }
             return;
@@ -5562,6 +9550,7 @@ fn explore_input(
                 }
                 dialogue.active = false;
                 dialogue.portrait_path = None;
+                dialogue.chapter_art = None;
                 match std::mem::take(&mut dialogue.after) {
                     DialogueAfter::None => {}
                     DialogueAfter::StartBattle(encounter) => {
@@ -5586,6 +9575,7 @@ fn explore_input(
             let mut after = DialogueAfter::None;
             let mut pending_choice = None;
             let mut story_advanced = false;
+            let mut chapter_art = None;
             if let Some(role) = npc.quest {
                 if let Some(choice) = main_quest_choice_for(&quest, role) {
                     if let DialogueChoiceKind::MainQuest { action, .. } = choice.kind {
@@ -5600,24 +9590,52 @@ fn explore_input(
                 }
             }
             if story_advanced {
-                if let Some(chapter_card) = quest.take_chapter_card() {
-                    lines.extend(chapter_card);
-                }
+                chapter_art = append_chapter_card(&mut quest, &mut lines);
             }
             if !story_advanced && pending_choice.is_none() {
-                lines.extend(npc_reaction_lines(map.kind, npc, &quest));
-                if let Some(service) = npc_service_for(map.kind, npc) {
-                    let service_result = apply_npc_service(service, map.kind, &quest, &mut stats);
-                    let rested = service_result.rested;
-                    lines.push(service_result.line);
-                    if rested {
-                        let camp = quest.interact_camp_scene();
-                        if camp.tactic_choice {
-                            if let Some(default_bonus) = camp.bonus {
-                                pending_choice = Some(DialogueChoice::camp_tactic(default_bonus));
-                            }
+                if let Some(handoff) = npc_side_quest_handoff(map.kind, npc, &quest) {
+                    lines.extend(handoff.lines);
+                    pending_choice = handoff.choice;
+                } else if let Some(handoff) = npc_errand_handoff(map.kind, npc, &quest) {
+                    lines.extend(handoff.lines);
+                    pending_choice = handoff.choice;
+                } else if let Some(handoff) = npc_companion_revisit_handoff(map.kind, npc, &quest) {
+                    lines.extend(handoff.lines);
+                    pending_choice = handoff.choice;
+                } else {
+                    lines.extend(npc_reaction_lines(map.kind, npc, &quest));
+                    if npc.quest.is_none() {
+                        if let Some(reward) = quest.claim_care_aftermath(map_chapter(map.kind)) {
+                            lines.push(apply_care_aftermath_reward(&mut stats, reward));
                         }
-                        lines.extend(camp.lines);
+                        lines.extend(claim_local_companion_scene_followup(
+                            map.kind, &mut quest, &mut stats,
+                        ));
+                        if let Some(reward) =
+                            quest.claim_commission_aftermath(map_chapter(map.kind))
+                        {
+                            lines.push(local_commission_aftermath_line(map.kind).to_string());
+                            lines.push(apply_commission_aftermath_reward(&mut stats, reward));
+                        }
+                        lines.extend(claim_local_route_detour_report(
+                            map.kind, &mut quest, &mut stats,
+                        ));
+                    }
+                    if let Some(service) = npc_service_for(map.kind, npc) {
+                        let service_result =
+                            apply_npc_service(service, map.kind, &mut quest, &mut stats);
+                        let rested = service_result.rested;
+                        lines.push(service_result.line);
+                        if rested {
+                            let camp = quest.interact_camp_scene();
+                            if camp.tactic_choice {
+                                if let Some(default_bonus) = camp.bonus {
+                                    pending_choice =
+                                        Some(DialogueChoice::camp_tactic(default_bonus));
+                                }
+                            }
+                            lines.extend(camp.lines);
+                        }
                     }
                 }
             }
@@ -5627,6 +9645,7 @@ fn explore_input(
             dialogue.after = after;
             dialogue.choice = pending_choice;
             dialogue.portrait_path = dialogue_portrait_path(npc.visual);
+            dialogue.chapter_art = chapter_art;
             return;
         }
 
@@ -5636,30 +9655,143 @@ fn explore_input(
         {
             let mut pending_choice = None;
             let mut lines = if let Some(lantern) = river_lantern_for_prop(map.kind, prop) {
-                quest.activate_river_lantern(lantern)
+                let was_lit = quest.river_lantern_marker_for(lantern) == "✓";
+                let mut lines = quest.activate_river_lantern(lantern);
+                let is_lit = quest.river_lantern_marker_for(lantern) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::RiverLanterns,
+                    "河灯已巡",
+                    was_lit,
+                    is_lit,
+                );
+                lines
             } else if let Some(node) = mansion_mirror_for_prop(map.kind, prop) {
-                quest.align_mansion_mirror(node)
+                let was_aligned = quest.mansion_mirror_marker_for(node) == "✓";
+                let mut lines = quest.align_mansion_mirror(node);
+                let is_aligned = quest.mansion_mirror_marker_for(node) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::CapitalRumors,
+                    "镜阵暗文已拓",
+                    was_aligned,
+                    is_aligned,
+                );
+                lines
             } else if let Some(ward) = plague_ward_for_prop(map.kind, prop) {
-                quest.seal_plague_ward(ward)
+                let was_sealed = quest.plague_ward_marker_for(ward) == "✓";
+                let mut lines = quest.seal_plague_ward(ward);
+                let is_sealed = quest.plague_ward_marker_for(ward) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::PlagueRelief,
+                    "净瘴铃位已封",
+                    was_sealed,
+                    is_sealed,
+                );
+                lines
             } else if let Some(drum) = thunder_drum_for_prop(map.kind, prop) {
-                quest.align_thunder_drum(drum)
+                let was_aligned = quest.thunder_drum_marker_for(drum) == "✓";
+                let mut lines = quest.align_thunder_drum(drum);
+                let is_aligned = quest.thunder_drum_marker_for(drum) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::SouthernThunder,
+                    "雷鼓图腾已定",
+                    was_aligned,
+                    is_aligned,
+                );
+                lines
             } else if let Some(lamp) = final_lamp_for_prop(map.kind, prop) {
-                quest.light_final_lamp(lamp)
+                let was_lit = quest.final_lamp_marker_for(lamp) == "✓";
+                let mut lines = quest.light_final_lamp(lamp);
+                let is_lit = quest.final_lamp_marker_for(lamp) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::FinalDreamEchoes,
+                    "忆梦灯已守",
+                    was_lit,
+                    is_lit,
+                );
+                lines
             } else if let Some(crystal) = moon_crystal_for_prop(map.kind, prop) {
-                quest.activate_moon_crystal(crystal)
+                let was_lit = quest.moon_crystal_marker_for(crystal) == "✓";
+                let mut lines = quest.activate_moon_crystal(crystal);
+                let is_lit = quest.moon_crystal_marker_for(crystal) == "✓";
+                append_side_objective_progress(
+                    &mut lines,
+                    &mut quest,
+                    SideQuest::MoonCaveCrystals,
+                    "晶阵已净",
+                    was_lit,
+                    is_lit,
+                );
+                lines
+            } else if let Some(mark) = route_mark_for_prop(map.kind, prop) {
+                let was_marked = quest.route_mark_marker_for(mark) == "✓";
+                let mut lines = quest.interact_route_mark(mark);
+                let is_marked = quest.route_mark_marker_for(mark) == "✓";
+                if let Some((side, source)) = route_mark_side_objective(mark) {
+                    append_side_objective_progress(
+                        &mut lines, &mut quest, side, source, was_marked, is_marked,
+                    );
+                }
+                if let Some(revisit) = quest.active_companion_revisit_at(mark) {
+                    let interaction = quest.resolve_companion_revisit(revisit);
+                    lines.extend(interaction.lines);
+                    if let Some(reward) = interaction.reward {
+                        lines.push(apply_companion_scene_reward(&mut stats, reward));
+                    }
+                    lines.push(quest.companion_revisit_contract(revisit));
+                }
+                if let Some(line) = route_care_checkpoint_line(map.kind, &quest) {
+                    lines.push(line.to_string());
+                }
+                if let Some(line) = companion_route_checkpoint_line(map.kind, &quest) {
+                    lines.push(line.to_string());
+                }
+                if let Some(line) = companion_revisit_checkpoint_line(map.kind, &quest) {
+                    lines.push(line.to_string());
+                }
+                if let Some(line) = side_quest_route_checkpoint_line(map.kind, &quest) {
+                    lines.push(line.to_string());
+                }
+                if let Some(line) = npc_errand_route_checkpoint_line(map.kind, &quest) {
+                    lines.push(line.to_string());
+                }
+                lines
+            } else if let Some(detour) = route_detour_for_prop(map.kind, prop) {
+                if !quest.has_route_detour(detour) {
+                    pending_choice = Some(DialogueChoice::route_detour(detour));
+                }
+                quest.route_detour_preview(detour)
             } else if !side_quests_for_board(map.kind, prop).is_empty() {
                 pending_choice = Some(DialogueChoice::side_board(map.kind, &quest));
                 side_board_overview_lines(map.kind, &quest)
             } else if is_bond_lantern(prop) {
-                let interaction = quest.interact_bond_scene();
-                let mut lines = interaction.lines;
-                if let Some(reward) = interaction.reward {
-                    lines.push(apply_bond_reward(&mut stats, reward));
+                if quest.companion_scene_available().is_some() {
+                    let interaction = quest.interact_companion_scene();
+                    let mut lines = interaction.lines;
+                    if let Some(reward) = interaction.reward {
+                        lines.push(apply_companion_scene_reward(&mut stats, reward));
+                    }
+                    lines
+                } else {
+                    let interaction = quest.interact_bond_scene();
+                    let mut lines = interaction.lines;
+                    if let Some(reward) = interaction.reward {
+                        lines.push(apply_bond_reward(&mut stats, reward));
+                    }
+                    if interaction.response_choice {
+                        pending_choice = Some(DialogueChoice::bond_response());
+                    }
+                    lines
                 }
-                if interaction.response_choice {
-                    pending_choice = Some(DialogueChoice::bond_response());
-                }
-                lines
             } else if let Some(cache) = treasure_for_prop(map.kind, prop) {
                 if quest.has_opened_treasure(cache) {
                     if let Some(blessing) = shrine_blessing_for_prop(map.kind, prop) {
@@ -5687,6 +9819,67 @@ fn explore_input(
             dialogue.after = DialogueAfter::None;
             dialogue.choice = pending_choice;
             dialogue.portrait_path = None;
+            dialogue.chapter_art = None;
+            return;
+        }
+
+        if let Some(supply) =
+            field_supply_defs(map.kind).find(|supply| supply.col == tc && supply.row == tr)
+        {
+            let interaction = quest.interact_field_supply(supply.supply);
+            let mut lines = interaction.lines;
+            if let Some(reward) = interaction.reward {
+                lines.push(apply_supply_reward(&mut stats, reward));
+            }
+            lines.push(quest.main_task_summary());
+            dialogue.active = true;
+            dialogue.lines = lines;
+            dialogue.idx = 0;
+            dialogue.after = DialogueAfter::None;
+            dialogue.choice = None;
+            dialogue.portrait_path = None;
+            dialogue.chapter_art = None;
+            return;
+        }
+
+        if let Some(trace) =
+            commission_trace_defs(map.kind).find(|trace| trace.col == tc && trace.row == tr)
+        {
+            let can_choose = quest.is_side_quest_active(trace.side)
+                && !quest.is_side_quest_completed(trace.side)
+                && !quest.has_commission_trace(trace.side);
+            let (mut lines, choice) = if can_choose {
+                (
+                    vec![
+                        format!("【委托现场】{} · {}", trace.side.name(), trace.name),
+                        trace.active_line.to_string(),
+                        "【处理选择】细查会留下回访线索，快断会记录现场速断法。".to_string(),
+                        quest.side_task_contract(trace.side),
+                    ],
+                    Some(DialogueChoice::commission_trace(trace)),
+                )
+            } else {
+                (
+                    quest.interact_commission_trace(
+                        trace.side,
+                        trace.name,
+                        trace.active_line,
+                        trace.source,
+                        trace.inactive_line,
+                        trace.repeat_line,
+                    ),
+                    None,
+                )
+            };
+            lines.push(quest.side_task_summary(trace.side));
+            lines.push(quest.main_task_summary());
+            dialogue.active = true;
+            dialogue.lines = lines;
+            dialogue.idx = 0;
+            dialogue.after = DialogueAfter::None;
+            dialogue.choice = choice;
+            dialogue.portrait_path = None;
+            dialogue.chapter_art = None;
             return;
         }
     }
@@ -5709,10 +9902,15 @@ fn explore_input(
                             format!("【目标】{}", quest.objective()),
                         ];
                         dialogue.idx = 0;
+                        dialogue.after = DialogueAfter::None;
+                        dialogue.choice = None;
+                        dialogue.portrait_path = None;
+                        dialogue.chapter_art = None;
                         cooldown.0 = 0.18;
                         return;
                     }
 
+                    let transition_lines = portal_transition_lines(current.0, target, &quest);
                     current.0 = target;
                     let new_map = MapData::build(current.0);
                     move_player_to_spawn(&new_map, &mut pos);
@@ -5733,9 +9931,19 @@ fn explore_input(
                         &spawner.anims,
                         &spawner.explore_assets,
                         &new_map,
+                        &mut spawner.meshes,
+                        &mut spawner.terrain_materials,
+                        &mut spawner.images,
                     );
                     spawn_area_banner(&mut commands, &spawner.font, &new_map, &quest);
                     commands.insert_resource(new_map);
+                    dialogue.active = true;
+                    dialogue.lines = transition_lines;
+                    dialogue.idx = 0;
+                    dialogue.after = DialogueAfter::None;
+                    dialogue.choice = None;
+                    dialogue.portrait_path = None;
+                    dialogue.chapter_art = None;
                     cooldown.0 = 0.18;
                     return;
                 }
@@ -5744,7 +9952,8 @@ fn explore_input(
                 pos.row = nr;
                 cooldown.0 = 0.14;
                 // Random encounter when stepping into grass.
-                if tile == Tile::Grass && rng.chance(rate.0) {
+                if tile == Tile::Grass && rng.chance(route_encounter_rate(rate.0, map.kind, &quest))
+                {
                     commands.insert_resource(PendingEncounter {
                         zone: encounter_zone(map.kind),
                         kind: EncounterKind::Random,
@@ -5761,9 +9970,12 @@ fn explore_input(
 }
 
 fn sync_player_transform(
+    mut commands: Commands,
     intent: Res<Intent>,
     anims: Res<AnimationAssets>,
     pos: Res<PlayerPos>,
+    time: Res<Time>,
+    mut trail_timer: Local<f32>,
     mut q: Query<(&mut Transform, &mut Sprite, &mut SpriteAnimation), With<PlayerSprite>>,
     mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerSprite>)>,
 ) {
@@ -5781,6 +9993,23 @@ fn sync_player_transform(
         if pos.facing.x != 0 {
             sprite.flip_x = pos.facing.x < 0;
         }
+        if moving {
+            *trail_timer += time.delta_secs();
+            if *trail_timer >= 0.075 {
+                *trail_timer = 0.0;
+                let facing = if sprite.flip_x { -1.0 } else { 1.0 };
+                spawn_sprite_afterimage(
+                    &mut commands,
+                    &sprite,
+                    &t,
+                    Color::srgba(0.70, 0.90, 1.0, 0.40),
+                    0.34,
+                    Vec2::new(-facing * 46.0, -9.0),
+                );
+            }
+        } else {
+            *trail_timer = 0.0;
+        }
     }
     if let Ok(mut t) = lights.single_mut() {
         t.translation.x = p.x;
@@ -5791,18 +10020,19 @@ fn sync_player_transform(
 fn sync_party_followers(
     mut commands: Commands,
     dolls: Res<PaperdollAssets>,
+    lights: Res<LightingAssets>,
     quest: Res<QuestLog>,
     pos: Res<PlayerPos>,
     intent: Res<Intent>,
     time: Res<Time>,
-    mut followers: Query<(Entity, &PartyFollower, &mut Transform, &mut Sprite)>,
+    mut followers: Query<(Entity, &mut PartyFollower, &mut Transform, &mut Sprite)>,
 ) {
     let desired = desired_party_followers(&quest);
     let moving = intent.move_dir.is_some();
     let phase = time.elapsed_secs();
     let mut present = vec![false; desired.len()];
 
-    for (entity, follower, mut transform, mut sprite) in &mut followers {
+    for (entity, mut follower, mut transform, mut sprite) in &mut followers {
         let Some(slot) = desired
             .iter()
             .position(|companion| *companion == follower.companion)
@@ -5821,6 +10051,23 @@ fn sync_party_followers(
         transform.scale = Vec3::new(body.scale.x, body.scale.y, 1.0);
         sprite.flip_x = follower_faces_left(&pos);
         sprite.color = animated_color(Color::WHITE, body.brightness, 1.0);
+        if moving {
+            follower.trail_timer += time.delta_secs();
+            if follower.trail_timer >= 0.11 {
+                follower.trail_timer = 0.0;
+                let facing = if sprite.flip_x { -1.0 } else { 1.0 };
+                spawn_sprite_afterimage(
+                    &mut commands,
+                    &sprite,
+                    &transform,
+                    companion_afterimage_color(follower.companion),
+                    0.30,
+                    Vec2::new(-facing * 30.0, -6.0),
+                );
+            }
+        } else {
+            follower.trail_timer = 0.0;
+        }
     }
 
     for (slot, companion) in desired.iter().copied().enumerate() {
@@ -5836,9 +10083,29 @@ fn sync_party_followers(
             paperdoll::OVERWORLD_SIZE * 0.92,
             AppState::Explore,
         );
-        commands
-            .entity(follower)
-            .insert((MapContent, PartyFollower { companion }));
+        let follower_origin = follower_slot_position(&pos, slot, moving, phase);
+        commands.entity(follower).insert((
+            MapContent,
+            PartyFollower {
+                companion,
+                trail_timer: 0.0,
+            },
+        ));
+        spawn_owned_character_shadow(
+            &mut commands,
+            &lights,
+            follower,
+            follower_origin,
+            Vec2::new(0.0, -paperdoll::OVERWORLD_SIZE * 0.36),
+            Vec2::new(
+                paperdoll::OVERWORLD_SIZE * 0.62,
+                paperdoll::OVERWORLD_SIZE * 0.15,
+            ),
+            phase + slot as f32 * 0.61,
+            0.22,
+            4.8,
+            4.18,
+        );
     }
 }
 
@@ -5898,6 +10165,93 @@ fn update_scene_motions(
             1.0 + profile.brightness_amp * pulse,
             0.82 + 0.22 * pulse,
         );
+    }
+}
+
+fn update_layered_npc_parts(
+    time: Res<Time>,
+    mut parts: Query<(&LayeredNpcPart, &mut Transform, &mut Sprite)>,
+) {
+    let elapsed = time.elapsed_secs();
+    for (part, mut transform, mut sprite) in &mut parts {
+        let t = elapsed * 2.25 + part.phase;
+        let body = npc_body_motion(t);
+        let segment = cutout_part_motion(part.part, t * 1.65 + part.part.z_offset() * 9.0, 1.0);
+        let scale = Vec2::new(
+            body.scale.x * segment.scale.x,
+            body.scale.y * segment.scale.y,
+        );
+
+        transform.translation.x =
+            part.origin.x + body.offset.x + part.base_offset.x + segment.offset.x;
+        transform.translation.y =
+            part.origin.y + body.offset.y + part.base_offset.y + segment.offset.y;
+        transform.translation.z = part.origin.z + part.part.z_offset();
+        transform.rotation = Quat::from_rotation_z(body.rotation + segment.rotation);
+        transform.scale = Vec3::new(scale.x, scale.y, 1.0);
+        sprite.custom_size = Some(part.base_size);
+        sprite.color = brighten_color(Color::WHITE, body.brightness * segment.brightness);
+    }
+}
+
+fn update_character_shadows(
+    time: Res<Time>,
+    mut commands: Commands,
+    owners: Query<&Transform, Without<CharacterGroundShadow>>,
+    mut shadows: Query<(Entity, &CharacterGroundShadow, &mut Transform, &mut Sprite)>,
+) {
+    let elapsed = time.elapsed_secs();
+    for (entity, shadow, mut transform, mut sprite) in &mut shadows {
+        let t = elapsed * shadow.speed + shadow.phase;
+        let mut anchor = shadow.origin;
+        if let Some(owner) = shadow.owner {
+            let Ok(owner_transform) = owners.get(owner) else {
+                commands.entity(entity).despawn();
+                continue;
+            };
+            anchor = owner_transform.translation;
+        } else if shadow.track_scene_motion {
+            let body = npc_body_motion(t);
+            anchor.x += body.offset.x;
+            anchor.y += body.offset.y;
+        }
+
+        let frame = character_shadow_frame(shadow.base_alpha, t);
+        transform.translation = Vec3::new(
+            anchor.x + shadow.offset.x,
+            anchor.y + shadow.offset.y,
+            shadow.z,
+        );
+        transform.scale = frame.scale;
+        sprite.custom_size = Some(shadow.base_size);
+        sprite.color = Color::srgba(0.0, 0.0, 0.0, frame.alpha);
+    }
+}
+
+fn update_character_afterimages(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut afterimages: Query<(
+        Entity,
+        &mut CharacterAfterimage,
+        &mut Transform,
+        &mut Sprite,
+    )>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut afterimage, mut transform, mut sprite) in &mut afterimages {
+        afterimage.age += dt;
+        let Some(frame) = character_afterimage_frame(afterimage.age, afterimage.duration) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+
+        transform.translation.x += afterimage.velocity.x * dt;
+        transform.translation.y += afterimage.velocity.y * dt;
+        transform.scale = afterimage
+            .start_scale
+            .lerp(afterimage.end_scale, frame.progress);
+        sprite.color = color_with_alpha_scale(afterimage.base_color, frame.alpha_scale);
     }
 }
 
@@ -6088,17 +10442,49 @@ fn update_hud(
             .map(|map| map.name)
             .unwrap_or_else(|| current.0.def().name);
         let key_items = compact_hud_text(&quest.key_items_summary(), 36);
+        let chapter_seals = compact_hud_text(&quest.chapter_seal_summary(), 42);
+        let gear = compact_hud_text(&quest.shop_gear_summary(), 42);
         let side_quests = compact_hud_text(&quest.side_quest_summary(), 42);
         let main_task = compact_hud_text(&quest.main_task_summary(), 56);
         let local_task = map
             .as_ref()
             .map(|map| compact_hud_text(&side_board_summary(map.kind, &quest), 56))
             .unwrap_or_else(|| "任务板 无".to_string());
-        let bonds = quest.bond_summary();
+        let area_task = map
+            .as_ref()
+            .map(|map| compact_hud_text(&active_area_side_task_summary(map.kind, &quest), 42))
+            .unwrap_or_else(|| "当前委托区 无".to_string());
+        let npc_errands = compact_hud_text(&quest.npc_errand_summary(), 42);
+        let bonds = compact_hud_text(
+            &format!(
+                "{} {} {}",
+                quest.bond_summary(),
+                quest.companion_story_summary(),
+                quest.companion_revisit_summary()
+            ),
+            42,
+        );
         let camp = quest.camp_summary();
+        let route_marks = compact_hud_text(&quest.route_memory_summary(), 42);
+        let route_branch = compact_hud_text(&quest.route_branch_summary(), 42);
+        let route_report = compact_hud_text(&quest.route_report_summary(), 42);
+        let route_care = map
+            .as_ref()
+            .and_then(|map| route_pressure_summary(map.kind, &quest))
+            .map(|summary| compact_hud_text(&summary, 42))
+            .unwrap_or_else(|| "路线照应 无".to_string());
+        let shrine = compact_hud_text(&quest.shrine_travel_summary(), 42);
         let care = compact_hud_text(&quest.travel_care_summary(), 42);
+        let supplies = compact_hud_text(
+            &format!(
+                "{} {}",
+                quest.field_supply_summary(),
+                quest.commission_trace_summary()
+            ),
+            42,
+        );
         text.0 = format!(
-            "{}\n{}\n队伍 {}\n{}  Lv.{}\n气血 {}/{}\n灵力 {}/{}\n药水 x{}  钱 {}文\n道具 {}\n任务簿 {}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n队伍 {}\n{}  Lv.{}\n气血 {}/{}\n灵力 {}/{}\n药水 x{}  钱 {}文\n装备 {}\n道具 {}\n{}\n任务簿 {}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             map_name,
             quest.chapter_title(),
             quest.party_summary(),
@@ -6110,19 +10496,31 @@ fn update_hud(
             stats.max_mp,
             stats.potions,
             stats.gold,
+            gear,
             key_items,
+            chapter_seals,
             main_task,
             local_task,
+            area_task,
             side_quests,
+            npc_errands,
             bonds,
             camp,
+            route_marks,
+            route_branch,
+            route_report,
+            route_care,
+            shrine,
             care,
+            supplies,
         );
     }
 }
 
 fn update_task_tracker(
     quest: Res<QuestLog>,
+    map: Option<Res<MapData>>,
+    current: Res<CurrentMap>,
     mut root: Query<&mut Visibility, With<TaskTrackerRoot>>,
     mut text: Query<&mut Text, With<TaskTrackerText>>,
 ) {
@@ -6131,7 +10529,8 @@ fn update_task_tracker(
     }
 
     if let Ok(mut text) = text.single_mut() {
-        text.0 = quest.active_task_tracker();
+        let kind = map.as_ref().map(|map| map.kind).unwrap_or(current.0);
+        text.0 = task_tracker_text(kind, &quest);
     }
 }
 
@@ -6165,6 +10564,96 @@ fn side_board_facing_prompt(kind: MapKind, pos: &PlayerPos, quest: &QuestLog) ->
         .and_then(|_| side_board_prompt(kind, quest))
 }
 
+fn npc_side_quest_facing_prompt(
+    kind: MapKind,
+    pos: &PlayerPos,
+    quest: &QuestLog,
+) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    npc_defs(kind)
+        .iter()
+        .find(|npc| npc.col == tc && npc.row == tr)
+        .and_then(|npc| npc_side_quest_contact_prompt(kind, npc, quest))
+}
+
+fn field_supply_facing_prompt(kind: MapKind, pos: &PlayerPos, quest: &QuestLog) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    field_supply_defs(kind)
+        .find(|supply| supply.col == tc && supply.row == tr)
+        .map(|supply| {
+            let status = if quest.has_collected_supply(supply.supply) {
+                "已采"
+            } else {
+                "可采"
+            };
+            format!(
+                "采集点 {} [{}] | 空格查看\n{}",
+                supply.supply.name(),
+                status,
+                quest.field_supply_summary()
+            )
+        })
+}
+
+fn commission_trace_facing_prompt(
+    kind: MapKind,
+    pos: &PlayerPos,
+    quest: &QuestLog,
+) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    commission_trace_defs(kind)
+        .find(|trace| trace.col == tc && trace.row == tr)
+        .map(|trace| {
+            let status = if quest.is_side_quest_completed(trace.side) {
+                "已归档"
+            } else if quest.has_commission_trace(trace.side) {
+                "已处理"
+            } else if quest.is_side_quest_active(trace.side) {
+                "可处理"
+            } else if quest.is_side_quest_unlocked(trace.side) {
+                "未领取"
+            } else {
+                "后续线索"
+            };
+            let action = if quest.is_side_quest_active(trace.side)
+                && !quest.has_commission_trace(trace.side)
+            {
+                "处理"
+            } else {
+                "查看"
+            };
+            format!(
+                "委托现场 {} [{}] | 空格{}\n{}",
+                trace.name,
+                status,
+                action,
+                quest.side_task_summary(trace.side)
+            )
+        })
+}
+
+fn companion_revisit_field_facing_prompt(
+    kind: MapKind,
+    pos: &PlayerPos,
+    quest: &QuestLog,
+) -> Option<String> {
+    let tc = pos.col + pos.facing.x;
+    let tr = pos.row + pos.facing.y;
+    let mark = prop_defs(kind)
+        .iter()
+        .find(|prop| prop.col == tc && prop.row == tr)
+        .and_then(|prop| route_mark_for_prop(kind, prop))?;
+    let revisit = quest.active_companion_revisit_at(mark)?;
+    Some(format!(
+        "小传补访现场 {} [可寻访] | 空格接回旧话\n{}",
+        revisit.name(),
+        quest.companion_revisit_contract(revisit)
+    ))
+}
+
 fn update_task_prompt(
     quest: Res<QuestLog>,
     pos: Res<PlayerPos>,
@@ -6176,8 +10665,15 @@ fn update_task_prompt(
     let prompt = if dialogue.active {
         None
     } else {
-        map.as_ref()
-            .and_then(|map| side_board_facing_prompt(map.kind, &pos, &quest))
+        map.as_ref().and_then(|map| {
+            side_board_facing_prompt(map.kind, &pos, &quest)
+                .or_else(|| npc_side_quest_facing_prompt(map.kind, &pos, &quest))
+                .or_else(|| npc_errand_facing_prompt(map.kind, &pos, &quest))
+                .or_else(|| npc_companion_revisit_facing_prompt(map.kind, &pos, &quest))
+                .or_else(|| companion_revisit_field_facing_prompt(map.kind, &pos, &quest))
+                .or_else(|| field_supply_facing_prompt(map.kind, &pos, &quest))
+                .or_else(|| commission_trace_facing_prompt(map.kind, &pos, &quest))
+        })
     };
 
     if let Ok(mut vis) = root.single_mut() {
@@ -6246,12 +10742,25 @@ fn quest_marker_glyph(quest: &QuestLog, kind: QuestMarkerKind) -> &'static str {
     match kind {
         QuestMarkerKind::Role(role) => quest.marker_for(Some(role)),
         QuestMarkerKind::SideBoard(kind) => side_board_marker_for(quest, kind),
+        QuestMarkerKind::SideContact(kind) => side_board_marker_for(quest, kind),
+        QuestMarkerKind::NpcErrandOffer(errand) => quest.npc_errand_marker_for(errand),
+        QuestMarkerKind::NpcErrandDelivery(errand) => quest.npc_errand_delivery_marker_for(errand),
+        QuestMarkerKind::CompanionRevisitGiver(revisit) => {
+            quest.companion_revisit_giver_marker_for(revisit)
+        }
+        QuestMarkerKind::CompanionRevisitField(revisit) => {
+            quest.companion_revisit_field_marker_for(revisit)
+        }
+        QuestMarkerKind::CommissionTrace(side) => quest.commission_trace_marker_for(side),
         QuestMarkerKind::Lamp(lamp) => quest.final_lamp_marker_for(lamp),
         QuestMarkerKind::RiverLantern(lantern) => quest.river_lantern_marker_for(lantern),
         QuestMarkerKind::PlagueWard(ward) => quest.plague_ward_marker_for(ward),
         QuestMarkerKind::MansionMirror(node) => quest.mansion_mirror_marker_for(node),
         QuestMarkerKind::ThunderDrum(drum) => quest.thunder_drum_marker_for(drum),
         QuestMarkerKind::Crystal(crystal) => quest.moon_crystal_marker_for(crystal),
+        QuestMarkerKind::RouteMark(mark) => quest.route_mark_marker_for(mark),
+        QuestMarkerKind::RouteDetour(detour) => quest.route_detour_marker_for(detour),
+        QuestMarkerKind::FieldSupply(supply) => quest.field_supply_marker_for(supply),
     }
 }
 
@@ -6266,6 +10775,11 @@ fn quest_marker_style(glyph: &str) -> Option<QuestMarkerStyle> {
             badge: Color::srgb(0.12, 0.54, 0.86),
             glow: Color::srgba(0.30, 0.78, 1.0, 0.30),
             glyph: Color::srgb(0.86, 0.98, 1.0),
+        }),
+        "？" => Some(QuestMarkerStyle {
+            badge: Color::srgb(0.68, 0.42, 0.92),
+            glow: Color::srgba(0.78, 0.55, 1.0, 0.34),
+            glyph: Color::srgb(1.0, 0.94, 1.0),
         }),
         "✓" => Some(QuestMarkerStyle {
             badge: Color::srgb(0.14, 0.66, 0.32),
@@ -6286,6 +10800,7 @@ fn quest_marker_part_y_offset(part: QuestMarkerPart) -> f32 {
 
 fn update_dialogue_ui(
     dialogue: Res<Dialogue>,
+    time: Res<Time>,
     asset_server: Res<AssetServer>,
     mut root: Query<&mut Visibility, (With<DialogueRoot>, Without<DialoguePortrait>)>,
     mut line: Query<&mut Text, With<DialogueLine>>,
@@ -6293,7 +10808,50 @@ fn update_dialogue_ui(
         (&mut Visibility, &mut ImageNode),
         (With<DialoguePortrait>, Without<DialogueRoot>),
     >,
+    mut chapter_art: Query<
+        (&mut ChapterArtRoot, &mut Visibility, &mut ImageNode),
+        (
+            With<ChapterArtRoot>,
+            Without<DialogueRoot>,
+            Without<DialoguePortrait>,
+        ),
+    >,
 ) {
+    let showing_chapter_art = dialogue.showing_chapter_art();
+    if let Ok((mut art, mut vis, mut image)) = chapter_art.single_mut() {
+        if showing_chapter_art {
+            if let Some(assets) = dialogue.chapter_art {
+                if art.active_sheet != Some(assets.sheet) {
+                    art.active_sheet = Some(assets.sheet);
+                    art.timer = 0.0;
+                    art.frame = 0;
+                    image.image = asset_server.load(assets.sheet);
+                    image.texture_atlas = Some(TextureAtlas {
+                        layout: art.layout.clone(),
+                        index: 0,
+                    });
+                } else {
+                    art.timer += time.delta_secs();
+                    while art.timer >= CHAPTER_ART_FRAME_TIME {
+                        art.timer -= CHAPTER_ART_FRAME_TIME;
+                        art.frame = (art.frame + 1) % CHAPTER_ART_FRAME_COUNT;
+                    }
+                    if let Some(atlas) = image.texture_atlas.as_mut() {
+                        atlas.index = art.frame;
+                    }
+                }
+                image.color = Color::srgba(0.86, 0.90, 1.0, 0.92);
+                *vis = Visibility::Inherited;
+            }
+        } else {
+            art.active_sheet = None;
+            art.timer = 0.0;
+            art.frame = 0;
+            image.texture_atlas = None;
+            *vis = Visibility::Hidden;
+        }
+    }
+
     if let Ok(mut vis) = root.single_mut() {
         *vis = if dialogue.active {
             Visibility::Inherited
@@ -6302,7 +10860,7 @@ fn update_dialogue_ui(
         };
     }
     if let Ok((mut vis, mut image)) = portrait.single_mut() {
-        if dialogue.active {
+        if dialogue.active && !showing_chapter_art {
             if let Some(path) = dialogue.portrait_path {
                 image.image = asset_server.load(path);
                 image.color = Color::WHITE;
@@ -6347,6 +10905,209 @@ fn update_dialogue_ui(
 mod tests {
     use super::*;
 
+    fn terrain_x_edges(sample: TerrainSample) -> (f32, f32) {
+        if sample.flip_x {
+            (sample.rect.max.x, sample.rect.min.x)
+        } else {
+            (sample.rect.min.x, sample.rect.max.x)
+        }
+    }
+
+    fn terrain_y_edges(sample: TerrainSample) -> (f32, f32) {
+        if sample.flip_y {
+            (sample.rect.max.y, sample.rect.min.y)
+        } else {
+            (sample.rect.min.y, sample.rect.max.y)
+        }
+    }
+
+    #[test]
+    fn terrain_samples_keep_all_shared_edges_continuous() {
+        for row in -24..=24 {
+            for col in -24..=24 {
+                let sample = terrain_sample(col, row);
+                let right = terrain_x_edges(sample).1;
+                let next_left = terrain_x_edges(terrain_sample(col + 1, row)).0;
+                assert_eq!(right, next_left, "horizontal edge at ({col}, {row})");
+
+                let bottom = terrain_y_edges(sample).1;
+                let next_top = terrain_y_edges(terrain_sample(col, row + 1)).0;
+                assert_eq!(bottom, next_top, "vertical edge at ({col}, {row})");
+
+                assert_eq!(sample.rect.width(), TERRAIN_SAMPLE_SIZE);
+                assert_eq!(sample.rect.height(), TERRAIN_SAMPLE_SIZE);
+                assert!(sample.rect.min.x >= 0.0 && sample.rect.max.x <= TERRAIN_SOURCE_SIZE);
+                assert!(sample.rect.min.y >= 0.0 && sample.rect.max.y <= TERRAIN_SOURCE_SIZE);
+            }
+        }
+    }
+
+    #[test]
+    fn terrain_samples_flip_only_on_reverse_sweeps() {
+        for col in 0..TERRAIN_SAMPLES_PER_AXIS {
+            let forward = terrain_sample(col, 0);
+            assert_eq!(
+                forward.rect.min.x,
+                TERRAIN_SOURCE_INSET + col as f32 * TERRAIN_SAMPLE_SIZE
+            );
+            assert!(!forward.flip_x);
+
+            let reverse_col = TERRAIN_SAMPLES_PER_AXIS + col;
+            let reverse = terrain_sample(reverse_col, 0);
+            let source_col = TERRAIN_SAMPLES_PER_AXIS - 1 - col;
+            assert_eq!(
+                reverse.rect.min.x,
+                TERRAIN_SOURCE_INSET + source_col as f32 * TERRAIN_SAMPLE_SIZE
+            );
+            assert!(reverse.flip_x);
+        }
+    }
+
+    #[test]
+    fn terrain_material_ids_match_visual_layers() {
+        assert_eq!(terrain_id(Tile::Path), 0);
+        assert_eq!(terrain_id(Tile::Npc), 0);
+        assert_eq!(terrain_id(Tile::Portal), 0);
+        assert_eq!(terrain_id(Tile::Grass), 1);
+        assert_eq!(terrain_id(Tile::Wall), 2);
+        assert_eq!(terrain_id(Tile::Water), 3);
+    }
+
+    #[test]
+    fn chapter_arts_cover_all_story_chapters() {
+        assert_eq!(
+            chapter_art_assets(Chapter::VillageOath),
+            ChapterArtAssets {
+                still: "ui/chapter1_art.png",
+                sheet: "ui/anim/chapter1_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::MoonCave),
+            ChapterArtAssets {
+                still: "ui/chapter2_art.png",
+                sheet: "ui/anim/chapter2_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::RiverMedicine),
+            ChapterArtAssets {
+                still: "ui/chapter3_art.png",
+                sheet: "ui/anim/chapter3_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::PlagueRain),
+            ChapterArtAssets {
+                still: "ui/chapter4_art.png",
+                sheet: "ui/anim/chapter4_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::CapitalMirror),
+            ChapterArtAssets {
+                still: "ui/chapter5_art.png",
+                sheet: "ui/anim/chapter5_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::SouthernThunder),
+            ChapterArtAssets {
+                still: "ui/chapter6_art.png",
+                sheet: "ui/anim/chapter6_sheet.png"
+            }
+        );
+        assert_eq!(
+            chapter_art_assets(Chapter::FinalDream),
+            ChapterArtAssets {
+                still: "ui/chapter7_art.png",
+                sheet: "ui/anim/chapter7_sheet.png"
+            }
+        );
+    }
+
+    #[test]
+    fn dialogue_chapter_art_only_shows_during_chapter_card_lines() {
+        let mut dialogue = Dialogue {
+            active: true,
+            lines: vec![
+                "守灯人：先接下任务。".to_string(),
+                "【卷章展开】终章 灵渊宿梦".to_string(),
+                "【卷章画面】灵渊终门沉在紫蓝梦水中。".to_string(),
+                "【卷章基调】旧梦回潮。".to_string(),
+                "灵渊终门映出旧梦。".to_string(),
+                "【卷章玩法】点亮三盏忆梦灯。".to_string(),
+                "【下一步】进入旧梦水廊。".to_string(),
+                "主线 进行中：进入旧梦水廊。".to_string(),
+            ],
+            idx: 0,
+            after: DialogueAfter::None,
+            choice: None,
+            portrait_path: Some("npcs/ai_final_oracle.png"),
+            chapter_art: Some(chapter_art_assets(Chapter::FinalDream)),
+        };
+
+        assert!(!dialogue.showing_chapter_art());
+        dialogue.idx = 1;
+        assert!(dialogue.showing_chapter_art());
+        dialogue.idx = 6;
+        assert!(dialogue.showing_chapter_art());
+        dialogue.idx = 7;
+        assert!(!dialogue.showing_chapter_art());
+        dialogue.choice = Some(DialogueChoice::bond_response());
+        dialogue.idx = 1;
+        assert!(!dialogue.showing_chapter_art());
+    }
+
+    #[test]
+    fn main_quest_accept_result_carries_chapter_art() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+        let choice =
+            DialogueChoice::main_quest(QuestRole::SwordSister, MainQuestChoiceAction::Accept);
+
+        let result = resolve_dialogue_choice(choice, &mut quest, &mut stats);
+
+        assert_eq!(
+            result.chapter_art,
+            Some(chapter_art_assets(Chapter::VillageOath))
+        );
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("【卷章展开】"))
+        );
+        assert!(quest.has_seen_chapter_card(Chapter::VillageOath));
+    }
+
+    fn complete_side_quest(quest: &mut QuestLog, side: SideQuest) {
+        let accepted = quest.interact_side_quest(side);
+        assert!(accepted.reward.is_none());
+        for _ in 0..quest.side_quest_goal(side) {
+            quest.record_side_victory();
+        }
+        let completed = quest.interact_side_quest(side);
+        assert!(completed.reward.is_some());
+        assert!(quest.is_side_quest_completed(side));
+    }
+
+    fn complete_side_quest_with_resolution(
+        quest: &mut QuestLog,
+        side: SideQuest,
+        resolution: SideQuestResolution,
+    ) {
+        let accepted = quest.interact_side_quest(side);
+        assert!(accepted.reward.is_none());
+        for _ in 0..quest.side_quest_goal(side) {
+            quest.record_side_victory();
+        }
+        let completed = quest.interact_side_quest_with_resolution(side, resolution);
+        assert!(completed.reward.is_some());
+        assert!(quest.is_side_quest_completed(side));
+        assert_eq!(quest.side_quest_resolution(side), Some(resolution));
+    }
+
     fn quest_at_river_lantern_puzzle() -> QuestLog {
         let mut quest = QuestLog::default();
         quest.talk(QuestRole::SwordSister);
@@ -6370,6 +11131,42 @@ mod tests {
         quest.record_victory();
         quest.talk(QuestRole::HerbHealer);
         quest.talk(QuestRole::RiverBoatman);
+        quest
+    }
+
+    fn quest_at_moon_route(with_bond: bool, with_camp: bool) -> QuestLog {
+        let mut quest = QuestLog::default();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        quest.talk(QuestRole::StarMage);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Merchant);
+        quest.talk(QuestRole::BambooScout);
+        if with_bond {
+            quest.interact_bond_scene();
+        }
+        if with_camp {
+            quest.interact_camp_scene();
+        }
+        quest.talk(QuestRole::CavePriestess);
+        quest
+    }
+
+    fn quest_at_moon_route_with_trail_companion_scene() -> QuestLog {
+        let mut quest = QuestLog::default();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        quest.talk(QuestRole::StarMage);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::SwordSister);
+        quest.interact_bond_scene();
+        quest.interact_companion_scene();
+        quest.talk(QuestRole::Merchant);
+        quest.talk(QuestRole::BambooScout);
+        quest.talk(QuestRole::CavePriestess);
         quest
     }
 
@@ -6573,6 +11370,38 @@ mod tests {
     }
 
     #[test]
+    fn portal_transition_lines_name_destination_and_active_objective() {
+        let mut quest = QuestLog::default();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        let lines = portal_transition_lines(MapKind::Village, MapKind::Bamboo, &quest);
+        assert!(lines[0].contains("余杭村郊 -> 青竹山径"));
+        assert!(lines.iter().any(|line| line.contains("主线簿 卷1-03")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("当前主线目标地") && line.contains("星咒童子"))
+        );
+        assert!(lines.iter().any(|line| line.contains("【目标】")));
+
+        let river = quest_at_river_lantern_puzzle();
+        let lines = portal_transition_lines(MapKind::RiverTown, MapKind::RiverReedBed, &river);
+        assert!(lines[0].contains("江岸小镇 -> 江岸芦滩"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("当前主线目标地") && line.contains("倒流河灯"))
+        );
+
+        let backtrack = portal_transition_lines(MapKind::RiverTown, MapKind::Village, &river);
+        assert!(
+            backtrack
+                .iter()
+                .any(|line| line.contains("任务引路仍指向") && line.contains("江岸芦滩"))
+        );
+    }
+
+    #[test]
     fn area_banner_names_region_chapter_route_and_goal() {
         let quest = QuestLog::default();
         let map = MapData::build(MapKind::Village);
@@ -6592,7 +11421,84 @@ mod tests {
 
     #[test]
     fn all_maps_have_valid_rows_and_spawns() {
-        for kind in [
+        for kind in authored_map_kinds() {
+            let map = MapData::build(kind);
+            let (col, row) = map.spawn();
+            assert!(map.at(col, row).walkable());
+        }
+    }
+
+    #[test]
+    fn field_supply_nodes_cover_every_authored_map_on_walkable_tiles() {
+        let mut total = 0;
+        for kind in authored_map_kinds() {
+            let supplies = field_supply_defs(kind).collect::<Vec<_>>();
+            assert_eq!(supplies.len(), 1, "{kind:?} should have one field supply");
+
+            let supply = supplies[0];
+            let map = MapData::build(kind);
+            assert!(
+                map.at(supply.col, supply.row).walkable(),
+                "{kind:?} supply {:?} should sit on a walkable tile",
+                supply.supply
+            );
+            total += supplies.len();
+        }
+        assert_eq!(total, authored_map_kinds().len());
+    }
+
+    #[test]
+    fn commission_trace_nodes_cover_every_side_quest_on_walkable_tiles() {
+        assert_eq!(COMMISSION_TRACE_DEFS.len(), ALL_LOCAL_SIDE_QUESTS.len());
+        for side in ALL_LOCAL_SIDE_QUESTS {
+            let traces = COMMISSION_TRACE_DEFS
+                .iter()
+                .filter(|trace| trace.side == side)
+                .collect::<Vec<_>>();
+            assert_eq!(traces.len(), 1, "{side:?} should have one field trace");
+            let trace = traces[0];
+            assert!(
+                side_quest_target_matches_map(side, trace.kind),
+                "{side:?} trace should be inside its target area"
+            );
+        }
+
+        for trace in COMMISSION_TRACE_DEFS {
+            let map = MapData::build(trace.kind);
+            assert!(
+                map.at(trace.col, trace.row).walkable(),
+                "{:?} trace {} should sit on a walkable tile",
+                trace.side,
+                trace.name
+            );
+            assert!(
+                !prop_defs(trace.kind)
+                    .iter()
+                    .any(|prop| prop.col == trace.col && prop.row == trace.row),
+                "{:?} trace {} overlaps a prop",
+                trace.side,
+                trace.name
+            );
+            assert!(
+                !npc_defs(trace.kind)
+                    .iter()
+                    .any(|npc| npc.col == trace.col && npc.row == trace.row),
+                "{:?} trace {} overlaps an NPC",
+                trace.side,
+                trace.name
+            );
+            assert!(
+                !field_supply_defs(trace.kind)
+                    .any(|supply| supply.col == trace.col && supply.row == trace.row),
+                "{:?} trace {} overlaps a field supply",
+                trace.side,
+                trace.name
+            );
+        }
+    }
+
+    fn authored_map_kinds() -> [MapKind; 15] {
+        [
             MapKind::Village,
             MapKind::Bamboo,
             MapKind::Cave,
@@ -6608,10 +11514,48 @@ mod tests {
             MapKind::ThunderDrumPath,
             MapKind::FinalSanctum,
             MapKind::DreamWaterway,
+        ]
+    }
+
+    fn differing_map_rows(a: MapKind, b: MapKind) -> usize {
+        a.def()
+            .rows
+            .iter()
+            .zip(b.def().rows.iter())
+            .filter(|(left, right)| left != right)
+            .count()
+    }
+
+    #[test]
+    fn authored_maps_keep_distinct_layouts() {
+        let maps = authored_map_kinds();
+        for (index, left) in maps.iter().copied().enumerate() {
+            for right in maps.iter().copied().skip(index + 1) {
+                assert!(
+                    differing_map_rows(left, right) >= 5,
+                    "{} and {} reuse too many map rows",
+                    left.def().name,
+                    right.def().name
+                );
+            }
+        }
+
+        for (left, right) in [
+            (MapKind::RiverReedBed, MapKind::MoonEchoCorridor),
+            (MapKind::PlagueVillage, MapKind::RiverTown),
+            (MapKind::PlagueShrinePath, MapKind::SouthernRoad),
+            (MapKind::Capital, MapKind::PlagueVillage),
+            (MapKind::Capital, MapKind::CapitalMansion),
+            (MapKind::SouthernRoad, MapKind::ThunderDrumPath),
+            (MapKind::MansionMirrorGallery, MapKind::FinalSanctum),
+            (MapKind::FinalSanctum, MapKind::DreamWaterway),
         ] {
-            let map = MapData::build(kind);
-            let (col, row) = map.spawn();
-            assert!(map.at(col, row).walkable());
+            assert!(
+                differing_map_rows(left, right) >= 10,
+                "{} and {} should read as separate chapter spaces",
+                left.def().name,
+                right.def().name
+            );
         }
     }
 
@@ -6691,8 +11635,17 @@ mod tests {
             [SideQuest::SouthernThunder, SideQuest::SouthernDrums]
         );
         assert!(side_quests_for_map(MapKind::ThunderDrumPath).is_empty());
+        assert_eq!(
+            side_quests_for_board(MapKind::FinalSanctum, &PROPS_FINAL_SANCTUM[1]),
+            [SideQuest::FinalDreamEchoes, SideQuest::FinalHomewardVows]
+        );
+        assert_eq!(
+            current_side_quest_for_map(MapKind::FinalSanctum, &QuestLog::default()),
+            Some(SideQuest::FinalDreamEchoes)
+        );
         assert!(side_quests_for_map(MapKind::DreamWaterway).is_empty());
         assert!(side_quests_for_board(MapKind::Village, &PROPS_VILLAGE[1]).is_empty());
+        assert!(side_quests_for_board(MapKind::FinalSanctum, &PROPS_FINAL_SANCTUM[0]).is_empty());
 
         let mut quest = QuestLog::default();
         quest.interact_side_quest(SideQuest::VillageTrail);
@@ -6703,6 +11656,351 @@ mod tests {
             current_side_quest_for_map(MapKind::Village, &quest),
             Some(SideQuest::VillageHerbs)
         );
+    }
+
+    #[test]
+    fn accepted_commissions_surface_current_target_area() {
+        let mut quest = QuestLog::default();
+        assert_eq!(
+            active_area_side_task_summary(MapKind::Village, &quest),
+            "当前委托区 无"
+        );
+
+        quest.interact_side_quest(SideQuest::VillageTrail);
+        let village = active_area_side_task_summary(MapKind::Village, &quest);
+        assert!(village.contains("当前委托区 山路余妖 [进行中] 0/2"));
+        assert!(village.contains("旧竹栅"));
+        assert!(village.contains("现场：未处理现场"));
+        assert_eq!(
+            active_area_side_task_summary(MapKind::RiverReedBed, &quest),
+            "当前委托区 无"
+        );
+
+        quest.record_side_victory();
+        quest.record_side_victory();
+        let ready = active_area_side_task_summary(MapKind::Village, &quest);
+        assert!(ready.contains("山路余妖 [可交付] 2/2"));
+        let bamboo = active_area_side_task_summary(MapKind::Bamboo, &quest);
+        assert!(bamboo.contains("当前委托区 山路余妖 [可交付] 2/2"));
+        assert!(bamboo.contains("旧竹栅"));
+
+        let mut final_quest = QuestLog::default();
+        final_quest.interact_side_quest(SideQuest::FinalDreamEchoes);
+        let final_area = active_area_side_task_summary(MapKind::DreamWaterway, &final_quest);
+        assert!(final_area.contains("当前委托区 梦灯余波 [进行中] 0/3"));
+        assert!(final_area.contains("旧梦水廊"));
+    }
+
+    #[test]
+    fn task_tracker_surfaces_local_pickup_before_acceptance() {
+        let quest = QuestLog::default();
+        let intake = local_task_intake_tracker(MapKind::Village, &quest)
+            .expect("village board should advertise a claimable commission");
+        assert!(intake.contains("本地可领 · 山路余妖 [可领取]"));
+        assert!(intake.contains("签号：余杭-巡山-壹"));
+        assert!(intake.contains("第一步：先签收委托"));
+        assert!(intake.contains("现场：领取后可在现场选择细查或快断"));
+        assert!(intake.contains("面对委托板/联系人按空格"));
+        let tracker = task_tracker_text(MapKind::Village, &quest);
+        assert!(tracker.contains("委托追踪：暂无已领取委托"));
+        assert!(tracker.contains("本地可领 · 山路余妖 [可领取]"));
+
+        let mut accepted = QuestLog::default();
+        accepted.interact_side_quest(SideQuest::VillageTrail);
+        assert!(local_task_intake_tracker(MapKind::Village, &accepted).is_none());
+        let tracker = task_tracker_text(MapKind::Village, &accepted);
+        assert!(tracker.contains("委托追踪 · 山路余妖 [进行中]"));
+        assert!(!tracker.contains("本地可领"));
+
+        accepted.record_side_victory();
+        accepted.record_side_victory();
+        accepted.interact_side_quest(SideQuest::VillageTrail);
+        let intake = local_task_intake_tracker(MapKind::Village, &accepted)
+            .expect("follow-up commission should become claimable after turn-in");
+        assert!(intake.contains("本地可领 · 药圃护路 [可领取]"));
+        assert!(intake.contains("签号：余杭-药圃-贰"));
+    }
+
+    #[test]
+    fn task_tracker_guides_main_and_side_tasks_by_current_map() {
+        let mut quest = QuestLog::default();
+        let village = task_tracker_text(MapKind::Village, &quest);
+        assert!(village.contains("任务引路"));
+        assert!(village.contains("主线 · 当前地图：接取 · 红衣剑姊"));
+        let bamboo = task_tracker_text(MapKind::Bamboo, &quest);
+        assert!(bamboo.contains("主线 · 前往：余杭村郊东北 · 红衣剑姊"));
+
+        quest.interact_side_quest(SideQuest::VillageTrail);
+        let target = task_tracker_text(MapKind::Bamboo, &quest);
+        assert!(target.contains("委托 · 目标区 当前地图：山路余妖 0/2"));
+        let away = task_tracker_text(MapKind::Cave, &quest);
+        assert!(away.contains("委托 · 前往目标区："));
+        assert!(away.contains("0/2"));
+
+        quest.record_side_victory();
+        quest.record_side_victory();
+        let delivery_here = task_tracker_text(MapKind::Village, &quest);
+        assert!(delivery_here.contains("委托 · 可交付 当前地图：回余杭村郊任务板交付。"));
+        let delivery_away = task_tracker_text(MapKind::Bamboo, &quest);
+        assert!(delivery_away.contains("委托 · 可交付 前往：回余杭村郊任务板交付。"));
+    }
+
+    #[test]
+    fn task_tracker_guides_active_npc_errand_to_delivery_map() {
+        let mut quest = QuestLog::default();
+        assert!(
+            quest
+                .accept_npc_errand(NpcErrand::BambooDewToCave)
+                .reward
+                .is_none()
+        );
+
+        let offer_map = task_tracker_text(MapKind::Bamboo, &quest);
+        assert!(offer_map.contains("托付 · 前往交付：水月洞天 · 洞中采药人"));
+        assert!(offer_map.contains("从青竹山径东门进入水月洞天"));
+
+        let delivery_map = task_tracker_text(MapKind::Cave, &quest);
+        assert!(delivery_map.contains("托付 · 交付地 当前地图：洞中采药人"));
+
+        assert!(
+            quest
+                .complete_npc_errand(NpcErrand::BambooDewToCave)
+                .reward
+                .is_some()
+        );
+        assert!(!task_tracker_text(MapKind::Cave, &quest).contains("托付 ·"));
+    }
+
+    #[test]
+    fn completed_commissions_reduce_matching_route_pressure() {
+        let base = 0.20;
+        let mut quest = QuestLog::default();
+        assert_eq!(
+            side_quest_route_relief_state(MapKind::MoonEchoCorridor, &quest),
+            SideQuestRouteReliefState::NoRoute
+        );
+        assert_eq!(
+            side_quest_route_relief_summary(MapKind::MoonEchoCorridor, &quest),
+            None
+        );
+        assert_eq!(
+            route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest),
+            base
+        );
+
+        complete_side_quest(&mut quest, SideQuest::MoonCaveCrystals);
+        assert_eq!(
+            side_quest_route_relief_state(MapKind::MoonEchoCorridor, &quest),
+            SideQuestRouteReliefState::Partial
+        );
+        assert_eq!(
+            side_quest_route_relief_summary(MapKind::MoonEchoCorridor, &quest),
+            Some("委托清障 半稳 遇妖-3%".to_string())
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest) - 0.194).abs() < 0.001
+        );
+
+        complete_side_quest(&mut quest, SideQuest::MoonCaveEchoes);
+        assert_eq!(
+            side_quest_route_relief_state(MapKind::MoonEchoCorridor, &quest),
+            SideQuestRouteReliefState::Cleared
+        );
+        assert!(
+            route_pressure_summary(MapKind::MoonEchoCorridor, &quest)
+                .is_some_and(|line| line.contains("委托清障 已清"))
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest) - 0.18).abs() < 0.001
+        );
+        assert!(
+            side_quest_route_checkpoint_line(MapKind::MoonEchoCorridor, &quest)
+                .is_some_and(|line| line.contains("晶尘") && line.contains("回声"))
+        );
+
+        let lines = npc_reaction_lines(
+            MapKind::MoonEchoCorridor,
+            &NPCS_MOON_ECHO_CORRIDOR[0],
+            &quest,
+        );
+        assert!(lines.iter().any(|line| line.contains("委托回声")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("晶尘") && line.contains("回声"))
+        );
+    }
+
+    #[test]
+    fn npc_errand_deliveries_reduce_matching_route_pressure_and_echo_locally() {
+        let base = 0.20;
+        let mut moon = QuestLog::default();
+        assert_eq!(
+            npc_errand_route_relief_summary(MapKind::MoonEchoCorridor, &moon),
+            None
+        );
+        let moon_before = route_encounter_rate(base, MapKind::MoonEchoCorridor, &moon);
+
+        assert!(
+            moon.accept_npc_errand(NpcErrand::BambooDewToCave)
+                .reward
+                .is_none()
+        );
+        assert!(
+            moon.complete_npc_errand(NpcErrand::BambooDewToCave)
+                .reward
+                .is_some()
+        );
+        assert_eq!(
+            npc_errand_route_relief_summary(MapKind::MoonEchoCorridor, &moon),
+            Some("托付回声 已稳 遇妖-3%".to_string())
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &moon) - moon_before * 0.97)
+                .abs()
+                < 0.001
+        );
+        assert!(
+            route_pressure_summary(MapKind::MoonEchoCorridor, &moon)
+                .is_some_and(|line| line.contains("托付回声 已稳"))
+        );
+        assert!(
+            local_npc_errand_route_reaction(MapKind::MoonEchoCorridor, &moon)
+                .is_some_and(|line| line.contains("竹露"))
+        );
+        assert!(
+            npc_errand_route_checkpoint_line(MapKind::MoonEchoCorridor, &moon)
+                .is_some_and(|line| line.contains("竹露"))
+        );
+
+        let mut river = quest_at_river_lantern_puzzle();
+        let river_before = route_encounter_rate(base, MapKind::RiverReedBed, &river);
+        assert!(
+            river
+                .accept_npc_errand(NpcErrand::MoonMossToRiver)
+                .reward
+                .is_none()
+        );
+        assert!(
+            river
+                .complete_npc_errand(NpcErrand::MoonMossToRiver)
+                .reward
+                .is_some()
+        );
+        assert_eq!(
+            npc_errand_route_relief_summary(MapKind::RiverReedBed, &river),
+            Some("托付回声 已稳 遇妖-3%".to_string())
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::RiverReedBed, &river) - river_before * 0.97).abs()
+                < 0.001
+        );
+
+        assert!(
+            river
+                .accept_npc_errand(NpcErrand::RiverReedLetter)
+                .reward
+                .is_none()
+        );
+        assert!(
+            river
+                .complete_npc_errand(NpcErrand::RiverReedLetter)
+                .reward
+                .is_some()
+        );
+        assert_eq!(
+            npc_errand_route_relief_summary(MapKind::RiverReedBed, &river),
+            Some("托付回声 连稳 遇妖-6%".to_string())
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::RiverReedBed, &river) - river_before * 0.94).abs()
+                < 0.001
+        );
+        assert!(
+            local_npc_errand_route_reaction(MapKind::RiverReedBed, &river)
+                .is_some_and(|line| line.contains("新浅渡"))
+        );
+        assert!(
+            npc_errand_route_checkpoint_line(MapKind::RiverReedBed, &river)
+                .is_some_and(|line| line.contains("新浅渡"))
+        );
+        let lines = npc_reaction_lines(MapKind::RiverReedBed, &NPCS_RIVER_REED_BED[0], &river);
+        assert!(lines.iter().any(|line| line.contains("托付回声")));
+    }
+
+    #[test]
+    fn commission_resolution_changes_route_pressure_and_npc_echo() {
+        let base = 0.20;
+        let mut quest = QuestLog::default();
+
+        complete_side_quest_with_resolution(
+            &mut quest,
+            SideQuest::RiverLanterns,
+            SideQuestResolution::Pursue,
+        );
+
+        assert_eq!(
+            side_quest_route_relief_summary(MapKind::RiverReedBed, &quest),
+            Some("委托清障 半稳 遇妖-5% · 追查1".to_string())
+        );
+        assert!((route_encounter_rate(base, MapKind::RiverReedBed, &quest) - 0.19).abs() < 0.001);
+        let route_lines =
+            npc_reaction_lines(MapKind::RiverReedBed, &NPCS_RIVER_REED_BED[0], &quest);
+        assert!(route_lines.iter().any(|line| line.contains("裁断回声")));
+        assert!(route_lines.iter().any(|line| line.contains("追查余波")));
+
+        complete_side_quest_with_resolution(
+            &mut quest,
+            SideQuest::RiverCargo,
+            SideQuestResolution::Settle,
+        );
+        assert_eq!(
+            side_quest_route_relief_summary(MapKind::RiverReedBed, &quest),
+            Some("委托清障 已清 遇妖-12% · 追查1".to_string())
+        );
+        let hub_lines = npc_reaction_lines(MapKind::RiverTown, &NPCS_RIVER_TOWN[2], &quest);
+        assert!(hub_lines.iter().any(|line| line.contains("裁断回声")));
+        assert!(
+            hub_lines
+                .iter()
+                .any(|line| line.contains("封存") && line.contains("追查余波"))
+        );
+    }
+
+    #[test]
+    fn commission_field_choices_feed_route_pressure_and_street_talk() {
+        let base = 0.20;
+        let mut quest = QuestLog::default();
+        let trace = COMMISSION_TRACE_DEFS
+            .iter()
+            .find(|trace| trace.side == SideQuest::RiverLanterns)
+            .unwrap();
+
+        quest.interact_side_quest(SideQuest::RiverLanterns);
+        quest.interact_commission_trace_with_approach(
+            trace.side,
+            trace.name,
+            trace.active_line,
+            trace.source,
+            trace.inactive_line,
+            trace.repeat_line,
+            SideQuestFieldApproach::Investigate,
+        );
+        quest.record_side_victory();
+        quest.interact_side_quest_with_resolution(
+            SideQuest::RiverLanterns,
+            SideQuestResolution::Pursue,
+        );
+
+        assert_eq!(
+            side_quest_route_relief_summary(MapKind::RiverReedBed, &quest),
+            Some("委托清障 半稳 遇妖-6% · 追查1 · 细查1".to_string())
+        );
+        assert!((route_encounter_rate(base, MapKind::RiverReedBed, &quest) - 0.188).abs() < 0.001);
+        let route_lines =
+            npc_reaction_lines(MapKind::RiverReedBed, &NPCS_RIVER_REED_BED[0], &quest);
+        assert!(route_lines.iter().any(|line| line.contains("现场回声")));
+        assert!(route_lines.iter().any(|line| line.contains("细查现场")));
     }
 
     #[test]
@@ -6822,6 +12120,201 @@ mod tests {
             treasure_for_prop(MapKind::ThunderDrumPath, &PROPS_THUNDER_DRUM_PATH[1]),
             None
         );
+    }
+
+    #[test]
+    fn route_mark_props_add_optional_route_memory() {
+        assert_eq!(
+            route_mark_for_prop(MapKind::MoonEchoCorridor, &PROPS_MOON_ECHO_CORRIDOR[3]),
+            Some(RouteMark::MoonEcho)
+        );
+        assert_eq!(
+            route_mark_for_prop(MapKind::RiverReedBed, &PROPS_RIVER_REED_BED[5]),
+            Some(RouteMark::ReedFord)
+        );
+        assert_eq!(
+            route_mark_for_prop(MapKind::PlagueShrinePath, &PROPS_PLAGUE_SHRINE_PATH[4]),
+            Some(RouteMark::PlagueBell)
+        );
+        assert_eq!(
+            route_mark_for_prop(
+                MapKind::MansionMirrorGallery,
+                &PROPS_MANSION_MIRROR_GALLERY[0]
+            ),
+            Some(RouteMark::MirrorSideDoor)
+        );
+        assert_eq!(
+            route_mark_for_prop(MapKind::ThunderDrumPath, &PROPS_THUNDER_DRUM_PATH[4]),
+            Some(RouteMark::ThunderSwitchback)
+        );
+        assert_eq!(
+            route_mark_for_prop(MapKind::DreamWaterway, &PROPS_DREAM_WATERWAY[4]),
+            Some(RouteMark::DreamReturn)
+        );
+
+        assert_eq!(
+            river_lantern_for_prop(MapKind::RiverReedBed, &PROPS_RIVER_REED_BED[0]),
+            Some(RiverLantern::Upstream)
+        );
+        assert_eq!(
+            thunder_drum_for_prop(MapKind::ThunderDrumPath, &PROPS_THUNDER_DRUM_PATH[1]),
+            Some(ThunderDrum::Wind)
+        );
+        assert_eq!(
+            route_detour_for_prop(MapKind::MoonEchoCorridor, &PROPS_MOON_ECHO_CORRIDOR[4]),
+            Some(RouteDetour::MoonEchoPool)
+        );
+        assert_eq!(
+            route_detour_for_prop(MapKind::RiverReedBed, &PROPS_RIVER_REED_BED[6]),
+            Some(RouteDetour::ReedHiddenFord)
+        );
+        assert_eq!(
+            route_detour_for_prop(MapKind::PlagueShrinePath, &PROPS_PLAGUE_SHRINE_PATH[0]),
+            Some(RouteDetour::PlagueHerbTrail)
+        );
+        assert_eq!(
+            route_detour_for_prop(
+                MapKind::MansionMirrorGallery,
+                &PROPS_MANSION_MIRROR_GALLERY[5]
+            ),
+            Some(RouteDetour::MirrorServantDoor)
+        );
+        assert_eq!(
+            route_detour_for_prop(MapKind::ThunderDrumPath, &PROPS_THUNDER_DRUM_PATH[0]),
+            Some(RouteDetour::ThunderRidgeCache)
+        );
+        assert_eq!(
+            route_detour_for_prop(MapKind::DreamWaterway, &PROPS_DREAM_WATERWAY[0]),
+            Some(RouteDetour::DreamBackwater)
+        );
+
+        let mut quest = QuestLog::default();
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::RouteMark(RouteMark::MoonEcho)),
+            "!"
+        );
+        quest.interact_route_mark(RouteMark::MoonEcho);
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::RouteMark(RouteMark::MoonEcho)),
+            "✓"
+        );
+        assert_eq!(
+            quest_marker_glyph(
+                &quest,
+                QuestMarkerKind::RouteDetour(RouteDetour::MoonEchoPool)
+            ),
+            "？"
+        );
+        quest.complete_route_detour(RouteDetour::MoonEchoPool, RouteDetourApproach::Scout);
+        assert_eq!(
+            quest_marker_glyph(
+                &quest,
+                QuestMarkerKind::RouteDetour(RouteDetour::MoonEchoPool)
+            ),
+            "✓"
+        );
+    }
+
+    #[test]
+    fn puzzle_props_can_advance_matching_commissions_once() {
+        let mut quest = quest_at_moon_route(false, false);
+        quest.interact_side_quest(SideQuest::MoonCaveCrystals);
+
+        let was_lit = quest.moon_crystal_marker_for(MoonCrystal::North) == "✓";
+        let mut lines = quest.activate_moon_crystal(MoonCrystal::North);
+        let is_lit = quest.moon_crystal_marker_for(MoonCrystal::North) == "✓";
+        append_side_objective_progress(
+            &mut lines,
+            &mut quest,
+            SideQuest::MoonCaveCrystals,
+            "晶阵已净",
+            was_lit,
+            is_lit,
+        );
+        assert!(lines.iter().any(|line| line.contains("委托推进")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveCrystals), 1);
+
+        let was_lit = quest.moon_crystal_marker_for(MoonCrystal::North) == "✓";
+        let mut repeat = quest.activate_moon_crystal(MoonCrystal::North);
+        let is_lit = quest.moon_crystal_marker_for(MoonCrystal::North) == "✓";
+        append_side_objective_progress(
+            &mut repeat,
+            &mut quest,
+            SideQuest::MoonCaveCrystals,
+            "晶阵已净",
+            was_lit,
+            is_lit,
+        );
+        assert!(!repeat.iter().any(|line| line.contains("委托推进")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveCrystals), 1);
+
+        let was_lit = quest.moon_crystal_marker_for(MoonCrystal::South) == "✓";
+        let mut lines = quest.activate_moon_crystal(MoonCrystal::South);
+        let is_lit = quest.moon_crystal_marker_for(MoonCrystal::South) == "✓";
+        append_side_objective_progress(
+            &mut lines,
+            &mut quest,
+            SideQuest::MoonCaveCrystals,
+            "晶阵已净",
+            was_lit,
+            is_lit,
+        );
+        assert!(lines.iter().any(|line| line.contains("条件达成")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveCrystals), 2);
+        assert_eq!(quest.side_marker_for(SideQuest::MoonCaveCrystals), "!");
+    }
+
+    #[test]
+    fn route_marks_and_detours_advance_follow_up_commissions_once() {
+        let mut quest = quest_at_moon_route(false, false);
+        let mut stats = PlayerStats::default();
+        complete_side_quest(&mut quest, SideQuest::MoonCaveCrystals);
+        quest.interact_side_quest(SideQuest::MoonCaveEchoes);
+
+        let was_marked = quest.route_mark_marker_for(RouteMark::MoonEcho) == "✓";
+        let mut lines = quest.interact_route_mark(RouteMark::MoonEcho);
+        let is_marked = quest.route_mark_marker_for(RouteMark::MoonEcho) == "✓";
+        let (side, source) = route_mark_side_objective(RouteMark::MoonEcho).unwrap();
+        append_side_objective_progress(&mut lines, &mut quest, side, source, was_marked, is_marked);
+        assert!(lines.iter().any(|line| line.contains("委托推进")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveEchoes), 1);
+
+        let was_marked = quest.route_mark_marker_for(RouteMark::MoonEcho) == "✓";
+        let mut repeat = quest.interact_route_mark(RouteMark::MoonEcho);
+        let is_marked = quest.route_mark_marker_for(RouteMark::MoonEcho) == "✓";
+        let (side, source) = route_mark_side_objective(RouteMark::MoonEcho).unwrap();
+        append_side_objective_progress(
+            &mut repeat,
+            &mut quest,
+            side,
+            source,
+            was_marked,
+            is_marked,
+        );
+        assert!(!repeat.iter().any(|line| line.contains("委托推进")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveEchoes), 1);
+
+        let result = resolve_dialogue_choice(
+            DialogueChoice::route_detour(RouteDetour::MoonEchoPool),
+            &mut quest,
+            &mut stats,
+        );
+        assert!(result.lines.iter().any(|line| line.contains("委托推进")));
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("回声岔路已压") && line.contains("2/3"))
+        );
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveEchoes), 2);
+
+        let repeat = resolve_dialogue_choice(
+            DialogueChoice::route_detour(RouteDetour::MoonEchoPool),
+            &mut quest,
+            &mut stats,
+        );
+        assert!(!repeat.lines.iter().any(|line| line.contains("委托推进")));
+        assert_eq!(quest.side_quest_progress(SideQuest::MoonCaveEchoes), 2);
     }
 
     #[test]
@@ -7003,6 +12496,346 @@ mod tests {
     }
 
     #[test]
+    fn field_supply_prompt_marker_and_reward_update_stats_once() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats {
+            hp: 50,
+            mp: 10,
+            ..default()
+        };
+        let supply = field_supply_defs(MapKind::Village).next().unwrap();
+        let pos = PlayerPos {
+            col: supply.col,
+            row: supply.row + 1,
+            facing: IVec2::new(0, -1),
+        };
+
+        let prompt = field_supply_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("村郊止血草"));
+        assert!(prompt.contains("可采"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::FieldSupply(supply.supply)),
+            "!"
+        );
+
+        let interaction = quest.interact_field_supply(supply.supply);
+        let reward = interaction.reward.expect("first field supply rewards");
+        let line = apply_supply_reward(&mut stats, reward);
+        assert_eq!(stats.exp, 4);
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.hp, 64);
+        assert_eq!(stats.mp, 10);
+        assert!(line.contains("采集奖励"));
+
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::FieldSupply(supply.supply)),
+            "✓"
+        );
+        let prompt = field_supply_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("已采"));
+
+        let repeat = quest.interact_field_supply(supply.supply);
+        assert!(repeat.reward.is_none());
+    }
+
+    #[test]
+    fn commission_trace_prompt_marker_and_progress_update_once() {
+        let mut quest = QuestLog::default();
+        let trace = COMMISSION_TRACE_DEFS
+            .iter()
+            .find(|trace| trace.side == SideQuest::VillageTrail)
+            .unwrap();
+        let pos = PlayerPos {
+            col: trace.col,
+            row: trace.row - 1,
+            facing: IVec2::new(0, 1),
+        };
+
+        let prompt = commission_trace_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("旧竹栅妖痕"));
+        assert!(prompt.contains("未领取"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::CommissionTrace(trace.side)),
+            "？"
+        );
+
+        quest.interact_side_quest(SideQuest::VillageTrail);
+        let prompt = commission_trace_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("可处理"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::CommissionTrace(trace.side)),
+            "!"
+        );
+        let choice = DialogueChoice::commission_trace(trace);
+        assert_eq!(choice.prompt(), "要怎样处理《旧竹栅妖痕》这处委托现场？");
+        assert_eq!(choice.option_count(), 3);
+        assert_eq!(choice.option_label(0), "细查现场");
+        assert_eq!(choice.option_label(1), "快断余妖");
+
+        let lines = quest.interact_commission_trace(
+            trace.side,
+            trace.name,
+            trace.active_line,
+            trace.source,
+            trace.inactive_line,
+            trace.repeat_line,
+        );
+        assert!(lines.iter().any(|line| line.contains("旧竹栅妖痕已查")));
+        assert_eq!(quest.side_quest_progress(SideQuest::VillageTrail), 1);
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::CommissionTrace(trace.side)),
+            "✓"
+        );
+
+        let prompt = commission_trace_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("已处理"));
+        let repeat = quest.interact_commission_trace(
+            trace.side,
+            trace.name,
+            trace.active_line,
+            trace.source,
+            trace.inactive_line,
+            trace.repeat_line,
+        );
+        assert!(repeat.iter().any(|line| line.contains("已经写进委托签")));
+        assert_eq!(quest.side_quest_progress(SideQuest::VillageTrail), 1);
+
+        let mut fast_quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+        fast_quest.interact_side_quest(SideQuest::VillageTrail);
+        let mut fast_choice = DialogueChoice::commission_trace(trace);
+        fast_choice.selected = 1;
+        let result = resolve_dialogue_choice(fast_choice, &mut fast_quest, &mut stats);
+        assert!(result.lines.iter().any(|line| line.contains("快断余妖")));
+        assert_eq!(
+            fast_quest.side_quest_field_approach(SideQuest::VillageTrail),
+            Some(SideQuestFieldApproach::Confront)
+        );
+        assert_eq!(fast_quest.side_quest_progress(SideQuest::VillageTrail), 1);
+    }
+
+    #[test]
+    fn care_aftermath_reward_updates_stats_once() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        quest.interact_bond_scene();
+        quest.interact_camp_scene();
+
+        let reward = quest
+            .claim_care_aftermath(Chapter::VillageOath)
+            .expect("completed care should reward once");
+        let line = apply_care_aftermath_reward(&mut stats, reward);
+        assert!(line.contains("照应回礼"));
+        assert_eq!(stats.exp, 16);
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.gold, 90);
+        assert_eq!(quest.claim_care_aftermath(Chapter::VillageOath), None);
+    }
+
+    #[test]
+    fn commission_aftermath_reward_updates_stats_once() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+
+        assert_eq!(quest.claim_commission_aftermath(Chapter::MoonCave), None);
+        complete_side_quest(&mut quest, SideQuest::MoonCaveCrystals);
+        assert_eq!(quest.claim_commission_aftermath(Chapter::MoonCave), None);
+        complete_side_quest(&mut quest, SideQuest::MoonCaveEchoes);
+
+        let reward = quest
+            .claim_commission_aftermath(Chapter::MoonCave)
+            .expect("completed local chain should reward once");
+        let line = local_commission_aftermath_line(MapKind::MoonEchoCorridor);
+        assert!(line.contains("地方回礼"));
+        assert!(line.contains("晶尘"));
+        let reward_line = apply_commission_aftermath_reward(&mut stats, reward);
+        assert!(reward_line.contains("清账回礼"));
+        assert!(reward_line.contains("境界提升至 Lv.2"));
+        assert_eq!(stats.level, 2);
+        assert_eq!(stats.exp, 8);
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.gold, 100);
+        assert_eq!(quest.claim_commission_aftermath(Chapter::MoonCave), None);
+    }
+
+    #[test]
+    fn companion_scene_followup_rewards_when_returning_to_local_npc() {
+        let mut quest = quest_at_moon_route_with_trail_companion_scene();
+        let mut stats = PlayerStats::default();
+        let exp_before = stats.exp;
+        let potions_before = stats.potions;
+        let gold_before = stats.gold;
+
+        let lines = claim_local_companion_scene_followup(MapKind::Bamboo, &mut quest, &mut stats);
+        assert!(lines.iter().any(|line| line.contains("小传回访")));
+        assert!(lines.iter().any(|line| line.contains("月衡")));
+        assert!(lines.iter().any(|line| line.contains("旧栅")));
+        assert!(lines.iter().any(|line| line.contains("小传回礼")));
+        assert_eq!(stats.exp, exp_before + 16);
+        assert_eq!(stats.potions, potions_before);
+        assert_eq!(stats.gold, gold_before + 10);
+        assert!(quest.has_claimed_companion_aftermath(CompanionScene::SwordSisterTrailGuard));
+        assert!(
+            claim_local_companion_scene_followup(MapKind::Bamboo, &mut quest, &mut stats)
+                .is_empty()
+        );
+
+        let mut missed = quest_at_river_lantern_puzzle();
+        assert!(
+            claim_local_companion_scene_followup(MapKind::Bamboo, &mut missed, &mut stats)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn missed_companion_revisit_runs_from_npc_pickup_to_field_and_turn_in() {
+        let revisit = CompanionRevisit::TrailEcho;
+        let giver = NPCS_PLAGUE_VILLAGE
+            .iter()
+            .find(|npc| npc.col == 5 && npc.row == 12)
+            .unwrap();
+        let mut quest = quest_at_plague_ward_puzzle();
+        let mut stats = PlayerStats::default();
+
+        assert_eq!(
+            npc_companion_revisit_for(MapKind::PlagueVillage, giver),
+            Some(revisit)
+        );
+        let giver_pos = PlayerPos {
+            col: giver.col,
+            row: giver.row + 1,
+            facing: IVec2::new(0, -1),
+        };
+        let prompt =
+            npc_companion_revisit_facing_prompt(MapKind::PlagueVillage, &giver_pos, &quest)
+                .unwrap();
+        assert!(prompt.contains("旧栅余声 [可领取]"));
+        assert!(prompt.contains("小传补访-01"));
+        assert!(task_tracker_text(MapKind::PlagueVillage, &quest).contains("本地补访"));
+
+        let handoff = npc_companion_revisit_handoff(MapKind::PlagueVillage, giver, &quest).unwrap();
+        assert!(handoff.lines.iter().any(|line| line.contains("迟来寻访")));
+        let accept_choice = handoff
+            .choice
+            .expect("available revisit should offer pickup");
+        assert_eq!(
+            accept_choice.kind,
+            DialogueChoiceKind::CompanionRevisit {
+                revisit,
+                action: CompanionRevisitChoiceAction::Accept,
+            }
+        );
+        let result = resolve_dialogue_choice(accept_choice, &mut quest, &mut stats);
+        assert!(result.lines.iter().any(|line| line.contains("补访签已接")));
+        let notice = quest_notice_for_confirmed_choice(accept_choice, &quest).unwrap();
+        assert!(notice.title.contains("同伴补访已领取"));
+        assert!(notice.body.contains("瘴雨祠道"));
+        let tracker = task_tracker_text(MapKind::PlagueShrinePath, &quest);
+        assert!(tracker.contains("同伴补访 · 旧栅余声 [寻访中]"));
+        assert!(tracker.contains("当前地图寻访"));
+        assert!(tracker.contains("祠道旧铃路印"));
+
+        let target = prop_defs(MapKind::PlagueShrinePath)
+            .iter()
+            .find(|prop| {
+                route_mark_for_prop(MapKind::PlagueShrinePath, prop) == Some(RouteMark::PlagueBell)
+            })
+            .unwrap();
+        let field_pos = PlayerPos {
+            col: target.col,
+            row: target.row + 1,
+            facing: IVec2::new(0, -1),
+        };
+        let field_prompt =
+            companion_revisit_field_facing_prompt(MapKind::PlagueShrinePath, &field_pos, &quest)
+                .unwrap();
+        assert!(field_prompt.contains("小传补访现场"));
+        assert!(field_prompt.contains("接回旧话"));
+
+        quest.interact_route_mark(RouteMark::PlagueBell);
+        let rate_before = route_encounter_rate(0.20, MapKind::PlagueShrinePath, &quest);
+        let field = quest.resolve_companion_revisit(revisit);
+        let reward_line = apply_companion_scene_reward(
+            &mut stats,
+            field
+                .reward
+                .expect("field revisit should restore scene reward"),
+        );
+        assert!(field.lines.iter().any(|line| line.contains("迟来小传")));
+        assert!(
+            field
+                .lines
+                .iter()
+                .any(|line| line.contains("一起把人带出去"))
+        );
+        assert!(reward_line.contains("小传奖励"));
+        let rate_after = route_encounter_rate(0.20, MapKind::PlagueShrinePath, &quest);
+        assert!((rate_after - rate_before * 0.96).abs() < 0.001);
+        assert!(
+            route_pressure_summary(MapKind::PlagueShrinePath, &quest)
+                .is_some_and(|line| line.contains("小传补访 已补 遇妖-4%"))
+        );
+        assert!(
+            companion_revisit_checkpoint_line(MapKind::PlagueShrinePath, &quest)
+                .is_some_and(|line| line.contains("补访照应"))
+        );
+        assert!(
+            claim_local_companion_scene_followup(MapKind::Bamboo, &mut quest, &mut stats)
+                .is_empty()
+        );
+        assert!(quest.companion_revisit_ready(revisit));
+
+        let handoff = npc_companion_revisit_handoff(MapKind::PlagueVillage, giver, &quest).unwrap();
+        let turn_in_choice = handoff
+            .choice
+            .expect("resolved revisit should offer turn in");
+        assert_eq!(
+            turn_in_choice.kind,
+            DialogueChoiceKind::CompanionRevisit {
+                revisit,
+                action: CompanionRevisitChoiceAction::TurnIn,
+            }
+        );
+        let gold_before = stats.gold;
+        let result = resolve_dialogue_choice(turn_in_choice, &mut quest, &mut stats);
+        assert!(result.lines.iter().any(|line| line.contains("补访归档")));
+        assert!(result.lines.iter().any(|line| line.contains("小传回礼")));
+        assert_eq!(stats.gold, gold_before + 10);
+        assert!(quest.companion_revisit_completed(revisit));
+        assert!(npc_companion_revisit_handoff(MapKind::PlagueVillage, giver, &quest).is_none());
+        assert!(
+            npc_reaction_lines(MapKind::PlagueVillage, &NPCS_PLAGUE_VILLAGE[2], &quest)
+                .iter()
+                .any(|line| line.contains("补访回声"))
+        );
+    }
+
+    #[test]
+    fn companion_revisit_givers_do_not_replace_existing_npc_roles_or_services() {
+        let cases = [
+            (MapKind::PlagueVillage, 5, 12, CompanionRevisit::TrailEcho),
+            (MapKind::SouthernRoad, 25, 14, CompanionRevisit::MirrorTrace),
+            (MapKind::FinalSanctum, 24, 1, CompanionRevisit::TotemVow),
+        ];
+
+        for (kind, col, row, revisit) in cases {
+            let npc = npc_defs(kind)
+                .iter()
+                .find(|npc| npc.col == col && npc.row == row)
+                .unwrap();
+            assert_eq!(npc_companion_revisit_for(kind, npc), Some(revisit));
+            assert!(npc.quest.is_none());
+            assert!(!is_side_quest_contact(kind, npc));
+            assert!(npc_service_for(kind, npc).is_none());
+            assert!(npc_errand_offer_for(kind, npc).is_none());
+            assert!(npc_errand_delivery_for(kind, npc).is_none());
+        }
+    }
+
+    #[test]
     fn shrine_offering_spends_gold_and_blocks_duplicate_blessings() {
         let mut quest = QuestLog::default();
         let mut stats = PlayerStats::default();
@@ -7012,17 +12845,208 @@ mod tests {
         assert_eq!(quest.active_shrine_blessing(), Some(ShrineBlessing::Guard));
         assert!(lines[0].contains("供奉"));
         assert!(lines[1].contains("下一场战斗"));
+        assert!(lines[2].contains("行路护持"));
+        assert!(lines[2].contains("不容易"));
 
         let lines = apply_shrine_offering(&mut stats, &mut quest, ShrineBlessing::Sword);
         assert_eq!(stats.gold, 80 - SHRINE_OFFERING_PRICE);
         assert_eq!(quest.active_shrine_blessing(), Some(ShrineBlessing::Guard));
         assert!(lines[0].contains("仍在"));
+        assert!(lines[2].contains("行路护持"));
 
         quest.take_shrine_blessing();
         stats.gold = 0;
         let lines = apply_shrine_offering(&mut stats, &mut quest, ShrineBlessing::Spirit);
         assert!(lines[0].contains("钱不够"));
         assert_eq!(quest.active_shrine_blessing(), None);
+    }
+
+    #[test]
+    fn shrine_blessings_adjust_route_encounter_rate() {
+        let base = 0.20;
+        let mut quest = QuestLog::default();
+        assert_eq!(route_encounter_rate(base, MapKind::Village, &quest), base);
+
+        assert!(quest.set_shrine_blessing(ShrineBlessing::Guard));
+        assert!((route_encounter_rate(base, MapKind::Village, &quest) - 0.13).abs() < 0.001);
+
+        quest.take_shrine_blessing();
+        assert!(quest.set_shrine_blessing(ShrineBlessing::Sword));
+        assert!((route_encounter_rate(base, MapKind::Village, &quest) - 0.24).abs() < 0.001);
+
+        quest.take_shrine_blessing();
+        assert!(quest.set_shrine_blessing(ShrineBlessing::Spirit));
+        assert!((route_encounter_rate(base, MapKind::Village, &quest) - 0.17).abs() < 0.001);
+        assert!((route_encounter_rate(0.95, MapKind::Village, &quest) - 0.8075).abs() < 0.001);
+    }
+
+    #[test]
+    fn route_marks_adjust_route_encounter_rate() {
+        let base = 0.20;
+        let mut quest = QuestLog::default();
+        assert_eq!(
+            route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest),
+            base
+        );
+
+        quest.interact_route_mark(RouteMark::MoonEcho);
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest) - 0.18).abs() < 0.001
+        );
+        assert_eq!(route_encounter_rate(base, MapKind::Village, &quest), base);
+
+        assert!(quest.set_shrine_blessing(ShrineBlessing::Guard));
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &quest) - 0.117).abs() < 0.001
+        );
+    }
+
+    #[test]
+    fn route_detours_adjust_route_encounter_rate_by_choice() {
+        let base = 0.20;
+        let mut careful = QuestLog::default();
+        assert_eq!(
+            route_encounter_rate(base, MapKind::MoonEchoCorridor, &careful),
+            base
+        );
+
+        let resolution =
+            careful.complete_route_detour(RouteDetour::MoonEchoPool, RouteDetourApproach::Scout);
+        assert!(resolution.reward.is_some());
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &careful) - 0.184).abs() < 0.001
+        );
+        assert_eq!(route_encounter_rate(base, MapKind::Village, &careful), base);
+
+        let mut swift = QuestLog::default();
+        swift.complete_route_detour(RouteDetour::MoonEchoPool, RouteDetourApproach::PressOn);
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &swift) - 0.194).abs() < 0.001
+        );
+    }
+
+    #[test]
+    fn route_care_changes_route_pressure_after_party_scenes() {
+        let base = 0.20;
+        let early = QuestLog::default();
+        assert_eq!(
+            route_care_state(MapKind::MoonEchoCorridor, &early),
+            RouteCareState::NoRoute
+        );
+        assert_eq!(route_care_summary(MapKind::MoonEchoCorridor, &early), None);
+
+        let unprepared = quest_at_moon_route(false, false);
+        assert_eq!(
+            route_care_state(MapKind::MoonEchoCorridor, &unprepared),
+            RouteCareState::Unprepared
+        );
+        assert_eq!(
+            route_care_summary(MapKind::MoonEchoCorridor, &unprepared),
+            Some("路线照应 欠备 遇妖+6%")
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &unprepared) - 0.212).abs()
+                < 0.001
+        );
+        assert!(
+            route_care_checkpoint_line(MapKind::MoonEchoCorridor, &unprepared)
+                .is_some_and(|line| line.contains("更容易"))
+        );
+
+        let partial = quest_at_moon_route(true, false);
+        assert_eq!(
+            route_care_state(MapKind::MoonEchoCorridor, &partial),
+            RouteCareState::Partial
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &partial) - 0.188).abs() < 0.001
+        );
+
+        let prepared = quest_at_moon_route(true, true);
+        assert_eq!(
+            route_care_state(MapKind::MoonEchoCorridor, &prepared),
+            RouteCareState::Prepared
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &prepared) - 0.172).abs()
+                < 0.001
+        );
+        assert!(
+            route_care_checkpoint_line(MapKind::MoonEchoCorridor, &prepared)
+                .is_some_and(|line| line.contains("压力降低"))
+        );
+
+        let missed = quest_at_river_lantern_puzzle();
+        assert_eq!(
+            route_care_state(MapKind::MoonEchoCorridor, &missed),
+            RouteCareState::Missed
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &missed) - 0.233).abs() < 0.001
+        );
+        assert_eq!(
+            route_encounter_rate(base, MapKind::Village, &prepared),
+            base
+        );
+    }
+
+    #[test]
+    fn companion_scenes_reduce_matching_route_pressure_and_checkpoint_lines() {
+        let base = 0.20;
+        let plain = quest_at_moon_route(false, false);
+        assert_eq!(
+            companion_route_state(MapKind::MoonEchoCorridor, &plain),
+            CompanionRouteState::NoRoute
+        );
+        assert_eq!(
+            companion_route_summary(MapKind::MoonEchoCorridor, &plain),
+            None
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &plain) - 0.212).abs() < 0.001
+        );
+
+        let prepared = quest_at_moon_route_with_trail_companion_scene();
+        assert_eq!(
+            companion_route_state(MapKind::MoonEchoCorridor, &prepared),
+            CompanionRouteState::Prepared
+        );
+        assert_eq!(
+            companion_route_summary(MapKind::MoonEchoCorridor, &prepared),
+            Some("小传照应 周全 遇妖-8%")
+        );
+        assert!(
+            route_pressure_summary(MapKind::MoonEchoCorridor, &prepared).is_some_and(|line| line
+                .contains("路线照应 欠备")
+                && line.contains("小传照应 周全"))
+        );
+        assert!(
+            (route_encounter_rate(base, MapKind::MoonEchoCorridor, &prepared) - 0.195).abs()
+                < 0.001
+        );
+        assert!(
+            companion_route_checkpoint_line(MapKind::MoonEchoCorridor, &prepared)
+                .is_some_and(|line| line.contains("林月衡") && line.contains("退路"))
+        );
+
+        let missed = quest_at_river_lantern_puzzle();
+        assert_eq!(
+            companion_route_state(MapKind::MoonEchoCorridor, &missed),
+            CompanionRouteState::Missed
+        );
+        assert_eq!(
+            companion_route_summary(MapKind::MoonEchoCorridor, &missed),
+            Some("小传照应 错过 遇妖+4%")
+        );
+        assert!(
+            route_pressure_summary(MapKind::MoonEchoCorridor, &missed).is_some_and(|line| line
+                .contains("路线照应 错过")
+                && line.contains("小传照应 错过"))
+        );
+        assert!(
+            companion_route_checkpoint_line(MapKind::MoonEchoCorridor, &missed)
+                .is_some_and(|line| line.contains("小传错过"))
+        );
     }
 
     #[test]
@@ -7061,6 +13085,23 @@ mod tests {
         let lines = npc_reaction_lines(MapKind::Village, npc, &quest);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("两张红签"));
+
+        let final_npc = &NPCS_FINAL_SANCTUM[5];
+        let mut finale = QuestLog::default();
+        finale.interact_side_quest(SideQuest::FinalDreamEchoes);
+        for _ in 0..finale.side_quest_goal(SideQuest::FinalDreamEchoes) {
+            finale.record_side_victory();
+        }
+        finale.interact_side_quest(SideQuest::FinalDreamEchoes);
+        finale.interact_side_quest(SideQuest::FinalHomewardVows);
+        for _ in 0..finale.side_quest_goal(SideQuest::FinalHomewardVows) {
+            finale.record_side_victory();
+        }
+        finale.interact_side_quest(SideQuest::FinalHomewardVows);
+        let lines = npc_reaction_lines(MapKind::FinalSanctum, final_npc, &finale);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("梦灯余波"));
+        assert!(lines[0].contains("归潮灯签"));
     }
 
     #[test]
@@ -7105,8 +13146,80 @@ mod tests {
         missed.talk(QuestRole::Merchant);
         missed.talk(QuestRole::BambooScout);
         let lines = npc_reaction_lines(MapKind::Village, npc, &missed);
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("错过的夜谈和休整"));
+        assert!(lines[1].contains("小传街谈"));
+        assert!(lines[1].contains("未问出口的小传"));
+    }
+
+    #[test]
+    fn npc_reactions_reflect_route_branch_choices() {
+        let npc = &NPCS_RIVER_TOWN[2];
+        let mut careful = QuestLog::default();
+        careful.complete_route_detour(RouteDetour::ReedHiddenFord, RouteDetourApproach::Scout);
+        let lines = npc_reaction_lines(MapKind::RiverTown, npc, &careful);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("芦下隐渡"));
+        assert!(lines[0].contains("芦痕"));
+        assert!(lines[0].contains("少绕"));
+
+        let route_lines =
+            npc_reaction_lines(MapKind::RiverReedBed, &NPCS_RIVER_REED_BED[0], &careful);
+        assert_eq!(route_lines.len(), 1);
+        assert!(route_lines[0].contains("芦下隐渡"));
+
+        let mut swift = QuestLog::default();
+        swift.complete_route_detour(RouteDetour::ReedHiddenFord, RouteDetourApproach::PressOn);
+        let lines = npc_reaction_lines(MapKind::RiverTown, npc, &swift);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("快走"));
+        assert!(lines[0].contains("不敢夜里走"));
+
+        let main_role_npc = &NPCS_RIVER_TOWN[0];
+        assert!(npc_reaction_lines(MapKind::RiverTown, main_role_npc, &swift).is_empty());
+        assert!(npc_reaction_lines(MapKind::Village, &NPCS_VILLAGE[0], &swift).is_empty());
+    }
+
+    #[test]
+    fn route_detour_reports_reward_when_returning_to_local_npc() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+
+        assert!(
+            claim_local_route_detour_report(MapKind::RiverTown, &mut quest, &mut stats).is_empty()
+        );
+
+        quest.complete_route_detour(RouteDetour::ReedHiddenFord, RouteDetourApproach::Scout);
+        let gold_before = stats.gold;
+        let lines = claim_local_route_detour_report(MapKind::RiverTown, &mut quest, &mut stats);
+
+        assert!(lines.iter().any(|line| line.contains("【报路】芦下隐渡")));
+        assert!(lines.iter().any(|line| line.contains("江岸巡货人")));
+        assert!(lines.iter().any(|line| line.contains("【报路回礼】")));
+        assert_eq!(quest.route_report_summary(), "路报 1/6 芦下隐渡");
+        assert_eq!(stats.gold, gold_before + 14);
+        assert!(
+            claim_local_route_detour_report(MapKind::RiverTown, &mut quest, &mut stats).is_empty()
+        );
+    }
+
+    #[test]
+    fn npc_reactions_reflect_companion_personal_scene_status() {
+        let npc = &NPCS_BAMBOO[0];
+        let prepared = quest_at_moon_route_with_trail_companion_scene();
+        let lines = npc_reaction_lines(MapKind::Bamboo, npc, &prepared);
+        assert!(lines.iter().any(|line| line.contains("小传街谈")));
+        assert!(lines.iter().any(|line| line.contains("林月衡")));
+        assert!(lines.iter().any(|line| line.contains("旧栅")));
+
+        let missed = quest_at_river_lantern_puzzle();
+        let lines = npc_reaction_lines(MapKind::Bamboo, npc, &missed);
+        assert!(lines.iter().any(|line| line.contains("小传街谈")));
+        assert!(lines.iter().any(|line| line.contains("未问出口的小传")));
+        assert!(lines.iter().any(|line| line.contains("后队")));
+
+        let main_role_npc = &NPCS_BAMBOO[2];
+        assert!(npc_reaction_lines(MapKind::Bamboo, main_role_npc, &missed).is_empty());
     }
 
     #[test]
@@ -7124,7 +13237,7 @@ mod tests {
         assert!(prompt.contains("委托板 0/2完成"));
         assert!(prompt.contains("空格打开"));
         assert!(prompt.contains("山路余妖[可领取]"));
-        assert!(prompt.contains("药圃护路[可领取]"));
+        assert!(prompt.contains("药圃护路[后续]"));
 
         quest.interact_side_quest(SideQuest::VillageTrail);
         assert!(
@@ -7159,6 +13272,276 @@ mod tests {
             side_quest_facing_player(MapKind::Village, &away, &quest),
             None
         );
+
+        let final_pos = PlayerPos {
+            col: 2,
+            row: 4,
+            facing: IVec2::new(1, 0),
+        };
+        let final_prompt =
+            side_board_facing_prompt(MapKind::FinalSanctum, &final_pos, &QuestLog::default())
+                .unwrap();
+        assert!(final_prompt.contains("委托板 0/2完成"));
+        assert!(final_prompt.contains("梦灯余波[可领取]"));
+        assert!(final_prompt.contains("归潮旧愿[后续]"));
+    }
+
+    #[test]
+    fn npc_contacts_can_offer_and_turn_in_local_commissions() {
+        let pos = PlayerPos {
+            col: 6,
+            row: 8,
+            facing: IVec2::new(0, -1),
+        };
+        let npc = &NPCS_VILLAGE[0];
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+
+        let prompt = npc_side_quest_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("委托联系人 婆婆"));
+        assert!(prompt.contains("山路余妖[可领取]"));
+        assert!(prompt.contains("空格领取"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::SideContact(MapKind::Village)),
+            "!"
+        );
+
+        let handoff = npc_side_quest_handoff(MapKind::Village, npc, &quest).unwrap();
+        assert!(handoff.lines.iter().any(|line| line.contains("【领委托】")));
+        assert!(
+            handoff
+                .lines
+                .iter()
+                .any(|line| line.contains("【追踪预览】"))
+        );
+        let choice = handoff
+            .choice
+            .expect("available contact should ask to accept");
+        assert_eq!(
+            choice.kind,
+            DialogueChoiceKind::SideQuest {
+                side: SideQuest::VillageTrail,
+                action: SideQuestChoiceAction::Accept
+            }
+        );
+        resolve_dialogue_choice(choice, &mut quest, &mut stats);
+        assert!(quest.is_side_quest_active(SideQuest::VillageTrail));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::SideContact(MapKind::Village)),
+            "*"
+        );
+
+        let handoff = npc_side_quest_handoff(MapKind::Village, npc, &quest).unwrap();
+        assert!(handoff.choice.is_none());
+        assert!(handoff.lines.iter().any(|line| line.contains("进度 0/2")));
+
+        quest.record_side_victory();
+        quest.record_side_victory();
+        let prompt = npc_side_quest_facing_prompt(MapKind::Village, &pos, &quest).unwrap();
+        assert!(prompt.contains("山路余妖[可交付]"));
+        assert!(prompt.contains("空格交付"));
+        let handoff = npc_side_quest_handoff(MapKind::Village, npc, &quest).unwrap();
+        let choice = handoff.choice.expect("ready contact should ask to turn in");
+        assert_eq!(
+            choice.kind,
+            DialogueChoiceKind::SideQuest {
+                side: SideQuest::VillageTrail,
+                action: SideQuestChoiceAction::TurnIn
+            }
+        );
+        let gold_before = stats.gold;
+        resolve_dialogue_choice(choice, &mut quest, &mut stats);
+        assert!(quest.is_side_quest_completed(SideQuest::VillageTrail));
+        assert_eq!(stats.gold, gold_before + 18);
+
+        let handoff = npc_side_quest_handoff(MapKind::Village, npc, &quest).unwrap();
+        assert!(handoff.lines.iter().any(|line| line.contains("药圃护路")));
+        assert_eq!(
+            handoff
+                .choice
+                .expect("follow-up should now be claimable")
+                .kind,
+            DialogueChoiceKind::SideQuest {
+                side: SideQuest::VillageHerbs,
+                action: SideQuestChoiceAction::Accept
+            }
+        );
+
+        let final_pos = PlayerPos {
+            col: 5,
+            row: 13,
+            facing: IVec2::new(0, -1),
+        };
+        let final_npc = &NPCS_FINAL_SANCTUM[5];
+        let final_prompt =
+            npc_side_quest_facing_prompt(MapKind::FinalSanctum, &final_pos, &QuestLog::default())
+                .unwrap();
+        assert!(final_prompt.contains("委托联系人 红衣幻影"));
+        assert!(final_prompt.contains("梦灯余波[可领取]"));
+        let handoff =
+            npc_side_quest_handoff(MapKind::FinalSanctum, final_npc, &QuestLog::default()).unwrap();
+        assert!(handoff.lines.iter().any(|line| line.contains("【领委托】")));
+        assert_eq!(
+            handoff
+                .choice
+                .expect("final contact should offer board quest")
+                .kind,
+            DialogueChoiceKind::SideQuest {
+                side: SideQuest::FinalDreamEchoes,
+                action: SideQuestChoiceAction::Accept
+            }
+        );
+    }
+
+    #[test]
+    fn npc_errands_are_discovered_accepted_and_delivered_across_maps() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+        stats.hp = 50;
+        stats.mp = 1;
+        let errand = NpcErrand::BambooDewToCave;
+
+        let offer_pos = PlayerPos {
+            col: 5,
+            row: 7,
+            facing: IVec2::new(0, -1),
+        };
+        let prompt = npc_errand_facing_prompt(MapKind::Bamboo, &offer_pos, &quest).unwrap();
+        assert!(prompt.contains("NPC托付 竹露送药 [可托付]"));
+        assert!(prompt.contains("空格领取"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandOffer(errand)),
+            "!"
+        );
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandDelivery(errand)),
+            ""
+        );
+
+        let handoff = npc_errand_handoff(MapKind::Bamboo, &NPCS_BAMBOO[0], &quest).unwrap();
+        assert!(handoff.lines.iter().any(|line| line.contains("竹林猎户")));
+        let choice = handoff
+            .choice
+            .expect("available errand should ask for confirmation");
+        assert_eq!(
+            choice.kind,
+            DialogueChoiceKind::NpcErrand {
+                errand,
+                action: NpcErrandChoiceAction::Accept
+            }
+        );
+        let result = resolve_dialogue_choice(choice, &mut quest, &mut stats);
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("路人托付已接"))
+        );
+        assert!(quest.is_npc_errand_active(errand));
+        assert!(quest.active_task_tracker().contains("NPC托付 · 竹露送药"));
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandOffer(errand)),
+            "*"
+        );
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandDelivery(errand)),
+            "!"
+        );
+
+        let delivery_pos = PlayerPos {
+            col: 24,
+            row: 13,
+            facing: IVec2::new(0, -1),
+        };
+        let prompt = npc_errand_facing_prompt(MapKind::Cave, &delivery_pos, &quest).unwrap();
+        assert!(prompt.contains("NPC托付 竹露送药 [进行中]"));
+        assert!(prompt.contains("空格交付"));
+
+        let delivery = npc_errand_handoff(MapKind::Cave, &NPCS_CAVE[2], &quest).unwrap();
+        let choice = delivery
+            .choice
+            .expect("active errand should be deliverable");
+        assert_eq!(
+            choice.kind,
+            DialogueChoiceKind::NpcErrand {
+                errand,
+                action: NpcErrandChoiceAction::TurnIn
+            }
+        );
+        let result = resolve_dialogue_choice(choice, &mut quest, &mut stats);
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("路人托付送达"))
+        );
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("【托付回礼】"))
+        );
+        assert!(quest.is_npc_errand_completed(errand));
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.gold, 88);
+        assert_eq!(stats.hp, 60);
+        assert_eq!(stats.mp, 5);
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandOffer(errand)),
+            "✓"
+        );
+        assert_eq!(
+            quest_marker_glyph(&quest, QuestMarkerKind::NpcErrandDelivery(errand)),
+            "✓"
+        );
+
+        let repeat = npc_errand_handoff(MapKind::Cave, &NPCS_CAVE[2], &quest).unwrap();
+        assert!(repeat.choice.is_none());
+        assert!(repeat.lines[0].contains("已经送达"));
+    }
+
+    #[test]
+    fn late_npc_errand_contacts_are_mapped_to_existing_npcs() {
+        let pairs = [
+            (
+                MapKind::MoonEchoCorridor,
+                &NPCS_MOON_ECHO_CORRIDOR[4],
+                MapKind::RiverTown,
+                &NPCS_RIVER_TOWN[2],
+                NpcErrand::MoonMossToRiver,
+            ),
+            (
+                MapKind::Capital,
+                &NPCS_CAPITAL[1],
+                MapKind::MansionMirrorGallery,
+                &NPCS_MANSION_MIRROR_GALLERY[2],
+                NpcErrand::CapitalStarSlip,
+            ),
+            (
+                MapKind::MansionMirrorGallery,
+                &NPCS_MANSION_MIRROR_GALLERY[3],
+                MapKind::SouthernRoad,
+                &NPCS_SOUTHERN_ROAD[4],
+                NpcErrand::MirrorMedicineToSouth,
+            ),
+            (
+                MapKind::FinalSanctum,
+                &NPCS_FINAL_SANCTUM[3],
+                MapKind::DreamWaterway,
+                &NPCS_DREAM_WATERWAY[2],
+                NpcErrand::FinalLampWick,
+            ),
+        ];
+
+        for (offer_map, offer_npc, delivery_map, delivery_npc, errand) in pairs {
+            assert_eq!(offer_npc.quest, None);
+            assert_eq!(delivery_npc.quest, None);
+            assert_eq!(npc_errand_offer_for(offer_map, offer_npc), Some(errand));
+            assert_eq!(
+                npc_errand_delivery_for(delivery_map, delivery_npc),
+                Some(errand)
+            );
+        }
     }
 
     #[test]
@@ -7168,8 +13551,26 @@ mod tests {
 
         let board = DialogueChoice::side_board(MapKind::Village, &quest);
         assert_eq!(board.option_count(), 2);
-        assert_eq!(board.option_label(0), "山路余妖 · 可领取");
-        assert_eq!(board.option_label(1), "药圃护路 · 可领取");
+        assert_eq!(
+            board.option_label(0),
+            "领取追踪 · 山路余妖 0/2 · 余杭-巡山-壹"
+        );
+        assert_eq!(
+            board.option_label(1),
+            "查看后续 · 药圃护路 0/2 · 余杭-药圃-贰"
+        );
+
+        let mut locked_board = board;
+        locked_board.selected = 1;
+        let result = resolve_dialogue_choice(locked_board, &mut quest, &mut stats);
+        assert!(result.choice.is_none());
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("【后续委托】"))
+        );
+        assert!(!quest.is_side_quest_active(SideQuest::VillageHerbs));
 
         let result = resolve_dialogue_choice(board, &mut quest, &mut stats);
         assert!(result.lines[0].contains("选中《山路余妖》"));
@@ -7178,6 +13579,12 @@ mod tests {
                 .lines
                 .iter()
                 .any(|line| line.contains("【追踪预览】"))
+        );
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.contains("【委托契约】"))
         );
         let accept = result.choice.expect("board selection should ask to accept");
         assert_eq!(
@@ -7193,13 +13600,22 @@ mod tests {
         assert!(quest.is_side_quest_active(SideQuest::VillageTrail));
 
         let board = DialogueChoice::side_board(MapKind::Village, &quest);
-        assert_eq!(board.option_label(0), "山路余妖 · 进行中");
-        assert_eq!(board.option_label(1), "药圃护路 · 可领取");
+        assert_eq!(
+            board.option_label(0),
+            "查看进度 · 山路余妖 0/2 · 余杭-巡山-壹"
+        );
+        assert_eq!(
+            board.option_label(1),
+            "查看后续 · 药圃护路 0/2 · 余杭-药圃-贰"
+        );
 
         quest.record_side_victory();
         quest.record_side_victory();
         let board = DialogueChoice::side_board(MapKind::Village, &quest);
-        assert_eq!(board.option_label(0), "山路余妖 · 可交付");
+        assert_eq!(
+            board.option_label(0),
+            "交付领奖 · 山路余妖 2/2 · 余杭-巡山-壹"
+        );
 
         let result = resolve_dialogue_choice(board, &mut quest, &mut stats);
         let turn_in = result.choice.expect("ready task should ask to turn in");
@@ -7213,8 +13629,14 @@ mod tests {
 
         resolve_dialogue_choice(turn_in, &mut quest, &mut stats);
         let board = DialogueChoice::side_board(MapKind::Village, &quest);
-        assert_eq!(board.option_label(0), "药圃护路 · 可领取");
-        assert_eq!(board.option_label(1), "山路余妖 · 已完成");
+        assert_eq!(
+            board.option_label(0),
+            "领取追踪 · 药圃护路 0/2 · 余杭-药圃-贰"
+        );
+        assert_eq!(
+            board.option_label(1),
+            "查看归档 · 山路余妖 2/2 · 余杭-巡山-壹"
+        );
     }
 
     #[test]
@@ -7231,7 +13653,7 @@ mod tests {
                 action: SideQuestChoiceAction::Accept
             }
         );
-        assert_eq!(choice.prompt(), "要领取这份委托并写入任务簿吗？");
+        assert_eq!(choice.prompt(), "要签下这份委托契约并开始追踪吗？");
         assert_eq!(choice.option_label(0), "领取并追踪");
         assert!(!quest.is_side_quest_active(side));
 
@@ -7242,6 +13664,7 @@ mod tests {
         assert!(!quest.is_side_quest_active(side));
 
         let lines = resolve_dialogue_choice(choice, &mut quest, &mut stats).lines;
+        assert!(lines.iter().any(|line| line.contains("【委托契约】")));
         assert!(lines.iter().any(|line| line.contains("【领取委托】")));
         assert!(lines.iter().any(|line| line.contains("【任务追踪】")));
         assert!(quest.is_side_quest_active(side));
@@ -7256,16 +13679,53 @@ mod tests {
                 action: SideQuestChoiceAction::TurnIn
             }
         );
-        assert_eq!(turn_in.option_label(0), "交付领奖");
+        assert_eq!(turn_in.prompt(), "要怎样交付这份委托契约？");
+        assert_eq!(turn_in.option_count(), 3);
+        assert_eq!(turn_in.option_label(0), "稳妥封存");
+        assert_eq!(turn_in.option_label(1), "追查余波");
+        assert_eq!(turn_in.option_label(2), "先不处理");
 
         let potions_before = stats.potions;
         let gold_before = stats.gold;
-        let lines = resolve_dialogue_choice(turn_in, &mut quest, &mut stats).lines;
+        let mut pursue = turn_in;
+        pursue.selected = 1;
+        let lines = resolve_dialogue_choice(pursue, &mut quest, &mut stats).lines;
         assert!(quest.is_side_quest_completed(side));
+        assert_eq!(
+            quest.side_quest_resolution(side),
+            Some(SideQuestResolution::Pursue)
+        );
+        assert!(lines.iter().any(|line| line.contains("【委托契约】")));
         assert!(lines.iter().any(|line| line.contains("【支线完成】")));
+        assert!(lines.iter().any(|line| line.contains("追查余波")));
         assert!(lines.iter().any(|line| line.contains("【奖励】")));
         assert_eq!(stats.potions, potions_before + 1);
         assert_eq!(stats.gold, gold_before + 18);
+    }
+
+    #[test]
+    fn accepting_commission_grants_advance_supplies_once() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats {
+            mp: 10,
+            ..default()
+        };
+        let choice =
+            DialogueChoice::side_quest(SideQuest::VillageTrail, SideQuestChoiceAction::Accept);
+
+        let lines = resolve_dialogue_choice(choice, &mut quest, &mut stats).lines;
+        assert!(lines.iter().any(|line| line.contains("【委托预支】")));
+        assert!(lines.iter().any(|line| line.contains("药水 +1")));
+        assert!(lines.iter().any(|line| line.contains("路费 +4文")));
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.gold, 84);
+        assert_eq!(stats.mp, 12);
+
+        let repeat = resolve_dialogue_choice(choice, &mut quest, &mut stats).lines;
+        assert!(!repeat.iter().any(|line| line.contains("【委托预支】")));
+        assert_eq!(stats.potions, 4);
+        assert_eq!(stats.gold, 84);
+        assert_eq!(stats.mp, 12);
     }
 
     #[test]
@@ -7287,10 +13747,26 @@ mod tests {
         resolve_dialogue_choice(side, &mut quest, &mut stats);
         let notice = quest_notice_for_confirmed_choice(side, &quest).expect("side accept notice");
         assert_eq!(notice.kind, QuestNoticeKind::Side);
-        assert!(notice.title.contains("委托已领取"));
+        assert!(notice.title.contains("委托契约已领取"));
         assert!(notice.body.contains("山路余妖"));
         assert!(notice.body.contains("0/2"));
-        assert!(notice.body.contains("委托追踪卡"));
+        assert!(notice.body.contains("下一步："));
+        assert!(notice.body.contains("现场："));
+        assert!(notice.body.contains("HUD 委托追踪卡"));
+        assert!(notice.body.contains("回委托点交付领奖"));
+        assert!(side_quest_choice_for(&quest, SideQuest::VillageHerbs).is_none());
+
+        let errand =
+            DialogueChoice::npc_errand(NpcErrand::BambooDewToCave, NpcErrandChoiceAction::Accept);
+        resolve_dialogue_choice(errand, &mut quest, &mut stats);
+        let notice =
+            quest_notice_for_confirmed_choice(errand, &quest).expect("npc errand accept notice");
+        assert_eq!(notice.kind, QuestNoticeKind::Side);
+        assert!(notice.title.contains("NPC托付已接下"));
+        assert!(notice.body.contains("目标：把竹林晨露"));
+        assert!(notice.body.contains("路线：从青竹山径东门"));
+        assert!(notice.body.contains("交付：水月洞天"));
+        assert!(notice.body.contains("HUD 托付追踪卡"));
 
         let mut cancel =
             DialogueChoice::side_quest(SideQuest::VillageHerbs, SideQuestChoiceAction::Accept);
@@ -7305,7 +13781,8 @@ mod tests {
         let notice =
             quest_notice_for_confirmed_choice(turn_in, &quest).expect("side turn-in notice");
         assert_eq!(notice.kind, QuestNoticeKind::Complete);
-        assert!(notice.title.contains("委托已交付"));
+        assert!(notice.title.contains("委托契约已交付"));
+        assert!(notice.body.contains("委托签归档"));
         assert!(notice.body.contains("报酬已入袋"));
 
         let board = DialogueChoice::side_board(MapKind::Village, &quest);
@@ -7455,6 +13932,22 @@ mod tests {
             desired_party_followers(&quest),
             vec![Companion::Linger, Companion::SwordSister]
         );
+
+        let mut quest = quest_at_mansion_mirror_puzzle();
+        quest.align_mansion_mirror(MansionMirrorNode::Ledger);
+        quest.align_mansion_mirror(MansionMirrorNode::Witness);
+        quest.talk(QuestRole::MansionSpy);
+        quest.record_boss_victory(BossKind::MirrorMinister);
+        quest.talk(QuestRole::SpiritGuide);
+        quest.talk(QuestRole::TribalChief);
+        assert_eq!(
+            desired_party_followers(&quest),
+            vec![
+                Companion::Linger,
+                Companion::SwordSister,
+                Companion::SpiritWitch,
+            ]
+        );
     }
 
     #[test]
@@ -7477,13 +13970,58 @@ mod tests {
     }
 
     #[test]
+    fn shop_service_buys_chapter_gear_once_before_potions() {
+        let mut quest = QuestLog::default();
+        let mut stats = PlayerStats::default();
+
+        let result = apply_npc_service(NpcService::Shop, MapKind::Village, &mut quest, &mut stats);
+        assert!(result.line.contains("【装备铺】"));
+        assert!(result.line.contains("竹剑穗"));
+        assert!(result.line.contains("攻击 +2"));
+        assert_eq!(stats.gold, 26);
+        assert_eq!(stats.atk, 18);
+        assert_eq!(stats.def, 7);
+        assert_eq!(stats.potions, 3);
+        assert!(quest.has_shop_gear(ShopGear::VillageSwordTassel));
+
+        let result = apply_npc_service(NpcService::Shop, MapKind::Village, &mut quest, &mut stats);
+        assert_eq!(
+            result,
+            NpcServiceResult {
+                line: "【药铺】花 18 文买入一瓶药水，剩余 8 文。".to_string(),
+                rested: false,
+            }
+        );
+        assert_eq!(stats.potions, 4);
+
+        let mut river_quest = QuestLog::default();
+        let mut river_stats = PlayerStats::default();
+        river_stats.gold = 100;
+        let result = apply_npc_service(
+            NpcService::Shop,
+            MapKind::RiverTown,
+            &mut river_quest,
+            &mut river_stats,
+        );
+        assert!(result.line.contains("江绫护衣"));
+        assert_eq!(river_stats.gold, 14);
+        assert_eq!(river_stats.def, 8);
+        assert_eq!(river_stats.max_hp, 92);
+        assert_eq!(river_stats.hp, 92);
+        assert_eq!(river_stats.max_mp, 24);
+        assert_eq!(river_stats.mp, 24);
+        assert!(river_quest.has_shop_gear(ShopGear::RiverSilkVest));
+    }
+
+    #[test]
     fn npc_services_buy_potions_and_restore_at_inn() {
         let mut stats = PlayerStats::default();
-        let quest = QuestLog::default();
+        let mut quest = QuestLog::default();
+        quest.record_shop_gear(ShopGear::VillageSwordTassel);
 
         assert_eq!(stats.gold, 80);
         assert_eq!(
-            apply_npc_service(NpcService::Shop, MapKind::Village, &quest, &mut stats),
+            apply_npc_service(NpcService::Shop, MapKind::Village, &mut quest, &mut stats),
             NpcServiceResult {
                 line: "【药铺】花 18 文买入一瓶药水，剩余 62 文。".to_string(),
                 rested: false,
@@ -7495,7 +14033,7 @@ mod tests {
         stats.hp = 12;
         stats.mp = 0;
         assert_eq!(
-            apply_npc_service(NpcService::Inn, MapKind::RiverTown, &quest, &mut stats),
+            apply_npc_service(NpcService::Inn, MapKind::RiverTown, &mut quest, &mut stats),
             NpcServiceResult {
                 line: "【客栈】花 24 文住了一晚，气血和灵力已恢复。".to_string(),
                 rested: true,
@@ -7509,7 +14047,7 @@ mod tests {
         stats.mp = 1;
         stats.gold = 0;
         assert_eq!(
-            apply_npc_service(NpcService::Inn, MapKind::RiverTown, &quest, &mut stats),
+            apply_npc_service(NpcService::Inn, MapKind::RiverTown, &mut quest, &mut stats),
             NpcServiceResult {
                 line: "【客栈】住店要 24 文，你的钱不够。".to_string(),
                 rested: false,
@@ -7518,7 +14056,7 @@ mod tests {
         assert_eq!(stats.hp, 1);
         assert_eq!(stats.mp, 1);
 
-        let result = apply_npc_service(NpcService::CampRest, MapKind::Cave, &quest, &mut stats);
+        let result = apply_npc_service(NpcService::CampRest, MapKind::Cave, &mut quest, &mut stats);
         assert!(result.rested);
         assert!(result.line.contains("休整"));
         assert_eq!(stats.hp, stats.max_hp);
@@ -7537,10 +14075,11 @@ mod tests {
         quest.record_side_victory();
         quest.interact_side_quest(SideQuest::VillageHerbs);
         assert!(local_favor_unlocked(MapKind::Village, &quest));
+        quest.record_shop_gear(ShopGear::VillageSwordTassel);
 
         let mut stats = PlayerStats::default();
         assert_eq!(
-            apply_npc_service(NpcService::Shop, MapKind::Village, &quest, &mut stats),
+            apply_npc_service(NpcService::Shop, MapKind::Village, &mut quest, &mut stats),
             NpcServiceResult {
                 line: "【药铺】乡里护持，花 12 文买入一瓶药水，剩余 68 文。".to_string(),
                 rested: false,
@@ -7567,7 +14106,7 @@ mod tests {
             apply_npc_service(
                 NpcService::Inn,
                 MapKind::RiverTown,
-                &river_quest,
+                &mut river_quest,
                 &mut stats
             ),
             NpcServiceResult {
@@ -7672,5 +14211,33 @@ mod tests {
         assert!(walking.offset.y > idle.offset.y.abs());
         assert!(walking.rotation.abs() > idle.rotation.abs());
         assert!((walking.scale.x - walking.scale.y).abs() > (idle.scale.x - idle.scale.y).abs());
+
+        let specs = cutout_part_specs(cutout_source_px_for_path("npcs/ai_sword_sister.png"), 64.0);
+        assert_eq!(specs.len(), CutoutPart::ALL.len());
+        assert!(specs[0].offset.y < specs[1].offset.y);
+        assert!(specs[2].offset.y > specs[1].offset.y);
+
+        let lower = cutout_part_motion(CutoutPart::Lower, 0.8, 1.0);
+        let head = cutout_part_motion(CutoutPart::Head, 0.8, 1.0);
+        assert_ne!(lower.rotation, head.rotation);
+        assert!(head.offset.x.abs() > lower.offset.x.abs());
+    }
+
+    #[test]
+    fn character_shadow_and_afterimage_frames_are_animated() {
+        let shadow_a = character_shadow_frame(0.28, 0.20);
+        let shadow_b = character_shadow_frame(0.28, 1.50);
+
+        assert_ne!(shadow_a.scale, shadow_b.scale);
+        assert_ne!(shadow_a.alpha, shadow_b.alpha);
+        assert!((0.02..=0.62).contains(&shadow_a.alpha));
+        assert!((0.02..=0.62).contains(&shadow_b.alpha));
+
+        let early = character_afterimage_frame(0.05, 0.35).expect("active afterimage frame");
+        let late = character_afterimage_frame(0.28, 0.35).expect("fading afterimage frame");
+
+        assert!(early.progress < late.progress);
+        assert!(early.alpha_scale > late.alpha_scale);
+        assert!(character_afterimage_frame(0.35, 0.35).is_none());
     }
 }

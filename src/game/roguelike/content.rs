@@ -55,24 +55,42 @@ pub struct RandomEvent {
 // Chapter cards (shown once when a chapter map opens)
 // ---------------------------------------------------------------------------
 
-pub const CHAPTER_CARDS: [&[&str]; 4] = [
+pub const CHAPTER_CARDS: [&[&str]; 7] = [
     &[
-        "【第一卷 · 桃溪村誓】",
-        "桃溪村外妖雾骤起,月魄妖踞于水月洞天,吞人魂魄。",
+        "【第一卷 · 余杭夜雨】",
+        "余杭客栈外妖雾骤起,破庙赤火连着十里坡一路烧来。",
         "李逍遥背起木剑,在祠堂前立誓:雾散之前,绝不回头。",
         "灵儿把一枚桃木铃系在他腕上:「铃响三声,记得回家。」",
     ],
     &[
-        "【第二卷 · 江雾疫火】",
-        "顺流而下,江城灯火尽熄,疫气伏行水脉之间。",
-        "药铺老医跪求:「疫有母根,不斩根,城中三千户皆成孤坟。」",
-        "灵儿低声道:「这一路,怕是要见许多不忍见之事。」",
+        "【第二卷 · 水月洞天】",
+        "月回廊下灵阵裂开,水月洞天深处有白影吞噬魂魄。",
+        "灵儿的铃声在泉边响起,像在提醒你誓言已经落地。",
+        "洞天门后,月魄妖正等着把同行之人拆成倒影。",
     ],
     &[
-        "【第三卷 · 京华南疆】",
-        "京城朱门之内,有人借妖行法;南疆雷泽之上,古麟被锁为刀。",
+        "【第三卷 · 苏州江灯】",
+        "顺流而下,苏州渡口江雾压城,河灯反向漂入黑鳞漩口。",
+        "摆渡人说:「蛟影不除,这一江的船都会载着亡魂回来。」",
+        "灵儿低声道:「水路也会记得谁被它带走。」",
+    ],
+    &[
+        "【第四卷 · 白河疫雨】",
+        "白河村病灯连成一线,黑水镇门窗紧闭,瘴雨从井底往上烧。",
+        "老医跪求:「疫有母根,不斩根,村镇三千户皆成孤坟。」",
+        "这一路,怕是要见许多不忍见之事。",
+    ],
+    &[
+        "【第五卷 · 京华镜影】",
+        "京城朱门之内,有人借妖行法,铜镜照出不止一个真相。",
         "皇榜悬赏斩妖人,暗巷里却有人递来一句:「妖非祸源,人心才是。」",
         "腕上的桃木铃,第一次自己响了一声。",
+    ],
+    &[
+        "【第六卷 · 南疆雷誓】",
+        "离京之后,南疆旧鼓在云底回响,雷麟被锁在祭道尽头。",
+        "南瑶望着雷纹沉默很久:「那是族里的旧誓,也是旧债。」",
+        "若接不住这道雷,终局水门便不会为外人打开。",
     ],
     &[
         "【终卷 · 心渊照影】",
@@ -99,7 +117,7 @@ pub struct StoryScene {
     pub options: &'static [StoryOption],
 }
 
-pub const STORY_SCENES: [StoryScene; 4] = [
+pub const STORY_SCENES: [StoryScene; 7] = [
     StoryScene {
         lines: &[
             "溪边旧渡口,灵儿追了上来,发梢还沾着夜露。",
@@ -130,6 +148,78 @@ pub const STORY_SCENES: [StoryScene; 4] = [
                         "(道心 +2,攻击 +2)",
                     ],
                     effect: Effect::GainAtk(2),
+                    daoxin: 2,
+                    qingyuan: 0,
+                },
+            },
+        ],
+    },
+    StoryScene {
+        lines: &[
+            "水月洞天的泉心映出两个影子:一个是你,一个却站在灵儿身后。",
+            "灵儿抬手按住桃木铃:「它在学我的声音,想让你回头。」",
+            "泉面一圈圈泛开,像在问你要先护人,还是先破阵。",
+        ],
+        prompt: "月影逼近,你先——",
+        options: &[
+            StoryOption {
+                label: "挡在灵儿身前,先稳住她的灵息。",
+                outcome: Outcome {
+                    lines: &[
+                        "灵儿的指尖终于不再发冷,铃声也稳成一线。",
+                        "月影慢了一息,足够你们看清真正的阵眼。",
+                        "(情缘 +2,灵力上限 +8)",
+                    ],
+                    effect: Effect::GainMaxMp(8),
+                    daoxin: 0,
+                    qingyuan: 2,
+                },
+            },
+            StoryOption {
+                label: "闭眼听水声,一剑斩向假影。",
+                outcome: Outcome {
+                    lines: &[
+                        "剑光落处,假影碎成一地冷月。灵阵忽然安静下来。",
+                        "灵儿轻声道:「你真的听见了它和我的不同。」",
+                        "(道心 +2,攻击 +2)",
+                    ],
+                    effect: Effect::GainAtk(2),
+                    daoxin: 2,
+                    qingyuan: 0,
+                },
+            },
+        ],
+    },
+    StoryScene {
+        lines: &[
+            "苏州渡口的夜里,一个老船夫把破灯推到你面前。",
+            "「我儿子追河魇去了,灯若还亮,说明他还在水下等人拉一把。」",
+            "灵儿望着逆流的灯,眼里映着一整条发冷的江。",
+        ],
+        prompt: "你如何处置这盏灯?",
+        options: &[
+            StoryOption {
+                label: "替船夫守灯,等水下的人回应。",
+                outcome: Outcome {
+                    lines: &[
+                        "灯芯忽然跳了一下,水面浮起一枚湿透的渡符。",
+                        "老船夫跪在渡口,半哭半笑地说:「他听见了。」",
+                        "(情缘 +2,获得一枚药水)",
+                    ],
+                    effect: Effect::GainPotions(1),
+                    daoxin: 0,
+                    qingyuan: 2,
+                },
+            },
+            StoryOption {
+                label: "带灯入雾,用它标出河魇巢口。",
+                outcome: Outcome {
+                    lines: &[
+                        "灯火在雾里拉成一条直线,黑鳞影子终于露出尾端。",
+                        "你没有回头,只把船夫的哭声记进剑里。",
+                        "(道心 +2,气血上限 +10)",
+                    ],
+                    effect: Effect::GainMaxHp(10),
                     daoxin: 2,
                     qingyuan: 0,
                 },
@@ -172,6 +262,7 @@ pub const STORY_SCENES: [StoryScene; 4] = [
             },
         ],
     },
+    SCENE_PALACE,
     StoryScene {
         lines: &[
             "南疆雷泽,古麟锁于青铜柱间,鳞下压着一枚褪色的许愿笺。",
@@ -466,6 +557,43 @@ const SCENE_BONFIRE: StoryScene = StoryScene {
     ],
 };
 
+const SCENE_DRUM_OATH: StoryScene = StoryScene {
+    lines: &[
+        "雷鼓祭台背后刻着一列守鼓人的名字,最末一行被刀刮得只剩一个「瑶」字。",
+        "南瑶用指腹慢慢描过缺口:「我爹守过这面鼓,也替族里背走了不该背的罪。」",
+        "远处雷声压下来。她没有回头:「旧债落到我手里,你说该认,还是该断?」",
+    ],
+    prompt: "你把手按在旧鼓上——",
+    options: &[
+        StoryOption {
+            label: "「债可以认,但往后由我们一起还。」",
+            outcome: Outcome {
+                lines: &[
+                    "南瑶终于转身,把一截褪色鼓绳系在你的剑穗旁。",
+                    "第一声鼓响时,雷没有劈向祭台,反而沿四人的影子铺出一条亮路。",
+                    "(情缘 +3,灵力上限 +8)",
+                ],
+                effect: Effect::GainMaxMp(8),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "「该认的记住,不该认的从这一刀断掉。」",
+            outcome: Outcome {
+                lines: &[
+                    "你沿着旧刀痕补下一剑,石上的残名没有消失,却不再像一道枷锁。",
+                    "南瑶收起鼓槌:「好。名字留下,罪不再传。」",
+                    "(道心 +3,防御 +2)",
+                ],
+                effect: Effect::GainDef(2),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
 const SCENE_CORRIDOR: StoryScene = StoryScene {
     lines: &[
         "心渊深处有一条回廊,两侧水幕重演着你们的初遇:溪边、木剑、桃木铃。",
@@ -502,22 +630,218 @@ const SCENE_CORRIDOR: StoryScene = StoryScene {
     ],
 };
 
+const SCENE_DREAM_INN: StoryScene = StoryScene {
+    lines: &[
+        "回梦客栈里灶火正旺,婶婶背对门口切着姜丝,仿佛你只出门打了一壶酒。",
+        "桌上摆着一碗还冒热气的面。她骂道:「臭小子,走那么久,还知道回来?」",
+        "门外水声越来越近,这顿饭若坐下,终门便会迟开一刻。",
+    ],
+    prompt: "你站在熟悉的门槛上——",
+    options: &[
+        StoryOption {
+            label: "坐下吃完这碗面,再好好说一声告别。",
+            outcome: Outcome {
+                lines: &[
+                    "面还是记忆里的味道。婶婶嘴上不停数落,却悄悄多卧了一个蛋。",
+                    "碗底见空时,客栈随水光散去,你终于把那句「我会回来」说完整。",
+                    "(情缘 +3,恢复三成气血)",
+                ],
+                effect: Effect::HealPct(30),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "把剑穗留在桌边:「等路走完,我亲自回来吃。」",
+            outcome: Outcome {
+                lines: &[
+                    "婶婶没有回头,只把那碗面扣在锅里保温。",
+                    "你跨出门时不再回望。归途不是梦里的一顿饭,是门后还要争来的明天。",
+                    "(道心 +3,气血上限 +10)",
+                ],
+                effect: Effect::GainMaxHp(10),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_WISH_LAMPS: StoryScene = StoryScene {
+    lines: &[
+        "心渊回廊忽然亮起许多小灯:渡口船夫、白河病童、苗岭鼓使的声音一盏盏传来。",
+        "他们把沿途受过的恩情送回这里,每盏灯都说愿替你分担一点终门的黑水。",
+        "水影冷笑:「借众人的愿走到最后,还算是你自己的剑吗?」",
+    ],
+    prompt: "众愿聚在掌前,你——",
+    options: &[
+        StoryOption {
+            label: "接住灯火:「我从来不是一个人走到这里。」",
+            outcome: Outcome {
+                lines: &[
+                    "灯火沿剑脊排成星河,每一个名字都在黑水上照出落脚处。",
+                    "灵儿轻声念完最后一个名字,众人的回应同时亮了一瞬。",
+                    "(情缘 +3,药水 +2)",
+                ],
+                effect: Effect::GainPotions(2),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "把灯送回人间:「他们的愿该照自己的家。」",
+            outcome: Outcome {
+                lines: &[
+                    "万点微光逆流而上,回到每一扇仍有人等待的窗。",
+                    "你只留下一盏无名灯。没有借来的光,脚下那一步反而更稳。",
+                    "(道心 +3,防御 +2)",
+                ],
+                effect: Effect::GainDef(2),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_SPIRIT_ALTAR: StoryScene = StoryScene {
+    lines: &[
+        "女娲灵台浮出一道古老祭文:若以灵血续阵,可让终门安静百年。",
+        "灵儿读完后伸出手腕,语气平静得让人害怕:「我的血能做到。你不必替我决定。」",
+        "林月衡按住剑柄,南瑶则望向你。灵台在等一个不能收回的回答。",
+    ],
+    prompt: "祭文亮到最后一行,你——",
+    options: &[
+        StoryOption {
+            label: "握住她的手:「要守便一起守,不拿你一人换百年。」",
+            outcome: Outcome {
+                lines: &[
+                    "四道灵息同时落入阵心,古祭文被改写成一个从未有过的「同」字。",
+                    "灵台震了很久,最终没有索取任何人的血。",
+                    "(情缘 +3,灵力上限 +10)",
+                ],
+                effect: Effect::GainMaxMp(10),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "收剑退开:「你的命由你选,我负责让选择有退路。」",
+            outcome: Outcome {
+                lines: &[
+                    "灵儿看了你很久,最终没有割腕,而是以指尖灵光重排祭文。",
+                    "你没有替她拒绝,也没有任她独担。阵心因此认下了两个人的意志。",
+                    "(道心 +3,攻击 +2)",
+                ],
+                effect: Effect::GainAtk(2),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_SWORD_MIRROR: StoryScene = StoryScene {
+    lines: &[
+        "水魔鳞潮间立着一面断镜,镜中只有林月衡一人守在崩塌的石门后。",
+        "她看见自己的倒影,淡淡道:「镜子说总得留一个人断后。它倒很懂我。」",
+        "石门已经开始下沉,镜中结局正等着谁先相信。",
+    ],
+    prompt: "林月衡抬剑走向石门,你——",
+    options: &[
+        StoryOption {
+            label: "与她并肩斩镜:「断后不是把同伴关在门外。」",
+            outcome: Outcome {
+                lines: &[
+                    "两道剑光在镜心交错,预言碎成无数条谁也不必独留的路。",
+                    "林月衡收剑时笑了一声:「这次算你抢了我的差事。」",
+                    "(情缘 +3,恢复三成五气血)",
+                ],
+                effect: Effect::HealPct(35),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "替她撑住石门:「你带他们走,这一回换我守。」",
+            outcome: Outcome {
+                lines: &[
+                    "林月衡没有争辩,只在穿门前以剑鞘重重敲了你的肩。",
+                    "你等所有人越过才一剑断柱。镜中的孤影慢了一步,被碎石永远埋住。",
+                    "(道心 +3,防御 +3)",
+                ],
+                effect: Effect::GainDef(3),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
+const SCENE_LAST_BELL: StoryScene = StoryScene {
+    lines: &[
+        "天蛇祭阶尽头,桃木铃终于响了第三声。终门后的水影用每个人的声音说着告别。",
+        "南瑶把鼓绳缠紧,林月衡横剑在前,灵儿只问了一句:「进去以后,还一起回来吗?」",
+        "谁都知道这不是一句轻易能许的承诺。",
+    ],
+    prompt: "终门开启前,你的回答是——",
+    options: &[
+        StoryOption {
+            label: "伸出手:「一个都不少。回来再听婶婶骂我。」",
+            outcome: Outcome {
+                lines: &[
+                    "四只手在铃声里叠到一起,终门第一次没有映出孤身一人的影子。",
+                    "哪怕承诺未必都能兑现,此刻也没有谁被留在告别之外。",
+                    "(情缘 +3,恢复四成气血)",
+                ],
+                effect: Effect::HealPct(40),
+                daoxin: 0,
+                qingyuan: 3,
+            },
+        },
+        StoryOption {
+            label: "拔剑答道:「不许空话,只许尽力活着走出来。」",
+            outcome: Outcome {
+                lines: &[
+                    "林月衡第一个点头,南瑶敲响半声战鼓,灵儿把铃重新系紧。",
+                    "你没有向命运许诺结局,只把能做的每一步都握在手里。",
+                    "(道心 +3,攻击 +3)",
+                ],
+                effect: Effect::GainAtk(3),
+                daoxin: 3,
+                qingyuan: 0,
+            },
+        },
+    ],
+};
+
 /// Extra 「缘」 scenes rolled alongside the primary `STORY_SCENES` entry.
-pub const STORY_EXTRA: [&[StoryScene]; 4] = [
+pub const STORY_EXTRA: [&[StoryScene]; 7] = [
     &[SCENE_EAVES, SCENE_OPERA],
+    &[SCENE_EAVES],
     &[SCENE_LANTERNS, SCENE_QIN],
-    &[SCENE_PALACE, SCENE_BONFIRE],
-    &[SCENE_CORRIDOR],
+    &[SCENE_QIN],
+    &[SCENE_OPERA],
+    &[SCENE_BONFIRE, SCENE_DRUM_OATH],
+    &[
+        SCENE_CORRIDOR,
+        SCENE_DREAM_INN,
+        SCENE_WISH_LAMPS,
+        SCENE_SPIRIT_ALTAR,
+        SCENE_SWORD_MIRROR,
+        SCENE_LAST_BELL,
+    ],
 ];
 
 /// Number of story scenes available to a chapter's 「缘」 node.
 pub fn story_count(chapter: usize) -> usize {
-    1 + STORY_EXTRA[chapter.min(3)].len()
+    let chapter = chapter.min(STORY_EXTRA.len() - 1);
+    1 + STORY_EXTRA[chapter].len()
 }
 
 /// Roll index 0 → the primary scene, 1.. → extras.
 pub fn pick_story(chapter: usize, roll: usize) -> &'static StoryScene {
-    let chapter = chapter.min(3);
+    let chapter = chapter.min(STORY_EXTRA.len() - 1);
     if roll == 0 {
         &STORY_SCENES[chapter]
     } else {
@@ -1774,6 +2098,15 @@ pub fn boss_taunt(
 ) -> (&'static str, &'static [&'static str]) {
     use super::super::quest::BossKind;
     match boss {
+        BossKind::MountainFiend => (
+            "决战 · 赤鬼山妖",
+            &[
+                "破庙石阶尽头,赤色妖影拖着断裂铜环一步步踏出火光。",
+                "「小村来的剑童,也敢追到本王山门前?」",
+                "灵儿握紧桃木铃:「它身上的妖火,就是夜里惊动村口的源头。」",
+                "你提剑挡在众人前:「那就从这里开始,把归路烧干净。」",
+            ],
+        ),
         BossKind::MoonWraith => (
             "决战 · 月魄妖",
             &[
@@ -1876,7 +2209,17 @@ pub fn event_portrait(index: usize) -> Option<&'static str> {
 
 /// 灵儿的立绘卡(剧情缘节点、歇脚谈心)。
 pub const PORTRAIT_LINGER: &str = "npcs/ai_linger.png";
+pub const PORTRAIT_SWORD_SISTER: &str = "npcs/ai_sword_sister.png";
+pub const PORTRAIT_SPIRIT_WITCH: &str = "npcs/ai_spirit_guide.png";
 pub const PORTRAIT_MERCHANT: &str = "npcs/ai_wandering_merchant.png";
+
+pub fn story_portrait(chapter: usize, roll: usize) -> &'static str {
+    match (chapter, roll) {
+        (5, 2) => PORTRAIT_SPIRIT_WITCH,
+        (6, 5) => PORTRAIT_SWORD_SISTER,
+        _ => PORTRAIT_LINGER,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Market node (「市」) — priced picks resolved in code

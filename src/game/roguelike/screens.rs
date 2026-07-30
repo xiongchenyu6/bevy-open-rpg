@@ -7,10 +7,7 @@ use super::super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::super::quest::QuestLog;
 use super::content;
 use super::event;
-use super::{
-    BREAKTHROUGH_ATK, BREAKTHROUGH_DEF, BREAKTHROUGH_HP, BREAKTHROUGH_MP, CHAPTER_COUNT, FightRank,
-    Relic, RunOutcome, RunState,
-};
+use super::{CHAPTER_COUNT, FightRank, Relic, RunOutcome, RunState};
 use crate::game::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -142,6 +139,7 @@ pub fn title_input(
 #[derive(Clone, Debug)]
 pub enum RewardOption {
     Relic(Relic),
+    Hex(super::hex::HexMark),
     HealHalf,
     MaxHp(i32),
     Atk(i32),
@@ -153,6 +151,7 @@ impl RewardOption {
     fn label(&self) -> String {
         match self {
             RewardOption::Relic(r) => format!("法宝【{}】—— {}", r.name(), r.desc()),
+            RewardOption::Hex(h) => format!("妖纹【{}】—— {}", h.name(), h.desc()),
             RewardOption::HealHalf => "疗伤调息 —— 回复五成气血".to_string(),
             RewardOption::MaxHp(n) => format!("淬体丹 —— 气血上限 +{n}"),
             RewardOption::Atk(n) => format!("砺剑石 —— 攻击 +{n}"),
@@ -199,8 +198,14 @@ fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {
     let elite_or_boss = !matches!(run.current_fight, Some(FightRank::Normal) | None);
     let mut options: Vec<RewardOption> = Vec::new();
 
-    // Slot 1: a relic (guaranteed for elites/bosses, a coin flip otherwise).
-    if elite_or_boss || rng.chance(0.45) {
+    // Slot 1: a relic (guaranteed for elites/bosses, a coin flip otherwise;
+    // 星孤纹把普通掉率减半)。
+    let relic_chance = if run.hex_relic_drop_halved() {
+        0.22
+    } else {
+        0.45
+    };
+    if elite_or_boss || rng.chance(relic_chance) {
         if let Some(option) = roll_relic_option(run, rng, &options) {
             options.push(option);
         }
@@ -212,6 +217,12 @@ fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {
     if elite_or_boss && rng.chance(0.5) {
         if let Some(option) = roll_relic_option(run, rng, &options) {
             options.push(option);
+        }
+    }
+    // 妖纹槽:约三成战利里混入一枚有代价的随机词条(海克斯)。
+    if options.len() < 3 && rng.chance(0.35) {
+        if let Some(h) = super::hex::roll_hex(&run.hexes, rng) {
+            options.push(RewardOption::Hex(h));
         }
     }
     // Fill remaining slots with distinct consumable/stat picks.
@@ -288,6 +299,22 @@ pub fn spawn_reward(
                         font.text_font(34.0),
                         TextColor(Color::srgb(0.95, 0.85, 0.55)),
                     ));
+                    if matches!(run.current_fight, Some(FightRank::Boss)) {
+                        let clear = run.chapter_clear_reward();
+                        let clear_line = if run.chapter + 1 >= CHAPTER_COUNT {
+                            format!("章印【{}】\n{}\n终章章印会写入此世结局。", clear.seal, clear.line)
+                        } else {
+                            format!(
+                                "章印【{}】\n{}\n境界突破：气血上限 +{} · 灵力上限 +{} · 攻击 +{} · 防御 +{}",
+                                clear.seal, clear.line, clear.hp, clear.mp, clear.atk, clear.def
+                            )
+                        };
+                        panel.spawn((
+                            Text::new(clear_line),
+                            font.text_font(18.0),
+                            TextColor(Color::srgb(0.78, 0.92, 1.0)),
+                        ));
+                    }
                     panel.spawn((
                         RewardListText,
                         Text::new(""),
@@ -341,12 +368,18 @@ pub fn reward_input(
             RewardOption::Atk(n) => stats.atk += n,
             RewardOption::Potions(n) => stats.potions += n,
             RewardOption::Gold(n) => stats.gold += n,
+            RewardOption::Hex(h) => {
+                h.on_pickup(&mut stats);
+                run.hexes.push(h);
+            }
         }
 
         // Route onwards: boss victories advance the chapter (or end the run).
         let was_boss = matches!(run.current_fight, Some(FightRank::Boss));
         run.current_fight = None;
         if was_boss {
+            let clear = *run.chapter_clear_reward();
+            run.record_chapter_clear();
             if run.chapter + 1 >= CHAPTER_COUNT {
                 // 道心情缘双高解锁隐藏结局。
                 run.outcome = Some(if run.daoxin >= 5 && run.qingyuan >= 5 {
@@ -359,10 +392,10 @@ pub fn reward_input(
                 next.set(AppState::Ending);
             } else {
                 // 境界突破 — the story-driven power curve.
-                stats.max_hp += BREAKTHROUGH_HP;
-                stats.max_mp += BREAKTHROUGH_MP;
-                stats.atk += BREAKTHROUGH_ATK;
-                stats.def += BREAKTHROUGH_DEF;
+                stats.max_hp += clear.hp;
+                stats.max_mp += clear.mp;
+                stats.atk += clear.atk;
+                stats.def += clear.def;
                 stats.full_restore();
                 run.next_chapter(&mut rng);
                 // Fresh chapter: drop the old stage so the hop rebuilds it.
@@ -476,10 +509,30 @@ pub fn spawn_ending(
                         ));
                     }
                     panel.spawn((
+                        Text::new(format!("章印：{}", run.chapter_seal_summary())),
+                        font.text_font(18.0),
+                        TextColor(Color::srgba(0.78, 0.92, 1.0, 0.9)),
+                    ));
+                    panel.spawn((
+                        Text::new(run.chapter_vow_archive_summary()),
+                        font.text_font(18.0),
+                        TextColor(Color::srgba(0.88, 0.82, 1.0, 0.9)),
+                    ));
+                    panel.spawn((
                         Text::new(format!(
-                            "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 道心 {} · 情缘 {}",
+                            "实测用时：{}\n{}",
+                            run.play_time_summary(),
+                            run.chapter_play_time_archive_summary()
+                        )),
+                        font.text_font(16.0),
+                        TextColor(Color::srgba(0.72, 0.9, 0.82, 0.9)),
+                    ));
+                    panel.spawn((
+                        Text::new(format!(
+                            "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 缘忆 {} 段 · 道心 {} · 情缘 {}",
                             run.fights_won,
                             run.relics.len(),
+                            run.seen_story_scenes.len(),
                             run.daoxin,
                             run.qingyuan,
                         )),

@@ -3,8 +3,8 @@
 The project now uses generated raster assets instead of placeholder blocks.
 Most art is produced through the remote ComfyUI instance on
 `root@101.78.126.6` via `tools/comfy_batch_assets.mjs`. Late-story NPC
-cutouts can also be generated with Codex imagegen on flat chroma backgrounds;
-their raw outputs live under `assets/generated/imagegen/raw/`.
+cutouts and late chapter-card backdrops can also be generated with Codex
+imagegen; their raw outputs live under `assets/generated/imagegen/raw/`.
 
 ## Generation
 
@@ -38,7 +38,8 @@ Cutouts are generated on a flat chroma background and locally converted to alpha
 Late-story NPCs currently added through imagegen:
 `ai_plague_elder`, `ai_shrine_keeper`, `ai_capital_envoy`,
 `ai_mansion_spy`, `ai_spirit_guide`, `ai_tribal_chief`, and
-`ai_final_oracle`.
+`ai_final_oracle`. Late chapter-card backdrops currently added through imagegen:
+`chapter5_art`, `chapter6_art`, and `chapter7_art`.
 
 ## In-Game Use
 
@@ -52,7 +53,7 @@ Late-story NPCs currently added through imagegen:
 - `src/game/quest.rs` drives the first quest chain through generated and
   paperdoll NPCs.
 
-## UI backgrounds & portrait cards (2026-07, ComfyUI Flux)
+## UI backgrounds & portrait cards (2026-07, ComfyUI Flux + imagegen)
 
 | Asset | Path | Use |
 |-------|------|-----|
@@ -65,14 +66,14 @@ Late-story NPCs currently added through imagegen:
 | 青石界门 | `assets/props/ai_spirit_gate.png` | Stage exit gate (violet-tinted for boss gates) |
 | 红漆宝箱 | `assets/props/ai_chest.png` | Map loot chest marker (mimic risk) |
 | 灵泉石池 | `assets/props/ai_spring.png` | Map spirit-spring marker (one-shot heal) |
-| 章节过场画 ×4 | `assets/ui/chapter1..4_art.png` | Full-screen chapter-card backdrop (`scene::ChapterArt`, static fallback) |
-| 章节过场动画 ×4 | `assets/ui/anim/chapter1..4_sheet.png` | Wan2.2 i2v 32-frame 8×4 atlas (640×352/frame, 16fps loop, `animate_chapter_art`) |
+| 章节过场画 ×7 | `assets/ui/chapter1..7_art.png` | Full-screen chapter-card backdrop; chapters 1-4 are ComfyUI Flux, chapters 5-7 are imagegen and also used by Explore main-story卷章卡 |
+| 章节过场动画 ×7 | `assets/ui/anim/chapter1..7_sheet.png` | 32-frame 8×4 atlas (640×352/frame, 16fps loop); chapters 1-4 are Wan2.2 i2v, chapters 5-7 are imagegen-derived pan/zoom light atlases for Explore卷章卡 |
 | 金纹面板框 | `assets/ui/panel_frame.png` | Nine-slice UI panel (dialogue/battle/menus/inventory), `event::panel_slicer()` |
 
 Raw prompts/seeds: see git history of the generation commands; regenerate via
 `python3 .claude/skills/godogen/tools/comfyui_gen.py image --prompt ... -o ...`.
 
-## Per-map tilesets (2026-07, ComfyUI, 512×512 seamless)
+## Per-map terrain sources (2026-07, ComfyUI, 512×512)
 
 每张章节地图现在有专属墙/地贴图(此前多图共用竹林/灵草砖只调色)。
 命名 `assets/tiles/ai_<map>_wall.png` / `ai_<map>_floor.png`:
@@ -92,8 +93,13 @@ Raw prompts/seeds: see git history of the generation commands; regenerate via
 生成 prompt 模板:`seamless tileable top-down 2D RPG terrain texture tile
 for a Chinese xianxia game, <描述>, uniform flat lighting, fills the entire
 frame edge to edge, no border, no vignette, crisp fantasy game art`
-(wall/floor 各一固定 seed)。`explore.rs::tile_sprite` 里 tint 改为近白
-(贴图自带颜色),逐格 hash 抖动继续负责去网格感。
+(wall/floor 各一固定 seed)。生成模型并不总能兑现 seamless/no-vignette，
+因此运行时不再逐格压缩整张图，也不依赖图片首尾像素相接：
+`explore::TerrainMaterial` 用地图级 terrain-id mask、居中的 61px 质数采样、
+世界坐标折返和噪声边界混合来消除逐格接缝。
+
+纹理回归 harness：`scripts/terrain_harness.sh <out>`。它会运行采样连续性
+单测，并分别抓取 RunScene/legacy Explore 固定帧及 contact sheet。
 
 ## Font
 

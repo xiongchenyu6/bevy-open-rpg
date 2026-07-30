@@ -1,17 +1,35 @@
 {
   "base": "http://127.0.0.1:18188",
   "model": "flux1-dev-fp8.safetensors",
-  "steps": 20,
+  "steps": 28,
   "guidance": 3.8,
-  "generatedAt": "2026-07-01T14:50:35.080Z",
+  "seedOffset": 0,
+  "cutoutMode": "rembg",
+  "generatedAt": "2026-07-24T06:39:04.448Z",
   "assets": [
     {
       "id": "ai_sword_sister",
       "kind": "cutout",
       "out": "assets/npcs/ai_sword_sister.png",
-      "size": 192,
-      "prompt": "crisp 2D game asset, full body xianxia female sword cultivator companion, red and white travel robe, jade sword, anime RPG sprite illustration, centered, clean readable silhouette, sharp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young xianxia sword cultivator heroine, long black hair in a high warrior ponytail, layered crimson and ivory travel robes with restrained silver embroidery, holding a slender jade-hilt sword in a ready low guard, alert resolute expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
       "raw": "assets/generated/comfy/raw/ai_sword_sister.png"
+    },
+    {
+      "id": "ai_linger_companion",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_linger_companion.png",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young xianxia healer heroine, long black hair tied with a large white ribbon, flowing moon-white and pale blue hanfu travel robes, holding a small golden spirit bell, warm gentle determined expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_linger_companion.png"
+    },
+    {
+      "id": "ai_nanyao_companion",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_nanyao_companion.png",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young Baiyue spirit witch heroine, long dark braided hair with silver ornaments, layered indigo teal and white ceremonial travel robe, jade serpent motifs, holding a carved spirit staff and bronze bell, poised protective expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, no magenta anywhere on character, perfectly flat pure #ff00ff magenta screen background",
+      "raw": "assets/generated/comfy/raw/ai_nanyao_companion.png"
     },
     {
       "id": "ai_herb_healer",
@@ -160,6 +178,62 @@
       "size": 256,
       "prompt": "crisp 2D game enemy asset, floating lotus spirit, pink petals, pale blue core, ribbon-like water wisps, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
       "raw": "assets/generated/comfy/raw/ai_lotus_spirit.png"
+    },
+    {
+      "id": "boss_mountain_fiend",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_mountain_fiend.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, hulking red-haired mountain ogre demon, charred horned mask, iron club wrapped in prayer rope, scorched hide armor and ember cracks, menacing full body pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_mountain_fiend.png"
+    },
+    {
+      "id": "boss_moon_wraith",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_moon_wraith.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, spectral moon wraith queen, pale female spirit rising from a coiling violet water-serpent tail, torn lunar robes, crescent crown, long black hair floating in ghost wind, cold glowing eyes, classic Chinese fantasy RPG hand-painted monster, full body front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_moon_wraith.png"
+    },
+    {
+      "id": "boss_river_demon",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_river_demon.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, black-scaled river flood dragon demon with long serpentine body, antler horns, torn river lanterns caught on fins, blue water streaming from claws, fierce full body coiled pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_river_demon.png"
+    },
+    {
+      "id": "boss_miasma_root",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_miasma_root.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, enormous plague banyan root demon, twisted blood-red and charcoal roots forming a snarling mask, hanging medicine talismans, poisonous violet spores and grasping root claws, classic Chinese fantasy RPG hand-painted monster, full body front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_miasma_root.png"
+    },
+    {
+      "id": "boss_mirror_minister",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_mirror_minister.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, sinister imperial mirror sorcerer, tall masked minister in black violet and tarnished gold ceremonial robes, one hand casting with floating cracked bronze mirrors, hidden sword at waist, elegant threatening full body pose, classic Chinese fantasy RPG hand-painted villain, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_mirror_minister.png"
+    },
+    {
+      "id": "boss_thunder_qilin",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_thunder_qilin.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, majestic thunder qilin spirit, blue-black scales, branching gold antlers, white mane lifted by lightning, bronze drum charms around the neck, powerful full body stance, classic Chinese fantasy RPG hand-painted beast, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_thunder_qilin.png"
+    },
+    {
+      "id": "boss_dream_eclipse",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_dream_eclipse.png",
+      "size": 512,
+      "prompt": "premium 2D game final boss cutout, colossal humanoid water-shadow deity formed from midnight waves, pale moon mask with one sorrowful eye and one wrathful eye, many flowing ribbon arms, broken palace lanterns orbiting the body, tragic and terrifying full silhouette, classic Chinese fantasy RPG hand-painted final monster, front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_dream_eclipse.png"
     },
     {
       "id": "ai_quest_board",

@@ -3,10 +3,16 @@ use bevy::ui::widget::NodeImageMode;
 
 use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::core::{GameFont, Intent, PlayerStats, Rng};
+use super::cutout::{
+    CutoutPart, brighten_color, cutout_part_motion, cutout_part_specs, cutout_source_px_for_path,
+};
 use super::lighting::{self, LightingAssets};
 use super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
-use super::quest::{BondBonus, BossKind, CampBonus, Companion, QuestLog, ShrineBlessing};
-use super::roguelike::{FightRank, RunBattleMods, RunOutcome, RunState};
+use super::quest::{
+    BondBonus, BondScene, BossKind, CampBonus, CampScene, Chapter, Companion, CompanionScene,
+    QuestLog, ShrineBlessing, SideQuest,
+};
+use super::roguelike::{FightRank, RunBattleMods, RunCampTactic, RunOutcome, RunState};
 use super::state::AppState;
 
 const MENU: [&str; 6] = ["攻击", "御守", "仙术", "合击", "物品", "逃跑"];
@@ -164,6 +170,17 @@ const CAPITAL_ENCOUNTERS: [usize; 4] = [4, 5, 6, 8];
 const SOUTHERN_ROAD_ENCOUNTERS: [usize; 4] = [2, 4, 6, 7];
 const FINAL_SANCTUM_ENCOUNTERS: [usize; 4] = [0, 2, 6, 8];
 
+const MOUNTAIN_FIEND_BOSS: EnemyDef = EnemyDef {
+    name: "赤鬼山妖",
+    max_hp: 112,
+    atk: 23,
+    def: 6,
+    image: "creatures/ai_blood_mantis.png",
+    size: 248.0,
+    light: [1.0, 0.34, 0.16, 0.40],
+    exp: 52,
+};
+
 const MOON_WRAITH_BOSS: EnemyDef = EnemyDef {
     name: "月魄妖",
     max_hp: 128,
@@ -314,10 +331,26 @@ struct BattleState {
     boss_phase2: bool,
     /// 终章水影的分歧:true = 以情乱心(情缘压道心的一世)。
     eclipse_heart: bool,
+    /// 雷引纹:本战的玩家首次攻击已经打出。
+    hex_first_hit_used: bool,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
+    run_camp_tactic: Option<RunCampTactic>,
     bond_bonus: Option<BondBonus>,
+}
+
+/// Read-only battle state for deterministic traversal and accessibility
+/// drivers. Inputs still pass through the normal command menu.
+#[derive(Resource, Default)]
+pub struct BattleAutomationView {
+    pub menu_open: bool,
+    pub menu_index: usize,
+    pub enemy_hp: i32,
+    pub enemy_max_hp: i32,
+    pub enemy_heavy_intent: bool,
+    pub spell_cost: i32,
+    pub momentum: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +379,7 @@ struct BattleHero;
 enum BattleCompanionKind {
     Linger,
     SwordSister,
+    SpiritWitch,
 }
 
 #[derive(Component)]
@@ -362,6 +396,14 @@ struct BattleEnemy;
 struct BattleEnemyMotion {
     origin: Vec3,
     age: f32,
+}
+
+#[derive(Component)]
+struct BattleEnemyPart {
+    part: CutoutPart,
+    base_offset: Vec2,
+    base_size: Vec2,
+    phase: f32,
 }
 
 #[derive(Component)]
@@ -398,6 +440,17 @@ struct SpellImpactProfile {
     flash_alpha: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpellImpactElement {
+    Village,
+    Moon,
+    River,
+    Plague,
+    Mirror,
+    Thunder,
+    Dream,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SpellImpactShard {
     offset: Vec2,
@@ -408,6 +461,14 @@ struct SpellImpactShard {
     end_scale: f32,
     spin: f32,
     color: Color,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SpellDamageText {
+    amount: i32,
+    offset: Vec2,
+    velocity: Vec2,
+    size: f32,
 }
 
 #[derive(Component)]
@@ -441,12 +502,14 @@ const ENEMY_POS: Vec3 = Vec3::new(0.0, 120.0, 1.0);
 const HERO_POS: Vec3 = Vec3::new(-360.0, -70.0, 1.0);
 const LINGER_POS: Vec3 = Vec3::new(HERO_POS.x + 130.0, HERO_POS.y + 8.0, 0.9);
 const SWORD_SISTER_POS: Vec3 = Vec3::new(HERO_POS.x + 245.0, HERO_POS.y - 6.0, 0.92);
+const SPIRIT_WITCH_POS: Vec3 = Vec3::new(HERO_POS.x + 340.0, HERO_POS.y + 16.0, 0.88);
 
 pub struct BattlePlugin;
 
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Battle), spawn_battle)
+        app.init_resource::<BattleAutomationView>()
+            .add_systems(OnEnter(AppState::Battle), spawn_battle)
             .add_systems(
                 Update,
                 (
@@ -456,6 +519,7 @@ impl Plugin for BattlePlugin {
                     update_battle_effects,
                     update_floating_combat_text,
                     update_battle_ui,
+                    sync_battle_automation_view,
                 )
                     .chain()
                     .run_if(in_state(AppState::Battle)),
@@ -478,7 +542,7 @@ fn spawn_battle(
     mut rng: ResMut<Rng>,
     mut stats: ResMut<PlayerStats>,
     encounter: Option<Res<PendingEncounter>>,
-    run: Option<Res<RunState>>,
+    mut run: Option<ResMut<RunState>>,
     mods: Option<Res<RunBattleMods>>,
 ) {
     let zone = encounter
@@ -527,8 +591,15 @@ fn spawn_battle(
 
     let blessing = quest.take_shrine_blessing();
     let camp_bonus = quest.take_camp_bonus();
+    let run_camp_tactic = run.as_mut().and_then(|run| run.take_camp_tactic());
     let bond_bonus = quest.take_bond_bonus();
     let mut message = format!("一只 {} 拦住了去路！", enemy.name);
+    if let Some(run) = run.as_ref() {
+        apply_run_chapter_vow_to_boss(run, kind, &mut enemy, &mut message);
+        apply_run_route_guidance_to_boss(run, kind, &mut stats, &mut enemy, &mut message);
+    } else if let EncounterKind::Boss(boss) = kind {
+        apply_legacy_boss_preparation_to_boss(boss, &quest, &mut stats, &mut enemy, &mut message);
+    }
 
     // Relic effects that trigger at battle start (run mode only).
     if let Some(run) = run.as_ref() {
@@ -558,6 +629,11 @@ fn spawn_battle(
                 "\n【情缘·灵息罩】灵儿抢先布下灵息,回复 {healed} 点气血。"
             ));
         }
+        let tithe_mp = run.hex_battle_start_mp_loss();
+        if tithe_mp > 0 {
+            stats.mp = (stats.mp - tithe_mp).max(0);
+            message.push_str(&format!("\n【血偿纹】妖血索价,先失 {tithe_mp} 点灵力。"));
+        }
     }
     if let Some(bond_bonus) = bond_bonus {
         message.push_str(&format!(
@@ -580,6 +656,20 @@ fn spawn_battle(
             camp_bonus.battle_line()
         ));
     }
+    if let Some(tactic) = run_camp_tactic {
+        message.push_str(&format!(
+            "\n【营策】{}生效：{}",
+            tactic.name(),
+            tactic.battle_line()
+        ));
+        if let Some(healed) = apply_run_camp_start_heal(tactic, &mut stats) {
+            message.push_str(&format!("\n【营策】火边余息护身,回复 {healed} 点气血。"));
+        }
+        if let Some(restored) = apply_run_camp_start_mana(tactic, &mut stats) {
+            message.push_str(&format!("\n【营策】灵纹回稳,回复 {restored} 点灵力。"));
+        }
+    }
+    let run_ref = run.as_deref();
 
     commands.insert_resource(BattleState {
         message,
@@ -594,9 +684,11 @@ fn spawn_battle(
         guarding: false,
         boss_phase2: false,
         eclipse_heart: false,
+        hex_first_hit_used: false,
         momentum: 0,
         blessing,
         camp_bonus,
+        run_camp_tactic,
         bond_bonus,
     });
 
@@ -620,15 +712,10 @@ fn spawn_battle(
             origin: ENEMY_POS,
             age: rng.range(0, 100) as f32 * 0.07,
         },
-        Sprite {
-            image: asset_server.load(enemy_primary_image(def)),
-            color: enemy_primary_color(Phase::Menu, 0.0),
-            custom_size: Some(Vec2::splat(enemy_primary_size(def))),
-            ..default()
-        },
         Transform::from_translation(ENEMY_POS),
         DespawnOnExit(AppState::Battle),
     ));
+    spawn_battle_enemy_cutout(&mut commands, &asset_server, def);
 
     // Enemy HP bar (back + front)
     commands.spawn((
@@ -662,7 +749,7 @@ fn spawn_battle(
     );
     commands.entity(hero).insert(BattleHero);
 
-    if quest.has_companion(Companion::Linger) {
+    if battle_companion_visible(&quest, run_ref, Companion::Linger) {
         lighting::spawn_light(
             &mut commands,
             &lights,
@@ -686,7 +773,7 @@ fn spawn_battle(
         });
     }
 
-    if quest.has_companion(Companion::SwordSister) {
+    if battle_companion_visible(&quest, run_ref, Companion::SwordSister) {
         lighting::spawn_light(
             &mut commands,
             &lights,
@@ -706,6 +793,30 @@ fn spawn_battle(
         commands.entity(companion).insert(BattleCompanion {
             kind: BattleCompanionKind::SwordSister,
             origin: SWORD_SISTER_POS,
+            age: 0.0,
+        });
+    }
+
+    if battle_companion_visible(&quest, run_ref, Companion::SpiritWitch) {
+        lighting::spawn_light(
+            &mut commands,
+            &lights,
+            Vec3::new(SPIRIT_WITCH_POS.x, SPIRIT_WITCH_POS.y, 0.5),
+            255.0,
+            Color::srgba(0.48, 1.0, 0.62, 0.23),
+            AppState::Battle,
+        );
+        let companion = paperdoll::spawn_paperdoll(
+            &mut commands,
+            &dolls,
+            PaperdollStyle::Mystic,
+            SPIRIT_WITCH_POS,
+            paperdoll::BATTLE_SIZE * 0.68,
+            AppState::Battle,
+        );
+        commands.entity(companion).insert(BattleCompanion {
+            kind: BattleCompanionKind::SpiritWitch,
+            origin: SPIRIT_WITCH_POS,
             age: 0.0,
         });
     }
@@ -801,8 +912,297 @@ fn spawn_battle(
         });
 }
 
+fn apply_run_chapter_vow_to_boss(
+    run: &RunState,
+    kind: EncounterKind,
+    enemy: &mut EnemyInstance,
+    message: &mut String,
+) {
+    if !matches!(kind, EncounterKind::Boss(_)) {
+        return;
+    }
+    let Some(vow) = run.current_chapter_vow() else {
+        return;
+    };
+    let hp_mul = vow.boss_hp_multiplier();
+    let atk_mul = vow.boss_atk_multiplier();
+    if hp_mul < 1.0 {
+        enemy.max_hp = ((enemy.max_hp as f32 * hp_mul).round() as i32).max(1);
+        enemy.hp = enemy.hp.min(enemy.max_hp);
+    }
+    if atk_mul < 1.0 {
+        enemy.atk = ((enemy.atk as f32 * atk_mul).round() as i32).max(1);
+    }
+    message.push_str(&format!("\n【本卷誓记·{}】{}", vow.name(), vow.boss_line()));
+}
+
+fn apply_run_route_guidance_to_boss(
+    run: &RunState,
+    kind: EncounterKind,
+    stats: &mut PlayerStats,
+    enemy: &mut EnemyInstance,
+    message: &mut String,
+) {
+    if !matches!(kind, EncounterKind::Boss(_)) {
+        return;
+    }
+    if run.route_boss_preparation_rank() == 0 {
+        return;
+    }
+
+    let hp_mul = run.route_boss_hp_multiplier();
+    let atk_mul = run.route_boss_atk_multiplier();
+    if hp_mul < 1.0 {
+        enemy.max_hp = ((enemy.max_hp as f32 * hp_mul).round() as i32).max(1);
+        enemy.hp = enemy.hp.min(enemy.max_hp);
+    }
+    if atk_mul < 1.0 {
+        enemy.atk = ((enemy.atk as f32 * atk_mul).round() as i32).max(1);
+    }
+
+    let (hp_pct, mp) = run.route_boss_restore();
+    let heal = if hp_pct > 0 && stats.hp < stats.max_hp {
+        let amount = (stats.max_hp * hp_pct / 100).max(1);
+        let healed = amount.min(stats.max_hp - stats.hp);
+        stats.hp += healed;
+        healed
+    } else {
+        0
+    };
+    let restored = if mp > 0 && stats.mp < stats.max_mp {
+        let restored = mp.min(stats.max_mp - stats.mp);
+        stats.mp += restored;
+        restored
+    } else {
+        0
+    };
+
+    let mut line = format!(
+        "\n【本卷路人照应·{}】{}",
+        run.route_boss_preparation_label(),
+        run.route_boss_preparation_summary()
+    );
+    if heal > 0 || restored > 0 {
+        line.push_str(&format!("；开战前补给 气血 +{heal} 灵力 +{restored}。"));
+    } else {
+        line.push('。');
+    }
+    message.push_str(&line);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyBossPreparationState {
+    Prepared,
+    Partial,
+    Strained,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBossPreparation {
+    state: LegacyBossPreparationState,
+    completed: usize,
+    total: usize,
+    hp_loss: i32,
+    atk_delta: i32,
+    hp_restore: i32,
+    mp_restore: i32,
+    pressure_damage: i32,
+}
+
+fn legacy_boss_chapter(boss: BossKind) -> Chapter {
+    match boss {
+        BossKind::MountainFiend => Chapter::VillageOath,
+        BossKind::MoonWraith => Chapter::MoonCave,
+        BossKind::RiverDemon => Chapter::RiverMedicine,
+        BossKind::MiasmaRoot => Chapter::PlagueRain,
+        BossKind::MirrorMinister => Chapter::CapitalMirror,
+        BossKind::ThunderQilin => Chapter::SouthernThunder,
+        BossKind::DreamEclipse => Chapter::FinalDream,
+    }
+}
+
+fn legacy_boss_chapter_label(chapter: Chapter) -> &'static str {
+    match chapter {
+        Chapter::VillageOath => "余杭村",
+        Chapter::MoonCave => "水月洞天",
+        Chapter::RiverMedicine => "江岸药庐",
+        Chapter::PlagueRain => "瘴雨村",
+        Chapter::CapitalMirror => "云都府邸",
+        Chapter::SouthernThunder => "南疆灵道",
+        Chapter::FinalDream => "灵渊终门",
+    }
+}
+
+fn legacy_boss_chapter_rank(chapter: Chapter) -> i32 {
+    match chapter {
+        Chapter::VillageOath => 0,
+        Chapter::MoonCave => 1,
+        Chapter::RiverMedicine => 2,
+        Chapter::PlagueRain => 3,
+        Chapter::CapitalMirror => 4,
+        Chapter::SouthernThunder => 5,
+        Chapter::FinalDream => 6,
+    }
+}
+
+fn legacy_boss_care_scenes(chapter: Chapter) -> (BondScene, CampScene) {
+    match chapter {
+        Chapter::VillageOath => (BondScene::VillageFirstNight, CampScene::VillageHearth),
+        Chapter::MoonCave => (BondScene::MoonCavePromise, CampScene::MoonCavePool),
+        Chapter::RiverMedicine => (BondScene::RiverLampWish, CampScene::RiverTownInn),
+        Chapter::PlagueRain => (BondScene::PlagueRainShelter, CampScene::PlagueSickroom),
+        Chapter::CapitalMirror => (BondScene::CapitalRooftop, CampScene::CapitalSafehouse),
+        Chapter::SouthernThunder => (BondScene::SouthernRoadOath, CampScene::SouthernCampfire),
+        Chapter::FinalDream => (BondScene::FinalGateQuiet, CampScene::FinalStillWater),
+    }
+}
+
+fn legacy_boss_commissions(chapter: Chapter) -> [SideQuest; 2] {
+    match chapter {
+        Chapter::VillageOath => [SideQuest::VillageTrail, SideQuest::VillageHerbs],
+        Chapter::MoonCave => [SideQuest::MoonCaveCrystals, SideQuest::MoonCaveEchoes],
+        Chapter::RiverMedicine => [SideQuest::RiverLanterns, SideQuest::RiverCargo],
+        Chapter::PlagueRain => [SideQuest::PlagueRelief, SideQuest::PlagueMedicine],
+        Chapter::CapitalMirror => [SideQuest::CapitalPatrol, SideQuest::CapitalRumors],
+        Chapter::SouthernThunder => [SideQuest::SouthernThunder, SideQuest::SouthernDrums],
+        Chapter::FinalDream => [SideQuest::FinalDreamEchoes, SideQuest::FinalHomewardVows],
+    }
+}
+
+fn legacy_boss_companion_scenes(chapter: Chapter) -> &'static [CompanionScene] {
+    const NONE: [CompanionScene; 0] = [];
+    const TRAIL: [CompanionScene; 1] = [CompanionScene::SwordSisterTrailGuard];
+    const CAPITAL: [CompanionScene; 1] = [CompanionScene::SwordSisterCapitalMirror];
+    const SOUTHERN: [CompanionScene; 1] = [CompanionScene::SpiritWitchSouthernTotem];
+    const FINAL: [CompanionScene; 2] = [
+        CompanionScene::SwordSisterFinalReturn,
+        CompanionScene::SpiritWitchFinalVow,
+    ];
+
+    match chapter {
+        Chapter::VillageOath | Chapter::MoonCave => &TRAIL,
+        Chapter::RiverMedicine | Chapter::PlagueRain => &NONE,
+        Chapter::CapitalMirror => &CAPITAL,
+        Chapter::SouthernThunder => &SOUTHERN,
+        Chapter::FinalDream => &FINAL,
+    }
+}
+
+fn legacy_boss_preparation(
+    boss: BossKind,
+    quest: &QuestLog,
+    enemy: &EnemyInstance,
+) -> LegacyBossPreparation {
+    let chapter = legacy_boss_chapter(boss);
+    let (bond_scene, camp_scene) = legacy_boss_care_scenes(chapter);
+    let care_ready = quest.has_seen_bond_scene(bond_scene) && quest.has_seen_camp_scene(camp_scene);
+    let commissions = legacy_boss_commissions(chapter);
+    let commissions_ready = commissions
+        .iter()
+        .all(|side| quest.is_side_quest_completed(*side));
+    let companion_scenes = legacy_boss_companion_scenes(chapter);
+    let companion_done = companion_scenes
+        .iter()
+        .filter(|scene| quest.has_seen_companion_scene(**scene))
+        .count();
+    let total = 2 + companion_scenes.len();
+    let completed = usize::from(care_ready) + usize::from(commissions_ready) + companion_done;
+    let rank = legacy_boss_chapter_rank(chapter);
+
+    match completed {
+        count if count == total => LegacyBossPreparation {
+            state: LegacyBossPreparationState::Prepared,
+            completed,
+            total,
+            hp_loss: ((enemy.max_hp as f32 * 0.09).round() as i32 + completed as i32 * 2).max(1),
+            atk_delta: -(2 + companion_done as i32),
+            hp_restore: 8 + completed as i32 * 2,
+            mp_restore: 3 + companion_done as i32,
+            pressure_damage: 0,
+        },
+        0 => LegacyBossPreparation {
+            state: LegacyBossPreparationState::Strained,
+            completed,
+            total,
+            hp_loss: 0,
+            atk_delta: 1 + rank / 2,
+            hp_restore: 0,
+            mp_restore: 0,
+            pressure_damage: 4 + rank,
+        },
+        _ => LegacyBossPreparation {
+            state: LegacyBossPreparationState::Partial,
+            completed,
+            total,
+            hp_loss: ((enemy.max_hp as f32 * 0.04).round() as i32).max(1),
+            atk_delta: -1,
+            hp_restore: 5 + completed as i32,
+            mp_restore: 1,
+            pressure_damage: 0,
+        },
+    }
+}
+
+fn apply_legacy_boss_preparation_to_boss(
+    boss: BossKind,
+    quest: &QuestLog,
+    stats: &mut PlayerStats,
+    enemy: &mut EnemyInstance,
+    message: &mut String,
+) -> LegacyBossPreparation {
+    let prep = legacy_boss_preparation(boss, quest, enemy);
+    let place = legacy_boss_chapter_label(legacy_boss_chapter(boss));
+
+    if prep.hp_loss > 0 {
+        enemy.hp = (enemy.hp - prep.hp_loss).max(1);
+    }
+    enemy.atk = if prep.atk_delta < 0 {
+        (enemy.atk + prep.atk_delta).max(1)
+    } else {
+        enemy.atk + prep.atk_delta
+    };
+    if prep.hp_restore > 0 && stats.hp < stats.max_hp {
+        stats.hp = (stats.hp + prep.hp_restore).min(stats.max_hp);
+    }
+    if prep.mp_restore > 0 && stats.mp < stats.max_mp {
+        stats.mp = (stats.mp + prep.mp_restore).min(stats.max_mp);
+    }
+    if prep.pressure_damage > 0 {
+        stats.hp = (stats.hp - prep.pressure_damage).max(1);
+    }
+
+    let line = match prep.state {
+        LegacyBossPreparationState::Prepared => format!(
+            "【首领照应·周全】{place}照应 {}/{} 已接上，首领开局露出破口：气血 -{}，攻势 {}；队伍回复 {} 气血、{} 灵力。",
+            prep.completed,
+            prep.total,
+            prep.hp_loss,
+            prep.atk_delta,
+            prep.hp_restore,
+            prep.mp_restore
+        ),
+        LegacyBossPreparationState::Partial => format!(
+            "【首领照应·半备】{place}照应 {}/{} 已接上，仍能压住首领一瞬：气血 -{}，攻势 {}；队伍回复 {} 气血、{} 灵力。",
+            prep.completed,
+            prep.total,
+            prep.hp_loss,
+            prep.atk_delta,
+            prep.hp_restore,
+            prep.mp_restore
+        ),
+        LegacyBossPreparationState::Strained => format!(
+            "【首领照应·欠备】{place}照应 {}/{} 未接上，首领抢占先机：攻势 +{}，队伍受 {} 点开局压制。",
+            prep.completed, prep.total, prep.atk_delta, prep.pressure_damage
+        ),
+    };
+    message.push('\n');
+    message.push_str(&line);
+    prep
+}
+
 fn choose_enemy(zone: EncounterZone, kind: EncounterKind, rng: &mut Rng) -> &'static EnemyDef {
     match kind {
+        EncounterKind::Boss(BossKind::MountainFiend) => return &MOUNTAIN_FIEND_BOSS,
         EncounterKind::Boss(BossKind::MoonWraith) => return &MOON_WRAITH_BOSS,
         EncounterKind::Boss(BossKind::RiverDemon) => return &RIVER_DEMON_BOSS,
         EncounterKind::Boss(BossKind::MiasmaRoot) => return &MIASMA_ROOT_BOSS,
@@ -824,6 +1224,64 @@ fn choose_enemy(zone: EncounterZone, kind: EncounterKind, rng: &mut Rng) -> &'st
     };
     let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
     &ENEMIES[index]
+}
+
+fn battle_companion_visible(
+    quest: &QuestLog,
+    run: Option<&RunState>,
+    companion: Companion,
+) -> bool {
+    quest.has_companion(companion)
+        || run.is_some_and(|run| run.party_companions().contains(&companion))
+}
+
+fn battle_party_summary(quest: &QuestLog, run: Option<&RunState>) -> String {
+    run.map(|run| run.party_summary())
+        .unwrap_or_else(|| quest.party_summary().to_string())
+}
+
+fn battle_has_late_spell(quest: &QuestLog, run: Option<&RunState>) -> bool {
+    quest.has_late_spell()
+        || run.is_some_and(|run| run.party_companions().contains(&Companion::SpiritWitch))
+}
+
+fn battle_spell_name(quest: &QuestLog, run: Option<&RunState>) -> &'static str {
+    if battle_has_late_spell(quest, run) {
+        "万剑诀"
+    } else {
+        quest.spell_name()
+    }
+}
+
+fn battle_spell_cost(quest: &QuestLog, run: Option<&RunState>) -> i32 {
+    if battle_has_late_spell(quest, run) {
+        9
+    } else {
+        quest.spell_cost()
+    }
+}
+
+fn battle_spell_power_multiplier(quest: &QuestLog, run: Option<&RunState>) -> i32 {
+    if battle_has_late_spell(quest, run) {
+        3
+    } else {
+        quest.spell_power_multiplier()
+    }
+}
+
+fn battle_spell_chapter(quest: &QuestLog, run: Option<&RunState>) -> Chapter {
+    let Some(run) = run else {
+        return quest.current_chapter();
+    };
+    match run.chapter {
+        0 if run.stage <= 1 => Chapter::VillageOath,
+        0 => Chapter::MoonCave,
+        1 if run.stage <= 2 => Chapter::RiverMedicine,
+        1 => Chapter::PlagueRain,
+        2 if run.stage <= 2 => Chapter::CapitalMirror,
+        2 => Chapter::SouthernThunder,
+        _ => Chapter::FinalDream,
+    }
 }
 
 fn spawn_battle_backdrop(
@@ -984,6 +1442,8 @@ fn battle_input(
     let hunter_mul = run.as_ref().map_or(1.0, |r| {
         r.hunter_multiplier(r.current_fight.unwrap_or(FightRank::Normal))
     });
+    let run_ref = run.as_deref();
+    let run_camp_tactic = state.run_camp_tactic;
 
     if intent.up {
         state.menu_index = (state.menu_index + MENU.len() - 1) % MENU.len();
@@ -1002,18 +1462,37 @@ fn battle_input(
             let blessing = state.blessing;
             let camp_bonus = state.camp_bonus;
             let bond_bonus = state.bond_bonus;
-            let base = (stats.atk - state.enemy.def + rng.range(-2, 3)).max(1);
+            let hex_atk = run
+                .as_ref()
+                .map_or(0, |r| r.hex_atk_delta(stats.hp, stats.max_hp));
+            let base = (stats.atk + hex_atk - state.enemy.def + rng.range(-2, 3)).max(1);
             let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Attack);
             let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Attack);
+            let run_camp_damage = run_camp_damage_bonus(run_camp_tactic, PlayerAction::Attack);
             let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Attack);
-            let dmg = (((base + blessing_bonus + camp_damage + bond_damage + relic_attack) as f32)
-                * hunter_mul)
+            let first_mul = if !state.hex_first_hit_used {
+                run.as_ref().map_or(1.0, |r| r.hex_first_strike_mul())
+            } else {
+                1.0
+            };
+            state.hex_first_hit_used = true;
+            let dmg = (((base
+                + blessing_bonus
+                + camp_damage
+                + run_camp_damage
+                + bond_damage
+                + relic_attack) as f32)
+                * hunter_mul
+                * first_mul)
                 .round() as i32;
             state.enemy.hp -= dmg;
             state.message = format!(
                 "李逍遥 挥剑而上，对 {} 造成 {} 点伤害！",
                 state.enemy.name, dmg
             );
+            if first_mul > 1.0 {
+                state.message.push_str("\n【雷引纹】首击引雷,伤害加半!");
+            }
             if relic_attack > 0 {
                 state
                     .message
@@ -1021,6 +1500,7 @@ fn battle_input(
             }
             append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
             append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
+            append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
             append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
             if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                 state.message.push_str(&line);
@@ -1032,7 +1512,9 @@ fn battle_input(
                 ENEMY_POS + Vec3::new(96.0, 72.0, 0.0),
                 dmg,
             );
-            if let Some(extra) = sword_sister_followup(&quest, &stats, &mut state.enemy, &mut rng) {
+            if let Some(extra) =
+                sword_sister_followup(&quest, run_ref, &stats, &mut state.enemy, &mut rng)
+            {
                 state
                     .message
                     .push_str(&format!("\n林月衡 补上一剑，追加 {extra} 点伤害！"));
@@ -1053,19 +1535,35 @@ fn battle_input(
             let restore = run
                 .as_ref()
                 .map_or(GUARD_MP_RESTORE, |r| r.guard_mp_restore());
-            stats.mp = (stats.mp + restore).min(stats.max_mp);
-            state.message = format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {restore} 点灵力。");
+            let run_camp_restore = run_camp_guard_mp_bonus(run_camp_tactic);
+            let hex_mp = run.as_ref().map_or(0, |r| r.hex_guard_mp_delta());
+            let total_restore = (restore + run_camp_restore + hex_mp).max(0);
+            stats.mp = (stats.mp + total_restore).min(stats.max_mp);
+            if run.as_ref().is_some_and(|r| r.hex_guard_momentum()) {
+                state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
+            }
+            state.message =
+                format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {total_restore} 点灵力。");
             if restore > GUARD_MP_RESTORE {
                 state
                     .message
                     .push_str("\n【道心·御守精进】身形如渊渟岳峙。");
             }
+            if run_camp_restore > 0 {
+                state.message.push_str(&format!(
+                    "\n【营策】{}让御守多回稳 {run_camp_restore} 点灵力。",
+                    run_camp_tactic.map(RunCampTactic::name).unwrap_or("凝灵")
+                ));
+            }
             start_player_acting(&mut state, PlayerAction::Guard);
         }
         2 => {
             // 仙术：御剑术 / 万剑诀
-            let spell_cost = (quest.spell_cost() + relic_spell_cost).max(1);
-            let spell_name = quest.spell_name();
+            let late_spell = battle_has_late_spell(&quest, run_ref);
+            let hex_cost = run.as_ref().map_or(0, |r| r.hex_spell_cost_delta());
+            let spell_cost =
+                (battle_spell_cost(&quest, run_ref) + relic_spell_cost + hex_cost).max(1);
+            let spell_name = battle_spell_name(&quest, run_ref);
             if stats.mp < spell_cost {
                 state.message = format!("灵力不足，无法施展{spell_name}！");
             } else {
@@ -1073,23 +1571,28 @@ fn battle_input(
                 let camp_bonus = state.camp_bonus;
                 let bond_bonus = state.bond_bonus;
                 stats.mp -= spell_cost;
-                let roll_max = if quest.has_late_spell() { 10 } else { 6 };
-                let base = (stats.atk * quest.spell_power_multiplier() - state.enemy.def
+                let roll_max = if late_spell { 10 } else { 6 };
+                let base = (stats.atk * battle_spell_power_multiplier(&quest, run_ref)
+                    - state.enemy.def
                     + rng.range(0, roll_max))
                 .max(1);
                 let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Spell);
                 let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Spell);
+                let run_camp_damage = run_camp_damage_bonus(run_camp_tactic, PlayerAction::Spell);
                 let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Spell);
-                let dmg = (((base + blessing_bonus + camp_damage + bond_damage + relic_spell)
+                let dmg = (((base
+                    + blessing_bonus
+                    + camp_damage
+                    + run_camp_damage
+                    + bond_damage
+                    + relic_spell
+                    + run.as_ref().map_or(0, |r| r.hex_spell_bonus()))
                     as f32)
                     * hunter_mul)
                     .round() as i32;
                 state.enemy.hp -= dmg;
-                let flavor = if quest.has_late_spell() {
-                    "剑光如雨"
-                } else {
-                    "剑气纵横"
-                };
+                let spell_element = spell_impact_element(battle_spell_chapter(&quest, run_ref));
+                let flavor = spell_impact_flavor(spell_element, late_spell);
                 state.message = format!("李逍遥 施展{spell_name}，{flavor}，造成 {dmg} 点伤害！");
                 if relic_spell > 0 {
                     state
@@ -1098,9 +1601,10 @@ fn battle_input(
                 }
                 append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
                 append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
+                append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
                 append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
                 if let Some(extra) =
-                    sword_sister_followup(&quest, &stats, &mut state.enemy, &mut rng)
+                    sword_sister_followup(&quest, run_ref, &stats, &mut state.enemy, &mut rng)
                 {
                     state
                         .message
@@ -1113,28 +1617,27 @@ fn battle_input(
                         extra,
                     );
                 }
-                spawn_spell_impact(&mut commands, &anims, &lights, quest.has_late_spell());
-                spawn_damage_text(
-                    &mut commands,
-                    &font,
-                    ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
-                    dmg,
-                );
+                spawn_spell_impact(&mut commands, &anims, &lights, late_spell, spell_element);
+                spawn_spell_damage_texts(&mut commands, &font, dmg, late_spell, spell_element);
                 state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
                 start_player_acting(&mut state, PlayerAction::Spell);
             }
         }
         3 if run.is_some() => {
-            // 绝技·剑气爆发:气势满层时的一锤定音。
-            if state.momentum < MOMENTUM_MAX {
+            // 绝技·剑气爆发:气势够层时的一锤定音(妖契纹只需 2 层)。
+            let burst_need = run.as_ref().map_or(MOMENTUM_MAX, |r| r.hex_burst_cost());
+            if state.momentum < burst_need {
                 state.message = format!(
-                    "气势未足({}/{MOMENTUM_MAX})——连续攻击或施术蓄满气势,方可施展绝技。",
+                    "气势未足({}/{burst_need})——连续攻击或施术蓄满气势,方可施展绝技。",
                     state.momentum
                 );
             } else {
                 let base = (stats.atk * 2 - state.enemy.def + rng.range(2, 9)).max(3);
                 let burst_mul = run.as_ref().map_or(1.0, |r| r.resolve_burst_mul());
-                let dmg = (((base + relic_attack + relic_spell) as f32) * hunter_mul * burst_mul)
+                let run_camp_damage = run_camp_damage_bonus(run_camp_tactic, PlayerAction::Combo);
+                let dmg = (((base + relic_attack + relic_spell + run_camp_damage) as f32)
+                    * hunter_mul
+                    * burst_mul)
                     .round() as i32;
                 state.enemy.hp -= dmg;
                 state.momentum = 0;
@@ -1142,6 +1645,14 @@ fn battle_input(
                     format!("李逍遥 气势鼎盛,施展绝技·剑气爆发!剑光如潮水倾泻,造成 {dmg} 点伤害!");
                 if burst_mul > 1.0 {
                     state.message.push_str("\n【道心·剑意如磐】绝技威力更盛!");
+                }
+                append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
+                let self_hurt = run.as_ref().map_or(0, |r| r.hex_burst_self_hurt());
+                if self_hurt > 0 {
+                    stats.hp = (stats.hp - self_hurt).max(1);
+                    state
+                        .message
+                        .push_str(&format!("\n【妖契纹】剑气反啮,自伤 {self_hurt} 点。"));
                 }
                 if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                     state.message.push_str(&line);
@@ -1157,7 +1668,7 @@ fn battle_input(
             }
         }
         3 => {
-            // 合击：逍遥、灵儿、林月衡
+            // 合击：逍遥、灵儿、林月衡，南瑶入队后扩展为四人阵。
             if !combo_unlocked(&quest) {
                 state.message = "羁绊未成，暂时无法施展合击。".into();
             } else if stats.mp < COMBO_COST {
@@ -1170,17 +1681,19 @@ fn battle_input(
                 let base = combo_damage(&quest, &stats, &state.enemy, &mut rng);
                 let blessing_bonus = blessing_damage_bonus(blessing, PlayerAction::Combo);
                 let camp_damage = camp_damage_bonus(camp_bonus, PlayerAction::Combo);
+                let run_camp_damage = run_camp_damage_bonus(run_camp_tactic, PlayerAction::Combo);
                 let bond_damage = bond_damage_bonus(bond_bonus, PlayerAction::Combo);
-                let dmg = (((base + blessing_bonus + camp_damage + bond_damage) as f32)
+                let dmg = (((base + blessing_bonus + camp_damage + run_camp_damage + bond_damage)
+                    as f32)
                     * hunter_mul)
                     .round() as i32;
                 state.enemy.hp -= dmg;
-                state.message =
-                    format!("李逍遥、赵灵儿、林月衡 心念相合，剑光与灵息齐落，造成 {dmg} 点伤害！");
+                state.message = combo_party_message(&quest, dmg);
                 append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
                 append_camp_damage_line(&mut state.message, camp_bonus, camp_damage);
+                append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
                 append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
-                spawn_combo_party_casts(&mut commands, &anims, &lights);
+                spawn_combo_party_casts(&mut commands, &anims, &lights, &quest);
                 spawn_combo_impact(&mut commands, &anims, &lights);
                 spawn_damage_text(
                     &mut commands,
@@ -1198,7 +1711,10 @@ fn battle_input(
             } else {
                 stats.potions -= 1;
                 let before = stats.hp;
-                stats.hp = (stats.hp + PlayerStats::POTION_HEAL + relic_potion).min(stats.max_hp);
+                let hex_potion = run.as_ref().map_or(0, |r| r.hex_potion_delta());
+                stats.hp = (stats.hp
+                    + (PlayerStats::POTION_HEAL + relic_potion + hex_potion).max(5))
+                .min(stats.max_hp);
                 let healed = stats.hp - before;
                 state.message = format!("李逍遥 饮下药水，恢复了 {} 点气血。", healed);
                 spawn_heal_text(
@@ -1236,6 +1752,25 @@ fn battle_input(
     }
 }
 
+fn sync_battle_automation_view(
+    state: Res<BattleState>,
+    quest: Res<QuestLog>,
+    run: Option<Res<RunState>>,
+    mut view: ResMut<BattleAutomationView>,
+) {
+    let run_ref = run.as_deref();
+    let spell_cost_delta = run_ref.map_or(0, RunState::spell_cost_delta);
+    *view = BattleAutomationView {
+        menu_open: state.phase == Phase::Menu,
+        menu_index: state.menu_index,
+        enemy_hp: state.enemy.hp.max(0),
+        enemy_max_hp: state.enemy.max_hp,
+        enemy_heavy_intent: state.intent == EnemyIntent::Heavy,
+        spell_cost: (battle_spell_cost(&quest, run_ref) + spell_cost_delta).max(1),
+        momentum: state.momentum,
+    };
+}
+
 fn start_player_acting(state: &mut BattleState, action: PlayerAction) {
     state.phase = Phase::PlayerActing;
     state.timer = 0.8;
@@ -1268,6 +1803,82 @@ fn spell_impact_profile(late_spell: bool) -> SpellImpactProfile {
             flash_alpha: 0.54,
         }
     }
+}
+
+fn spell_impact_element(chapter: Chapter) -> SpellImpactElement {
+    match chapter {
+        Chapter::VillageOath => SpellImpactElement::Village,
+        Chapter::MoonCave => SpellImpactElement::Moon,
+        Chapter::RiverMedicine => SpellImpactElement::River,
+        Chapter::PlagueRain => SpellImpactElement::Plague,
+        Chapter::CapitalMirror => SpellImpactElement::Mirror,
+        Chapter::SouthernThunder => SpellImpactElement::Thunder,
+        Chapter::FinalDream => SpellImpactElement::Dream,
+    }
+}
+
+fn spell_impact_flavor(element: SpellImpactElement, late_spell: bool) -> &'static str {
+    match (element, late_spell) {
+        (SpellImpactElement::Village, false) => "剑气纵横",
+        (SpellImpactElement::Moon, false) => "月水映剑",
+        (SpellImpactElement::River, false) => "水纹破妖",
+        (SpellImpactElement::Plague, false) => "净瘴剑光",
+        (SpellImpactElement::Mirror, false) => "照影成锋",
+        (SpellImpactElement::Thunder, false) => "雷纹引剑",
+        (SpellImpactElement::Dream, false) => "梦水留痕",
+        (SpellImpactElement::Village, true) => "万剑归心",
+        (SpellImpactElement::Moon, true) => "月影万剑",
+        (SpellImpactElement::River, true) => "江潮剑雨",
+        (SpellImpactElement::Plague, true) => "百剑净瘴",
+        (SpellImpactElement::Mirror, true) => "镜光万刃",
+        (SpellImpactElement::Thunder, true) => "万剑引雷",
+        (SpellImpactElement::Dream, true) => "梦水剑阵",
+    }
+}
+
+fn spell_element_colors(element: SpellImpactElement) -> ([f32; 3], [f32; 3]) {
+    match element {
+        SpellImpactElement::Village => ([1.0, 0.78, 0.32], [1.0, 0.96, 0.66]),
+        SpellImpactElement::Moon => ([0.66, 0.82, 1.0], [0.98, 0.74, 1.0]),
+        SpellImpactElement::River => ([0.34, 0.86, 1.0], [0.78, 1.0, 0.88]),
+        SpellImpactElement::Plague => ([0.58, 0.94, 0.46], [0.94, 1.0, 0.58]),
+        SpellImpactElement::Mirror => ([0.70, 0.68, 1.0], [1.0, 0.88, 1.0]),
+        SpellImpactElement::Thunder => ([0.42, 0.78, 1.0], [1.0, 0.92, 0.40]),
+        SpellImpactElement::Dream => ([0.62, 0.58, 1.0], [0.70, 1.0, 0.98]),
+    }
+}
+
+fn boosted_channel(value: f32, late_spell: bool) -> f32 {
+    if late_spell {
+        (value * 1.12 + 0.05).clamp(0.0, 1.0)
+    } else {
+        value
+    }
+}
+
+fn spell_impact_color(
+    element: SpellImpactElement,
+    late_spell: bool,
+    use_accent: bool,
+    alpha: f32,
+) -> Color {
+    let (base, accent) = spell_element_colors(element);
+    let [r, g, b] = if use_accent { accent } else { base };
+    Color::srgba(
+        boosted_channel(r, late_spell),
+        boosted_channel(g, late_spell),
+        boosted_channel(b, late_spell),
+        alpha,
+    )
+}
+
+fn spell_shard_color(element: SpellImpactElement, late_spell: bool, index: usize) -> Color {
+    spell_impact_color(
+        element,
+        late_spell,
+        index % 2 == 0,
+        if late_spell { 0.84 } else { 0.78 },
+    )
 }
 
 fn spell_impact_shards(late_spell: bool) -> Vec<SpellImpactShard> {
@@ -1352,19 +1963,32 @@ fn spell_impact_shards(late_spell: bool) -> Vec<SpellImpactShard> {
     shards
 }
 
+fn themed_spell_impact_shards(
+    late_spell: bool,
+    element: SpellImpactElement,
+) -> Vec<SpellImpactShard> {
+    let mut shards = spell_impact_shards(late_spell);
+    for (index, shard) in shards.iter_mut().enumerate() {
+        shard.color = spell_shard_color(element, late_spell, index);
+    }
+    shards
+}
+
 fn spawn_spell_impact(
     commands: &mut Commands,
     anims: &AnimationAssets,
     lights: &LightingAssets,
     late_spell: bool,
+    element: SpellImpactElement,
 ) {
     let profile = spell_impact_profile(late_spell);
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(profile.core_size));
-    sprite.color = if late_spell {
-        Color::srgba(0.96, 0.90, 1.0, 0.98)
-    } else {
-        Color::srgba(1.0, 0.92, 0.55, 0.96)
-    };
+    sprite.color = spell_impact_color(
+        element,
+        late_spell,
+        true,
+        if late_spell { 0.98 } else { 0.94 },
+    );
 
     commands.spawn((
         sprite,
@@ -1380,11 +2004,12 @@ fn spawn_spell_impact(
     ));
 
     let mut ring = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(profile.ring_size));
-    ring.color = if late_spell {
-        Color::srgba(0.64, 0.82, 1.0, 0.68)
-    } else {
-        Color::srgba(1.0, 0.70, 0.26, 0.58)
-    };
+    ring.color = spell_impact_color(
+        element,
+        late_spell,
+        false,
+        if late_spell { 0.70 } else { 0.58 },
+    );
     commands.spawn((
         ring,
         SpriteAnimation::once(AnimationClip::SkillImpact),
@@ -1393,7 +2018,7 @@ fn spawn_spell_impact(
         DespawnOnExit(AppState::Battle),
     ));
 
-    for shard in spell_impact_shards(late_spell) {
+    for shard in themed_spell_impact_shards(late_spell, element) {
         spawn_spell_impact_shard(commands, anims, shard);
     }
 
@@ -1402,11 +2027,7 @@ fn spawn_spell_impact(
         lights,
         Vec3::new(ENEMY_POS.x, ENEMY_POS.y + 4.0, 2.1),
         profile.flash_radius,
-        if late_spell {
-            Color::srgba(0.72, 0.86, 1.0, profile.flash_alpha)
-        } else {
-            Color::srgba(1.0, 0.62, 0.24, profile.flash_alpha)
-        },
+        spell_impact_color(element, late_spell, false, profile.flash_alpha),
         AppState::Battle,
     );
     commands
@@ -1442,6 +2063,123 @@ fn spawn_spell_impact_shard(
     ));
 }
 
+fn spell_damage_texts(total: i32, late_spell: bool) -> Vec<SpellDamageText> {
+    let slices = spell_damage_slices(total, late_spell);
+    if slices.is_empty() {
+        return Vec::new();
+    }
+
+    let offsets: &[Vec2] = if late_spell {
+        &[
+            Vec2::new(42.0, 112.0),
+            Vec2::new(118.0, 84.0),
+            Vec2::new(76.0, 44.0),
+            Vec2::new(154.0, 32.0),
+            Vec2::new(18.0, 56.0),
+            Vec2::new(138.0, 122.0),
+            Vec2::new(92.0, 18.0),
+        ]
+    } else {
+        &[
+            Vec2::new(64.0, 96.0),
+            Vec2::new(118.0, 56.0),
+            Vec2::new(42.0, 38.0),
+        ]
+    };
+    let velocities: &[Vec2] = if late_spell {
+        &[
+            Vec2::new(-18.0, 86.0),
+            Vec2::new(16.0, 92.0),
+            Vec2::new(-8.0, 78.0),
+            Vec2::new(22.0, 82.0),
+            Vec2::new(-24.0, 74.0),
+            Vec2::new(12.0, 96.0),
+            Vec2::new(-4.0, 72.0),
+        ]
+    } else {
+        &[
+            Vec2::new(-10.0, 78.0),
+            Vec2::new(14.0, 82.0),
+            Vec2::new(-4.0, 72.0),
+        ]
+    };
+
+    slices
+        .into_iter()
+        .enumerate()
+        .map(|(index, amount)| SpellDamageText {
+            amount,
+            offset: offsets[index],
+            velocity: velocities[index],
+            size: if late_spell { 27.0 } else { 31.0 },
+        })
+        .collect()
+}
+
+fn spell_damage_slices(total: i32, late_spell: bool) -> Vec<i32> {
+    if total <= 0 {
+        return Vec::new();
+    }
+    let weights: &[i32] = if late_spell {
+        &[20, 17, 15, 14, 13, 11, 10]
+    } else {
+        &[38, 34, 28]
+    };
+    let hit_count = weights.len().min(total as usize);
+    let weights = &weights[..hit_count];
+    let weight_sum: i32 = weights.iter().sum();
+    let mut slices: Vec<i32> = weights
+        .iter()
+        .map(|weight| ((total * *weight + weight_sum / 2) / weight_sum).max(1))
+        .collect();
+
+    let mut diff = total - slices.iter().sum::<i32>();
+    let mut index = 0;
+    while diff != 0 {
+        let slot = index % slices.len();
+        if diff > 0 {
+            slices[slot] += 1;
+            diff -= 1;
+        } else if slices[slot] > 1 {
+            slices[slot] -= 1;
+            diff += 1;
+        }
+        index += 1;
+    }
+
+    slices
+}
+
+fn spell_damage_text_color(element: SpellImpactElement, late_spell: bool) -> Color {
+    spell_impact_color(
+        element,
+        late_spell,
+        true,
+        if late_spell { 0.96 } else { 0.90 },
+    )
+}
+
+fn spawn_spell_damage_texts(
+    commands: &mut Commands,
+    font: &GameFont,
+    total: i32,
+    late_spell: bool,
+    element: SpellImpactElement,
+) {
+    let color = spell_damage_text_color(element, late_spell);
+    for text in spell_damage_texts(total, late_spell) {
+        spawn_floating_combat_text(
+            commands,
+            font,
+            format!("-{}", text.amount),
+            ENEMY_POS + Vec3::new(text.offset.x, text.offset.y, 0.0),
+            color,
+            text.velocity,
+            text.size,
+        );
+    }
+}
+
 fn spawn_combo_impact(commands: &mut Commands, anims: &AnimationAssets, lights: &LightingAssets) {
     let duration = AnimationClip::SkillImpact.duration() + 0.34;
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(360.0));
@@ -1472,6 +2210,7 @@ fn spawn_combo_party_casts(
     commands: &mut Commands,
     anims: &AnimationAssets,
     lights: &LightingAssets,
+    quest: &QuestLog,
 ) {
     spawn_companion_cast_rune(
         commands,
@@ -1497,6 +2236,16 @@ fn spawn_combo_party_casts(
         Color::srgba(1.0, 0.46, 0.32, 0.78),
         118.0,
     );
+    if quest.has_companion(Companion::SpiritWitch) {
+        spawn_companion_cast_rune(
+            commands,
+            anims,
+            lights,
+            SPIRIT_WITCH_POS + Vec3::new(2.0, 90.0, 0.0),
+            Color::srgba(0.46, 1.0, 0.58, 0.76),
+            114.0,
+        );
+    }
 }
 
 fn spawn_companion_cast_rune(
@@ -1585,6 +2334,34 @@ fn spawn_linger_support_aura(
     commands
         .entity(flash)
         .insert(BattleEffect::new(0.42, 0.28, 0.96, 0.0));
+}
+
+fn spawn_spirit_witch_support_aura(
+    commands: &mut Commands,
+    anims: &AnimationAssets,
+    lights: &LightingAssets,
+) {
+    let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(185.0));
+    sprite.color = Color::srgba(0.42, 1.0, 0.58, 0.68);
+    commands.spawn((
+        sprite,
+        SpriteAnimation::once(AnimationClip::SkillImpact),
+        BattleEffect::new(0.36, 0.34, 0.92, -0.72),
+        Transform::from_xyz(HERO_POS.x + 68.0, HERO_POS.y + 82.0, 2.7),
+        DespawnOnExit(AppState::Battle),
+    ));
+
+    let flash = lighting::spawn_light(
+        commands,
+        lights,
+        Vec3::new(HERO_POS.x + 68.0, HERO_POS.y + 82.0, 2.0),
+        210.0,
+        Color::srgba(0.34, 1.0, 0.56, 0.36),
+        AppState::Battle,
+    );
+    commands
+        .entity(flash)
+        .insert(BattleEffect::new(0.30, 0.24, 0.76, 0.0));
 }
 
 fn spawn_weapon_hit(
@@ -1737,10 +2514,28 @@ fn battle_tick(
                 // Reward screen (via Phase::Won) does the rest.
                 if let Some(run) = run.as_mut() {
                     run.fights_won += 1;
-                    let gold = (battle_gold_reward(exp, boss) as f32 * run.gold_multiplier())
-                        .round() as u32;
+                    let gold = ((battle_gold_reward(exp, boss) as f32
+                        * run.gold_multiplier()
+                        * run.hex_gold_mul())
+                    .round() as u32)
+                        + run.hex_win_gold();
                     stats.gold += gold;
                     state.message = format!("{} 被击败了！拾得 {} 文钱。", state.enemy.name, gold);
+                    let tithe = run.hex_kill_heal();
+                    if tithe > 0 && stats.hp < stats.max_hp {
+                        let healed = tithe.min(stats.max_hp - stats.hp);
+                        stats.hp += healed;
+                        state
+                            .message
+                            .push_str(&format!("\n【血偿纹】饮下妖血,回复 {healed} 点气血。"));
+                    }
+                    let burn = run.hex_battle_end_hp_loss();
+                    if burn > 0 {
+                        stats.hp = (stats.hp - burn).max(1);
+                        state
+                            .message
+                            .push_str(&format!("\n【燃魂纹】魂火灼身,失去 {burn} 点气血。"));
+                    }
                     let heal = run.on_kill_heal();
                     if heal > 0 && stats.hp < stats.max_hp {
                         let healed = heal.min(stats.max_hp - stats.hp);
@@ -1785,6 +2580,13 @@ fn battle_tick(
                     state.message.push('\n');
                     state.message.push_str(&progress);
                 }
+                if main_progressed
+                    && let Some(EncounterKind::Boss(boss)) = kind
+                    && let Some(breakthrough) = apply_legacy_boss_breakthrough(boss, &mut stats)
+                {
+                    state.message.push('\n');
+                    state.message.push_str(&breakthrough);
+                }
                 if !matches!(kind, Some(EncounterKind::Boss(_))) {
                     if let Some(side_progress) = quest.record_side_victory() {
                         state.message.push('\n');
@@ -1822,6 +2624,7 @@ fn battle_tick(
                 let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
                 let strong_guard = run.as_ref().map_or(0, |r| r.strong_hit_guard());
                 let guard_keep = run.as_ref().map_or(35, |r| r.guard_keep_pct());
+                let enemy_first = run.as_ref().map_or(0, |r| r.hex_enemy_first_hit_bonus());
                 let attack = begin_enemy_turn(
                     &mut state,
                     &mut stats,
@@ -1829,6 +2632,7 @@ fn battle_tick(
                     relic_guard,
                     strong_guard,
                     guard_keep,
+                    enemy_first,
                 );
                 spawn_enemy_strike_impact(&mut commands, &anims, &lights, attack.strong);
                 spawn_damage_text(
@@ -1863,7 +2667,7 @@ fn battle_tick(
                 state.timer = 1.6;
             } else {
                 if let Some(run) = run.as_ref() {
-                    let regen = run.bond_regen();
+                    let regen = run.bond_regen() + run.hex_enemy_turn_regen();
                     if regen > 0 && stats.hp > 0 && stats.hp < stats.max_hp {
                         let healed = regen.min(stats.max_hp - stats.hp);
                         stats.hp += healed;
@@ -1875,11 +2679,11 @@ fn battle_tick(
                         );
                     }
                 }
-                if let Some(heal) = companion_support(&quest, state.bond_bonus, &mut stats) {
-                    state.message = format!(
-                        "赵灵儿 以灵息护住你，恢复 {} 点气血。\n你的回合，请选择行动。",
-                        heal
-                    );
+                let run_ref = run.as_deref();
+                let heal = companion_support(&quest, run_ref, state.bond_bonus, &mut stats);
+                let restored = spirit_witch_support(&quest, run_ref, &mut stats);
+                state.message = party_support_message(heal, restored);
+                if let Some(heal) = heal {
                     spawn_linger_support_aura(&mut commands, &anims, &lights);
                     spawn_heal_text(
                         &mut commands,
@@ -1887,8 +2691,15 @@ fn battle_tick(
                         HERO_POS + Vec3::new(12.0, 106.0, 0.0),
                         heal,
                     );
-                } else {
-                    state.message = "你的回合，请选择行动。".into();
+                }
+                if let Some(restored) = restored {
+                    spawn_spirit_witch_support_aura(&mut commands, &anims, &lights);
+                    spawn_heal_text(
+                        &mut commands,
+                        &font,
+                        HERO_POS + Vec3::new(74.0, 88.0, 0.0),
+                        restored,
+                    );
                 }
                 state.phase = Phase::Menu;
                 state.player_action = None;
@@ -1930,10 +2741,11 @@ fn battle_tick(
 
 fn companion_support(
     quest: &QuestLog,
+    run: Option<&RunState>,
     bond_bonus: Option<BondBonus>,
     stats: &mut PlayerStats,
 ) -> Option<i32> {
-    if !quest.has_companion(Companion::Linger) || stats.hp >= stats.max_hp {
+    if !battle_companion_visible(quest, run, Companion::Linger) || stats.hp >= stats.max_hp {
         return None;
     }
 
@@ -1942,18 +2754,83 @@ fn companion_support(
     } else {
         0
     };
+    let run_bond = run.map_or(0, |run| run.qingyuan.max(0) / 3);
     let heal = (4
         + stats.level as i32
         + quest.bond_level() as i32 * 2
         + quest.bond_tender_level() as i32
+        + run_bond
         + bond_heal)
         .min(stats.max_hp - stats.hp);
     stats.hp += heal;
     Some(heal)
 }
 
+fn spirit_witch_support(
+    quest: &QuestLog,
+    run: Option<&RunState>,
+    stats: &mut PlayerStats,
+) -> Option<i32> {
+    if !battle_companion_visible(quest, run, Companion::SpiritWitch) || stats.mp >= stats.max_mp {
+        return None;
+    }
+
+    let restore = (2
+        + stats.level as i32 / 3
+        + if battle_has_late_spell(quest, run) {
+            2
+        } else {
+            0
+        })
+    .min(stats.max_mp - stats.mp);
+    stats.mp += restore;
+    Some(restore)
+}
+
+fn party_support_message(heal: Option<i32>, restored: Option<i32>) -> String {
+    match (heal, restored) {
+        (Some(heal), Some(restored)) => format!(
+            "赵灵儿 以灵息护住你，恢复 {heal} 点气血。\n南瑶 叩响袖中铜铃，回稳 {restored} 点灵力。\n你的回合，请选择行动。"
+        ),
+        (Some(heal), None) => {
+            format!("赵灵儿 以灵息护住你，恢复 {heal} 点气血。\n你的回合，请选择行动。")
+        }
+        (None, Some(restored)) => {
+            format!("南瑶 叩响袖中铜铃，回稳 {restored} 点灵力。\n你的回合，请选择行动。")
+        }
+        (None, None) => "你的回合，请选择行动。".into(),
+    }
+}
+
 fn battle_gold_reward(exp: u32, boss: bool) -> u32 {
     exp / 2 + if boss { 40 } else { 6 }
+}
+
+fn apply_legacy_boss_breakthrough(boss: BossKind, stats: &mut PlayerStats) -> Option<String> {
+    let (name, hp, mp, atk, def) = match boss {
+        BossKind::MountainFiend => ("余杭赤火", 16, 6, 4, 2),
+        BossKind::MoonWraith => ("水月灵誓", 18, 8, 4, 2),
+        BossKind::RiverDemon => ("苏州河灯", 20, 8, 5, 2),
+        BossKind::MiasmaRoot => ("白河清瘴", 22, 9, 5, 3),
+        BossKind::MirrorMinister => ("京华破镜", 24, 9, 6, 3),
+        BossKind::ThunderQilin => ("南疆雷誓", 26, 10, 6, 4),
+        BossKind::DreamEclipse => {
+            return Some(
+                "【章末突破】心渊照影：终局不再增长数值，所有章印转为结局回响。".to_string(),
+            );
+        }
+    };
+
+    stats.max_hp += hp;
+    stats.hp = (stats.hp + hp).min(stats.max_hp);
+    stats.max_mp += mp;
+    stats.mp = (stats.mp + mp).min(stats.max_mp);
+    stats.atk += atk;
+    stats.def += def;
+
+    Some(format!(
+        "【章末突破】{name}：气血+{hp} 灵力+{mp} 攻+{atk} 防+{def}。"
+    ))
 }
 
 fn combo_unlocked(quest: &QuestLog) -> bool {
@@ -1971,9 +2848,28 @@ fn combo_damage(
     (stats.atk * 3
         + quest.bond_level() as i32 * 5
         + quest.bond_courage_level() as i32 * 3
+        + spirit_witch_combo_bonus(quest)
         + rng.range(4, 12)
         - enemy.def)
         .max(6)
+}
+
+fn spirit_witch_combo_bonus(quest: &QuestLog) -> i32 {
+    if quest.has_companion(Companion::SpiritWitch) {
+        6 + if quest.has_late_spell() { 3 } else { 0 }
+    } else {
+        0
+    }
+}
+
+fn combo_party_message(quest: &QuestLog, damage: i32) -> String {
+    if quest.has_companion(Companion::SpiritWitch) {
+        format!(
+            "李逍遥、赵灵儿、林月衡、南瑶 四人定阵，剑光、灵息与雷鼓旧律齐落，造成 {damage} 点伤害！"
+        )
+    } else {
+        format!("李逍遥、赵灵儿、林月衡 心念相合，剑光与灵息齐落，造成 {damage} 点伤害！")
+    }
 }
 
 fn blessing_damage_bonus(blessing: Option<ShrineBlessing>, action: PlayerAction) -> i32 {
@@ -1991,6 +2887,61 @@ fn camp_damage_bonus(bonus: Option<CampBonus>, action: PlayerAction) -> i32 {
         (Some(CampBonus::Warmth), PlayerAction::Combo) => 2,
         (Some(CampBonus::Focus), PlayerAction::Attack | PlayerAction::Spell) => 2,
         (Some(CampBonus::Focus), PlayerAction::Combo) => 3,
+        _ => 0,
+    }
+}
+
+fn run_camp_damage_bonus(tactic: Option<RunCampTactic>, action: PlayerAction) -> i32 {
+    match (tactic, action) {
+        (Some(RunCampTactic::Breath), PlayerAction::Attack | PlayerAction::Spell) => 1,
+        (Some(RunCampTactic::Breath), PlayerAction::Combo) => 2,
+        (Some(RunCampTactic::SwordGuard), PlayerAction::Attack) => 3,
+        (Some(RunCampTactic::SwordGuard), PlayerAction::Combo) => 4,
+        (Some(RunCampTactic::SpiritFocus), PlayerAction::Spell) => 3,
+        (Some(RunCampTactic::SpiritFocus), PlayerAction::Combo) => 4,
+        _ => 0,
+    }
+}
+
+fn run_camp_start_heal_amount(tactic: RunCampTactic) -> i32 {
+    match tactic {
+        RunCampTactic::Breath => 8,
+        RunCampTactic::LingerWard => 10,
+        RunCampTactic::SwordGuard | RunCampTactic::SpiritFocus => 0,
+    }
+}
+
+fn run_camp_start_mana_amount(tactic: RunCampTactic) -> i32 {
+    match tactic {
+        RunCampTactic::Breath => 4,
+        RunCampTactic::SpiritFocus => 8,
+        RunCampTactic::SwordGuard | RunCampTactic::LingerWard => 0,
+    }
+}
+
+fn apply_run_camp_start_heal(tactic: RunCampTactic, stats: &mut PlayerStats) -> Option<i32> {
+    let amount = run_camp_start_heal_amount(tactic);
+    if amount <= 0 || stats.hp >= stats.max_hp {
+        return None;
+    }
+    let healed = amount.min(stats.max_hp - stats.hp);
+    stats.hp += healed;
+    Some(healed)
+}
+
+fn apply_run_camp_start_mana(tactic: RunCampTactic, stats: &mut PlayerStats) -> Option<i32> {
+    let amount = run_camp_start_mana_amount(tactic);
+    if amount <= 0 || stats.mp >= stats.max_mp {
+        return None;
+    }
+    let restored = amount.min(stats.max_mp - stats.mp);
+    stats.mp += restored;
+    Some(restored)
+}
+
+fn run_camp_guard_mp_bonus(tactic: Option<RunCampTactic>) -> i32 {
+    match tactic {
+        Some(RunCampTactic::SpiritFocus) => 2,
         _ => 0,
     }
 }
@@ -2028,6 +2979,19 @@ fn append_camp_damage_line(message: &mut String, bonus: Option<CampBonus>, damag
     }
 }
 
+fn append_run_camp_damage_line(message: &mut String, tactic: Option<RunCampTactic>, damage: i32) {
+    if damage <= 0 {
+        return;
+    }
+
+    if let Some(tactic) = tactic {
+        message.push_str(&format!(
+            "\n【营策】{}追加 {damage} 点威力。",
+            tactic.name()
+        ));
+    }
+}
+
 fn append_bond_damage_line(message: &mut String, bonus: Option<BondBonus>, damage: i32) {
     if damage <= 0 {
         return;
@@ -2040,18 +3004,21 @@ fn append_bond_damage_line(message: &mut String, bonus: Option<BondBonus>, damag
 
 fn sword_sister_followup(
     quest: &QuestLog,
+    run: Option<&RunState>,
     stats: &PlayerStats,
     enemy: &mut EnemyInstance,
     rng: &mut Rng,
 ) -> Option<i32> {
-    if !quest.has_companion(Companion::SwordSister) || enemy.hp <= 0 {
+    if !battle_companion_visible(quest, run, Companion::SwordSister) || enemy.hp <= 0 {
         return None;
     }
 
+    let run_edge = run.map_or(0, |run| run.daoxin.max(0) / 4);
     let dmg = (stats.atk / 2
         + stats.level as i32
         + quest.bond_level() as i32
         + quest.bond_courage_level() as i32
+        + run_edge
         + rng.range(0, 4)
         - enemy.def / 2)
         .max(2);
@@ -2066,6 +3033,7 @@ fn begin_enemy_turn(
     relic_guard: i32,
     strong_guard: i32,
     guard_keep: i32,
+    enemy_first_bonus: i32,
 ) -> EnemyAttackResult {
     let turn_index = state.enemy_turns;
     state.enemy_turns += 1;
@@ -2101,13 +3069,31 @@ fn begin_enemy_turn(
             EnemyIntent::Drain => (0.7, false),
             _ => (1.0, false),
         };
-        let raw = ((state.enemy.atk as f32 * mult) as i32 - stats.def + rng.range(-2, 4)).max(1);
+        let first_bonus = if turn_index == 0 {
+            enemy_first_bonus
+        } else {
+            0
+        };
+        let raw = ((state.enemy.atk as f32 * mult) as i32 + first_bonus - stats.def
+            + rng.range(-2, 4))
+        .max(1);
         let blocked = blessing_guard_block(state.blessing, raw);
         let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
-        let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
+        let run_camp_blocked =
+            run_camp_guard_block(state.run_camp_tactic, raw - blocked - camp_blocked);
+        let bond_blocked = bond_guard_block(
+            state.bond_bonus,
+            raw - blocked - camp_blocked - run_camp_blocked,
+        );
         let strong_cut = if strong { strong_guard } else { 0 };
-        let mut dmg =
-            (raw - blocked - camp_blocked - bond_blocked - relic_guard - strong_cut).max(0);
+        let mut dmg = (raw
+            - blocked
+            - camp_blocked
+            - run_camp_blocked
+            - bond_blocked
+            - relic_guard
+            - strong_cut)
+            .max(0);
         let mut guard_note = String::new();
         if guarding {
             let absorbed = dmg - dmg * guard_keep / 100;
@@ -2134,6 +3120,7 @@ fn begin_enemy_turn(
         };
         append_blessing_guard_line(&mut state.message, blocked);
         append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
+        append_run_camp_guard_line(&mut state.message, state.run_camp_tactic, run_camp_blocked);
         append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
         append_relic_guard_line(&mut state.message, relic_guard);
         state.message.push_str(&guard_note);
@@ -2232,8 +3219,13 @@ fn begin_boss_special_turn(
     let (raw, message, mp_drain, enemy_heal) = boss_special_attack(boss, state, stats, rng);
     let blocked = blessing_guard_block(state.blessing, raw);
     let camp_blocked = camp_guard_block(state.camp_bonus, raw - blocked);
-    let bond_blocked = bond_guard_block(state.bond_bonus, raw - blocked - camp_blocked);
-    let mut dmg = (raw - blocked - camp_blocked - bond_blocked).max(0);
+    let run_camp_blocked =
+        run_camp_guard_block(state.run_camp_tactic, raw - blocked - camp_blocked);
+    let bond_blocked = bond_guard_block(
+        state.bond_bonus,
+        raw - blocked - camp_blocked - run_camp_blocked,
+    );
+    let mut dmg = (raw - blocked - camp_blocked - run_camp_blocked - bond_blocked).max(0);
     let mut guard_note = String::new();
     if guarding {
         let absorbed = dmg - dmg * guard_keep / 100;
@@ -2251,6 +3243,7 @@ fn begin_boss_special_turn(
     state.message = format!("{message}造成 {dmg} 点伤害！");
     append_blessing_guard_line(&mut state.message, blocked);
     append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
+    append_run_camp_guard_line(&mut state.message, state.run_camp_tactic, run_camp_blocked);
     append_bond_guard_line(&mut state.message, state.bond_bonus, bond_blocked);
     state.message.push_str(&guard_note);
     if mp_drain > 0 {
@@ -2293,6 +3286,13 @@ fn mirror_backlash(state: &BattleState, stats: &mut PlayerStats, dmg: i32) -> Op
 /// 与 `next_intent` / `mirror_backlash` / 秘术节奏配合。
 fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance, eclipse_heart: bool) -> String {
     match boss {
+        BossKind::MountainFiend => {
+            enemy.atk += 3;
+            format!(
+                "{} 扯断身上赤绳,山火般的妖气沿石阶炸开!\n(攻击提升,秘法回合会重踏地脉)",
+                enemy.name
+            )
+        }
         BossKind::MoonWraith => {
             enemy.atk += 2;
             format!(
@@ -2347,6 +3347,12 @@ fn boss_special_attack(
     rng: &mut Rng,
 ) -> (i32, &'static str, i32, i32) {
     match boss {
+        BossKind::MountainFiend => (
+            (state.enemy.atk + 5 - stats.def / 2 + rng.range(0, 4)).max(2),
+            "赤鬼山妖 重踏破庙石阶，碎石与妖火一并砸下，",
+            0,
+            0,
+        ),
         BossKind::MoonWraith => (
             (state.enemy.atk + 5 - stats.def / 2 + rng.range(0, 4)).max(2),
             "月魄妖 施展月影噬灵，冷光穿过护体灵息，",
@@ -2403,6 +3409,16 @@ fn camp_guard_block(bonus: Option<CampBonus>, remaining_damage: i32) -> i32 {
     block.min(remaining_damage.saturating_sub(1))
 }
 
+fn run_camp_guard_block(tactic: Option<RunCampTactic>, remaining_damage: i32) -> i32 {
+    let block = match tactic {
+        Some(RunCampTactic::Breath) => 1,
+        Some(RunCampTactic::SwordGuard) => 1,
+        Some(RunCampTactic::LingerWard) => 3,
+        Some(RunCampTactic::SpiritFocus) | None => 0,
+    };
+    block.min(remaining_damage.saturating_sub(1))
+}
+
 fn bond_guard_block(bonus: Option<BondBonus>, remaining_damage: i32) -> i32 {
     let block = match bonus {
         Some(BondBonus::Tender) => 2,
@@ -2427,6 +3443,19 @@ fn append_camp_guard_line(message: &mut String, bonus: Option<CampBonus>, blocke
         message.push_str(&format!(
             "\n【营地】{}挡下 {blocked} 点伤害。",
             bonus.name()
+        ));
+    }
+}
+
+fn append_run_camp_guard_line(message: &mut String, tactic: Option<RunCampTactic>, blocked: i32) {
+    if blocked <= 0 {
+        return;
+    }
+
+    if let Some(tactic) = tactic {
+        message.push_str(&format!(
+            "\n【营策】{}挡下 {blocked} 点伤害。",
+            tactic.name()
         ));
     }
 }
@@ -2472,9 +3501,18 @@ fn update_battle_animations(
         ),
     >,
     mut enemy: Query<
-        (&mut Transform, &mut Sprite, &mut BattleEnemyMotion),
+        (&mut Transform, &mut BattleEnemyMotion),
         (
             With<BattleEnemy>,
+            Without<BattleHero>,
+            Without<BattleCompanion>,
+        ),
+    >,
+    mut enemy_parts: Query<
+        (&BattleEnemyPart, &mut Transform, &mut Sprite),
+        (
+            With<BattleEnemyPart>,
+            Without<BattleEnemy>,
             Without<BattleHero>,
             Without<BattleCompanion>,
         ),
@@ -2509,15 +3547,44 @@ fn update_battle_animations(
         sprite.color = tint;
     }
 
-    if let Ok((mut transform, mut sprite, mut motion)) = enemy.single_mut() {
+    let mut enemy_visual = None;
+    if let Ok((mut transform, mut motion)) = enemy.single_mut() {
         motion.age += time.delta_secs();
         let breath = (motion.age * 3.0).sin();
         let (x, y, scale, hit) = enemy_phase_motion(state.phase, state.player_action, state.timer);
+        let root_scale = (scale + breath * 0.025).max(0.82);
 
         transform.translation.x = motion.origin.x + x;
         transform.translation.y = motion.origin.y + y + breath * 5.0;
-        transform.scale = Vec3::splat((scale + breath * 0.025).max(0.82));
-        sprite.color = enemy_primary_color(state.phase, hit);
+        transform.scale = Vec3::splat(root_scale);
+        enemy_visual = Some((motion.age, x, y, breath, root_scale, hit));
+    }
+
+    if let Some((age, x, y, breath, root_scale, hit)) = enemy_visual {
+        let base_color = enemy_primary_color(state.phase, hit);
+        let intensity = match state.phase {
+            Phase::EnemyActing => 1.55,
+            Phase::PlayerActing if hit > 0.0 => 1.35,
+            Phase::Won => 0.45,
+            Phase::Menu | Phase::PlayerActing | Phase::Lost | Phase::Fled => 1.0,
+        };
+
+        for (part, mut transform, mut sprite) in &mut enemy_parts {
+            let segment = cutout_part_motion(part.part, age * 3.8 + part.phase, intensity);
+            transform.translation.x =
+                ENEMY_POS.x + x + part.base_offset.x * root_scale + segment.offset.x;
+            transform.translation.y =
+                ENEMY_POS.y + y + breath * 5.0 + part.base_offset.y * root_scale + segment.offset.y;
+            transform.translation.z = ENEMY_POS.z + part.part.z_offset();
+            transform.rotation = Quat::from_rotation_z(segment.rotation);
+            transform.scale = Vec3::new(
+                root_scale * segment.scale.x,
+                root_scale * segment.scale.y,
+                1.0,
+            );
+            sprite.custom_size = Some(part.base_size);
+            sprite.color = brighten_color(base_color, segment.brightness);
+        }
     }
 }
 
@@ -2527,6 +3594,34 @@ fn enemy_primary_image(def: &EnemyDef) -> &'static str {
 
 fn enemy_primary_size(def: &EnemyDef) -> f32 {
     def.size
+}
+
+fn spawn_battle_enemy_cutout(commands: &mut Commands, asset_server: &AssetServer, def: &EnemyDef) {
+    let path = enemy_primary_image(def);
+    let image = asset_server.load(path);
+    for spec in cutout_part_specs(cutout_source_px_for_path(path), enemy_primary_size(def)) {
+        commands.spawn((
+            BattleEnemyPart {
+                part: spec.part,
+                base_offset: spec.offset,
+                base_size: spec.size,
+                phase: spec.part.z_offset() * 11.0,
+            },
+            Sprite {
+                image: image.clone(),
+                rect: Some(spec.rect),
+                color: enemy_primary_color(Phase::Menu, 0.0),
+                custom_size: Some(spec.size),
+                ..default()
+            },
+            Transform::from_xyz(
+                ENEMY_POS.x + spec.offset.x,
+                ENEMY_POS.y + spec.offset.y,
+                ENEMY_POS.z + spec.part.z_offset(),
+            ),
+            DespawnOnExit(AppState::Battle),
+        ));
+    }
 }
 
 fn enemy_phase_motion(
@@ -2612,6 +3707,15 @@ fn companion_motion(
                     scale += 0.05 * pulse;
                     color = companion_tint(kind, pulse);
                 }
+                (
+                    BattleCompanionKind::SpiritWitch,
+                    Some(PlayerAction::Spell | PlayerAction::Combo),
+                ) => {
+                    offset.x += 12.0 * pulse;
+                    offset.y += 28.0 * pulse;
+                    scale += 0.045 * pulse;
+                    color = companion_tint(kind, pulse);
+                }
                 _ => {}
             }
         }
@@ -2634,6 +3738,9 @@ fn companion_tint(kind: BattleCompanionKind, pulse: f32) -> Color {
         BattleCompanionKind::SwordSister => {
             Color::srgba(1.0, 1.0 - pulse * 0.08, 1.0 - pulse * 0.14, 1.0)
         }
+        BattleCompanionKind::SpiritWitch => {
+            Color::srgba(1.0 - pulse * 0.18, 1.0, 1.0 - pulse * 0.10, 1.0)
+        }
     }
 }
 
@@ -2641,6 +3748,7 @@ fn companion_phase_offset(kind: BattleCompanionKind) -> f32 {
     match kind {
         BattleCompanionKind::Linger => 0.7,
         BattleCompanionKind::SwordSister => 1.4,
+        BattleCompanionKind::SpiritWitch => 2.1,
     }
 }
 
@@ -2750,6 +3858,7 @@ fn update_battle_ui(
         ),
     >,
 ) {
+    let run_ref = run.as_deref();
     // Enemy HP bar shrinks from the left.
     if let Ok((mut sprite, mut tf)) = bar.single_mut() {
         let ratio =
@@ -2779,7 +3888,7 @@ fn update_battle_ui(
             .collect();
         t.0 = format!(
             "{}  气血 {}/{}   灵力 {}/{}   气势 {}   药水 x{}   钱 {}文   {}   {}   {}   {}",
-            quest.party_summary(),
+            battle_party_summary(&quest, run_ref),
             stats.hp.max(0),
             stats.max_hp,
             stats.mp.max(0),
@@ -2790,7 +3899,7 @@ fn update_battle_ui(
             quest.bond_summary(),
             battle_bond_summary(state.bond_bonus),
             battle_blessing_summary(state.blessing),
-            battle_camp_summary(state.camp_bonus),
+            battle_camp_summary(state.camp_bonus, state.run_camp_tactic),
         );
     }
 
@@ -2798,8 +3907,15 @@ fn update_battle_ui(
     for (item, mut text, mut color) in menu.iter_mut() {
         let selected = show_cursor && item.0 == state.menu_index;
         let label = match item.0 {
-            2 => format!("{} (灵力{})", quest.spell_name(), quest.spell_cost()),
-            3 if run.is_some() => format!("绝技·剑气爆发 (气势{MOMENTUM_MAX})"),
+            2 => format!(
+                "{} (灵力{})",
+                battle_spell_name(&quest, run_ref),
+                battle_spell_cost(&quest, run_ref)
+            ),
+            3 if run.is_some() => {
+                let need = run.as_ref().map_or(MOMENTUM_MAX, |r| r.hex_burst_cost());
+                format!("绝技·剑气爆发 (气势{need})")
+            }
             3 if combo_unlocked(&quest) => format!("合击 (灵力{COMBO_COST})"),
             3 => "合击 (未解锁)".to_string(),
             _ => MENU[item.0].to_string(),
@@ -2826,12 +3942,14 @@ fn battle_blessing_summary(blessing: Option<ShrineBlessing>) -> &'static str {
     }
 }
 
-fn battle_camp_summary(bonus: Option<CampBonus>) -> &'static str {
-    match bonus {
-        Some(CampBonus::Warmth) => "营地 余温",
-        Some(CampBonus::Focus) => "营地 静心",
-        Some(CampBonus::Vigil) => "营地 守夜",
-        None => "营地 无",
+fn battle_camp_summary(bonus: Option<CampBonus>, tactic: Option<RunCampTactic>) -> String {
+    match (bonus, tactic) {
+        (Some(bonus), Some(tactic)) => format!("营地 {} / 营策 {}", bonus.name(), tactic.name()),
+        (_, Some(tactic)) => format!("营策 {}", tactic.name()),
+        (Some(CampBonus::Warmth), None) => "营地 余温".to_string(),
+        (Some(CampBonus::Focus), None) => "营地 静心".to_string(),
+        (Some(CampBonus::Vigil), None) => "营地 守夜".to_string(),
+        (None, None) => "营地 无".to_string(),
     }
 }
 
@@ -2846,11 +3964,415 @@ fn battle_bond_summary(bonus: Option<BondBonus>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::quest::{BondResponse, QuestRole};
+    use crate::game::quest::{
+        BondResponse, MansionMirrorNode, MoonCrystal, PlagueWard, QuestRole, RiverLantern,
+    };
+    use crate::game::roguelike::RunChapterVow;
+    use crate::game::roguelike::graph::NodeKind;
+
+    #[test]
+    fn run_party_companions_are_visible_in_run_battles() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        run.stage = 3;
+        let quest = QuestLog::default();
+        assert!(battle_companion_visible(
+            &quest,
+            Some(&run),
+            Companion::Linger
+        ));
+        assert!(!battle_companion_visible(
+            &quest,
+            Some(&run),
+            Companion::SwordSister
+        ));
+
+        run.chapter = 5;
+        run.stage = 0;
+        assert!(battle_companion_visible(
+            &quest,
+            Some(&run),
+            Companion::SpiritWitch
+        ));
+        assert_eq!(
+            battle_party_summary(&quest, Some(&run)),
+            run.party_summary()
+        );
+        assert_eq!(battle_spell_name(&quest, Some(&run)), "万剑诀");
+        assert_eq!(battle_spell_cost(&quest, Some(&run)), 9);
+        assert_eq!(battle_spell_power_multiplier(&quest, Some(&run)), 3);
+    }
+
+    #[test]
+    fn run_party_companions_drive_support_and_followups() {
+        let mut rng = Rng::default();
+        let quest = QuestLog::default();
+        let mut run = RunState::new(&mut rng);
+        run.stage = 3;
+        run.qingyuan = 3;
+
+        let mut stats = PlayerStats::default();
+        stats.hp = stats.max_hp - 20;
+        assert_eq!(
+            companion_support(&quest, Some(&run), None, &mut stats),
+            Some(6)
+        );
+
+        run.chapter = 3;
+        run.stage = 1;
+        run.daoxin = 4;
+        let mut enemy = EnemyInstance {
+            name: "试炼妖".into(),
+            hp: 40,
+            max_hp: 40,
+            atk: 1,
+            def: 4,
+            exp: 0,
+        };
+        let before = enemy.hp;
+        let dmg = sword_sister_followup(&quest, Some(&run), &stats, &mut enemy, &mut rng)
+            .expect("run sword sister should follow up");
+        assert!(dmg >= 2);
+        assert_eq!(enemy.hp, before - dmg);
+
+        run.chapter = 5;
+        run.stage = 0;
+        stats.mp = stats.max_mp - 8;
+        assert_eq!(
+            spirit_witch_support(&quest, Some(&run), &mut stats),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn chapter_vow_weakens_matching_run_boss_opening() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        run.record_chapter_vow(0, RunChapterVow::Heart);
+        let mut enemy = EnemyInstance {
+            name: "赤鬼山妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 30,
+            def: 6,
+            exp: 0,
+        };
+        let mut message = "一只赤鬼山妖拦住了去路！".to_string();
+
+        apply_run_chapter_vow_to_boss(
+            &run,
+            EncounterKind::Boss(BossKind::MountainFiend),
+            &mut enemy,
+            &mut message,
+        );
+
+        assert_eq!(enemy.max_hp, 100);
+        assert_eq!(enemy.atk, 27);
+        assert!(message.contains("本卷誓记·护心誓"));
+
+        run.next_chapter(&mut rng);
+        run.record_chapter_vow(1, RunChapterVow::Resolve);
+        let mut boss = EnemyInstance {
+            name: "月魄妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 30,
+            def: 7,
+            exp: 0,
+        };
+        let mut boss_message = String::new();
+        apply_run_chapter_vow_to_boss(
+            &run,
+            EncounterKind::Boss(BossKind::MoonWraith),
+            &mut boss,
+            &mut boss_message,
+        );
+        assert_eq!(boss.max_hp, 92);
+        assert_eq!(boss.hp, 92);
+        assert_eq!(boss.atk, 30);
+
+        let mut random = EnemyInstance {
+            name: "路边妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 30,
+            def: 4,
+            exp: 0,
+        };
+        apply_run_chapter_vow_to_boss(&run, EncounterKind::Random, &mut random, &mut boss_message);
+        assert_eq!(random.max_hp, 100);
+        assert_eq!(random.atk, 30);
+    }
+
+    #[test]
+    fn run_route_guidance_prepares_chapter_boss_opening() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        assert!(run.accept_route_commission(NodeKind::Story));
+        assert!(run.complete_route_commission(NodeKind::Story));
+        run.stage = 1;
+        assert!(run.accept_route_commission(NodeKind::Event));
+        assert!(run.complete_route_commission(NodeKind::Event));
+        run.stage = run.stage_count() - 1;
+
+        let mut stats = PlayerStats {
+            hp: 40,
+            max_hp: 100,
+            mp: 3,
+            max_mp: 20,
+            ..Default::default()
+        };
+        let mut enemy = EnemyInstance {
+            name: "赤鬼山妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 50,
+            def: 6,
+            exp: 0,
+        };
+        let mut message = "一只 赤鬼山妖 拦住了去路！".to_string();
+
+        apply_run_route_guidance_to_boss(
+            &run,
+            EncounterKind::Boss(BossKind::MountainFiend),
+            &mut stats,
+            &mut enemy,
+            &mut message,
+        );
+
+        assert_eq!(enemy.max_hp, 100);
+        assert_eq!(enemy.hp, 100);
+        assert_eq!(enemy.atk, 48);
+        assert_eq!(stats.hp, 48);
+        assert_eq!(stats.mp, 7);
+        assert!(message.contains("本卷路人照应·乡路照应"));
+        assert!(message.contains("气血 +8 灵力 +4"));
+
+        run.stage = 2;
+        assert!(run.accept_route_commission(NodeKind::Rest));
+        assert!(run.complete_route_commission(NodeKind::Rest));
+        run.stage = run.stage_count() - 1;
+        let mut stats = PlayerStats {
+            hp: 40,
+            max_hp: 100,
+            mp: 3,
+            max_mp: 20,
+            ..Default::default()
+        };
+        let mut enemy = EnemyInstance {
+            name: "赤鬼山妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 50,
+            def: 6,
+            exp: 0,
+        };
+        let mut message = String::new();
+
+        apply_run_route_guidance_to_boss(
+            &run,
+            EncounterKind::Boss(BossKind::MountainFiend),
+            &mut stats,
+            &mut enemy,
+            &mut message,
+        );
+
+        assert_eq!(enemy.max_hp, 96);
+        assert_eq!(enemy.hp, 96);
+        assert_eq!(enemy.atk, 46);
+        assert_eq!(stats.hp, 52);
+        assert_eq!(stats.mp, 11);
+        assert!(message.contains("本卷路人照应·熟路照应"));
+        assert!(message.contains("首领气血-4% 攻势-8%"));
+
+        let mut random_enemy = EnemyInstance {
+            name: "路边妖".into(),
+            hp: 100,
+            max_hp: 100,
+            atk: 50,
+            def: 4,
+            exp: 0,
+        };
+        let mut random_message = String::new();
+        apply_run_route_guidance_to_boss(
+            &run,
+            EncounterKind::Random,
+            &mut stats,
+            &mut random_enemy,
+            &mut random_message,
+        );
+        assert_eq!(random_enemy.max_hp, 100);
+        assert_eq!(random_enemy.atk, 50);
+        assert!(random_message.is_empty());
+    }
+
+    fn complete_battle_side_quest(quest: &mut QuestLog, side: SideQuest) {
+        quest.interact_side_quest(side);
+        for _ in 0..quest.side_quest_goal(side) {
+            quest.record_side_victory();
+        }
+        quest.interact_side_quest(side);
+    }
+
+    fn quest_at_river_boss() -> QuestLog {
+        let mut quest = QuestLog::default();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        quest.talk(QuestRole::StarMage);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Merchant);
+        quest.talk(QuestRole::BambooScout);
+        quest.talk(QuestRole::CavePriestess);
+        quest.record_victory();
+        quest.record_victory();
+        quest.record_victory();
+        quest.activate_moon_crystal(MoonCrystal::North);
+        quest.activate_moon_crystal(MoonCrystal::South);
+        quest.record_boss_victory(BossKind::MoonWraith);
+        quest.talk(QuestRole::Linger);
+        quest.talk(QuestRole::HerbHealer);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::HerbHealer);
+        quest.talk(QuestRole::RiverBoatman);
+        quest.activate_river_lantern(RiverLantern::Upstream);
+        quest.activate_river_lantern(RiverLantern::Midstream);
+        quest.activate_river_lantern(RiverLantern::Dock);
+        quest
+    }
+
+    #[test]
+    fn legacy_boss_opening_reflects_chapter_preparation() {
+        let mut prepared = quest_at_river_boss();
+        prepared.interact_bond_scene();
+        prepared.interact_camp_scene();
+        complete_battle_side_quest(&mut prepared, SideQuest::RiverLanterns);
+        complete_battle_side_quest(&mut prepared, SideQuest::RiverCargo);
+        let mut stats = PlayerStats::default();
+        stats.hp = stats.max_hp - 20;
+        stats.mp = stats.max_mp - 8;
+        let mut enemy = EnemyInstance {
+            name: "河魇蛟".into(),
+            hp: 184,
+            max_hp: 184,
+            atk: 26,
+            def: 8,
+            exp: 76,
+        };
+        let mut message = "一只 河魇蛟 拦住了去路！".to_string();
+
+        let prep = apply_legacy_boss_preparation_to_boss(
+            BossKind::RiverDemon,
+            &prepared,
+            &mut stats,
+            &mut enemy,
+            &mut message,
+        );
+
+        assert_eq!(prep.state, LegacyBossPreparationState::Prepared);
+        assert_eq!((prep.completed, prep.total), (2, 2));
+        assert!(enemy.hp < enemy.max_hp);
+        assert_eq!(enemy.atk, 24);
+        assert!(stats.hp > stats.max_hp - 20);
+        assert!(stats.mp > stats.max_mp - 8);
+        assert!(message.contains("首领照应·周全"));
+        assert!(message.contains("江岸药庐照应 2/2"));
+
+        let unprepared = quest_at_river_boss();
+        let mut stats = PlayerStats::default();
+        stats.hp = stats.max_hp - 20;
+        let mut enemy = EnemyInstance {
+            name: "河魇蛟".into(),
+            hp: 184,
+            max_hp: 184,
+            atk: 26,
+            def: 8,
+            exp: 76,
+        };
+        let mut message = String::new();
+
+        let prep = apply_legacy_boss_preparation_to_boss(
+            BossKind::RiverDemon,
+            &unprepared,
+            &mut stats,
+            &mut enemy,
+            &mut message,
+        );
+
+        assert_eq!(prep.state, LegacyBossPreparationState::Strained);
+        assert_eq!((prep.completed, prep.total), (0, 2));
+        assert_eq!(enemy.hp, enemy.max_hp);
+        assert_eq!(enemy.atk, 28);
+        assert!(stats.hp < stats.max_hp - 20);
+        assert!(message.contains("首领照应·欠备"));
+        assert!(message.contains("队伍受 6 点开局压制"));
+    }
+
+    fn quest_with_spirit_witch() -> QuestLog {
+        let mut quest = QuestLog::default();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Linger);
+        quest.interact_bond_scene();
+        quest.talk(QuestRole::StarMage);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::SwordSister);
+        quest.talk(QuestRole::Merchant);
+        quest.talk(QuestRole::BambooScout);
+        quest.talk(QuestRole::CavePriestess);
+        quest.record_victory();
+        quest.record_victory();
+        quest.record_victory();
+        quest.activate_moon_crystal(MoonCrystal::North);
+        quest.activate_moon_crystal(MoonCrystal::South);
+        quest.record_boss_victory(BossKind::MoonWraith);
+        quest.talk(QuestRole::Linger);
+        quest.talk(QuestRole::HerbHealer);
+        quest.record_victory();
+        quest.record_victory();
+        quest.talk(QuestRole::HerbHealer);
+        quest.talk(QuestRole::RiverBoatman);
+        quest.activate_river_lantern(RiverLantern::Upstream);
+        quest.activate_river_lantern(RiverLantern::Midstream);
+        quest.activate_river_lantern(RiverLantern::Dock);
+        quest.record_boss_victory(BossKind::RiverDemon);
+        quest.talk(QuestRole::PlagueElder);
+        quest.talk(QuestRole::ShrineKeeper);
+        quest.record_victory();
+        quest.record_victory();
+        quest.record_victory();
+        quest.seal_plague_ward(PlagueWard::OldShrine);
+        quest.seal_plague_ward(PlagueWard::BitterWell);
+        quest.seal_plague_ward(PlagueWard::Sickroom);
+        quest.talk(QuestRole::ShrineKeeper);
+        quest.record_boss_victory(BossKind::MiasmaRoot);
+        quest.talk(QuestRole::CapitalEnvoy);
+        quest.talk(QuestRole::MansionSpy);
+        quest.record_victory();
+        quest.record_victory();
+        quest.align_mansion_mirror(MansionMirrorNode::Ledger);
+        quest.align_mansion_mirror(MansionMirrorNode::Witness);
+        quest.talk(QuestRole::MansionSpy);
+        quest.record_boss_victory(BossKind::MirrorMinister);
+        quest.talk(QuestRole::SpiritGuide);
+        quest.talk(QuestRole::TribalChief);
+        quest
+    }
 
     #[test]
     fn boss_encounter_uses_fixed_boss_def() {
         let mut rng = Rng::default();
+        let enemy = choose_enemy(
+            EncounterZone::Bamboo,
+            EncounterKind::Boss(BossKind::MountainFiend),
+            &mut rng,
+        );
+
+        assert_eq!(enemy.name, "赤鬼山妖");
+        assert_eq!(enemy.max_hp, 112);
+
         let enemy = choose_enemy(
             EncounterZone::Village,
             EncounterKind::Boss(BossKind::MoonWraith),
@@ -2909,10 +4431,18 @@ mod tests {
     #[test]
     fn generated_enemy_cutouts_are_primary_battle_visuals() {
         let enemy = &ENEMIES[0];
+        let parts = cutout_part_specs(
+            cutout_source_px_for_path(enemy_primary_image(enemy)),
+            enemy_primary_size(enemy),
+        );
 
         assert_eq!(enemy_primary_image(enemy), "creatures/ai_water_serpent.png");
         assert_eq!(enemy_primary_size(enemy), enemy.size);
-        // 敌人只有生成立绘一层本体(旧的共享剪影层已移除,不再有重影)。
+        assert_eq!(parts.len(), CutoutPart::ALL.len());
+        assert!(parts[0].offset.y < 0.0);
+        assert!(parts[2].offset.y > 0.0);
+        // Enemy identity still comes from the generated creature art; the body is
+        // now sliced into animated parts instead of overlaid with a mismatched sheet.
         let primary_alpha = enemy_primary_color(Phase::Menu, 0.0).to_srgba().alpha;
         assert!(primary_alpha > 0.9);
     }
@@ -2932,6 +4462,67 @@ mod tests {
         assert!(late_shards.iter().any(|shard| shard.offset.y > 100.0));
         assert!(late_shards.iter().any(|shard| shard.offset.y < -30.0));
         assert!(late_shards.iter().any(|shard| shard.offset.x.abs() > 110.0));
+
+        let basic_numbers = spell_damage_texts(31, false);
+        let late_numbers = spell_damage_texts(83, true);
+        assert_eq!(basic_numbers.len(), 3);
+        assert_eq!(late_numbers.len(), 7);
+        assert_eq!(
+            basic_numbers.iter().map(|text| text.amount).sum::<i32>(),
+            31
+        );
+        assert_eq!(late_numbers.iter().map(|text| text.amount).sum::<i32>(), 83);
+        assert!(basic_numbers.iter().all(|text| text.amount > 0));
+        assert!(late_numbers.iter().all(|text| text.amount > 0));
+        assert!(
+            late_numbers
+                .iter()
+                .map(|text| text.offset.x)
+                .fold(0.0_f32, |spread, x| spread.max(x))
+                > basic_numbers
+                    .iter()
+                    .map(|text| text.offset.x)
+                    .fold(0.0_f32, |spread, x| spread.max(x))
+        );
+        assert_eq!(spell_damage_slices(2, false), vec![1, 1]);
+    }
+
+    #[test]
+    fn spell_impact_theme_tracks_story_chapter() {
+        assert_eq!(
+            spell_impact_element(Chapter::MoonCave),
+            SpellImpactElement::Moon
+        );
+        assert_eq!(
+            spell_impact_element(Chapter::SouthernThunder),
+            SpellImpactElement::Thunder
+        );
+        assert_eq!(
+            spell_impact_flavor(SpellImpactElement::Moon, false),
+            "月水映剑"
+        );
+        assert_eq!(
+            spell_impact_flavor(SpellImpactElement::Thunder, true),
+            "万剑引雷"
+        );
+
+        let river = spell_impact_color(SpellImpactElement::River, false, false, 0.5).to_srgba();
+        let plague = spell_impact_color(SpellImpactElement::Plague, false, false, 0.5).to_srgba();
+        assert!(river.blue > plague.blue);
+        assert!(plague.green >= river.green);
+
+        let moon_shards = themed_spell_impact_shards(false, SpellImpactElement::Moon);
+        let thunder_shards = themed_spell_impact_shards(true, SpellImpactElement::Thunder);
+        assert_eq!(moon_shards.len(), spell_impact_shards(false).len());
+        assert_eq!(thunder_shards.len(), spell_impact_shards(true).len());
+        assert_ne!(
+            moon_shards[0].color.to_srgba().blue,
+            thunder_shards[0].color.to_srgba().blue
+        );
+
+        let dream_number = spell_damage_text_color(SpellImpactElement::Dream, true).to_srgba();
+        assert!(dream_number.alpha > 0.9);
+        assert!(dream_number.blue >= dream_number.red);
     }
 
     #[test]
@@ -3007,7 +4598,35 @@ mod tests {
         );
         assert_eq!(camp_guard_block(Some(CampBonus::Vigil), 9), 3);
         assert_eq!(camp_guard_block(Some(CampBonus::Warmth), 1), 0);
-        assert_eq!(battle_camp_summary(Some(CampBonus::Focus)), "营地 静心");
+        assert_eq!(
+            battle_camp_summary(Some(CampBonus::Focus), None),
+            "营地 静心"
+        );
+    }
+
+    #[test]
+    fn run_camp_tactics_adjust_next_battle_numbers() {
+        assert_eq!(
+            run_camp_damage_bonus(Some(RunCampTactic::SwordGuard), PlayerAction::Attack),
+            3
+        );
+        assert_eq!(
+            run_camp_damage_bonus(Some(RunCampTactic::SpiritFocus), PlayerAction::Spell),
+            3
+        );
+        assert_eq!(
+            run_camp_damage_bonus(Some(RunCampTactic::LingerWard), PlayerAction::Spell),
+            0
+        );
+        assert_eq!(run_camp_guard_block(Some(RunCampTactic::LingerWard), 9), 3);
+        assert_eq!(run_camp_guard_block(Some(RunCampTactic::Breath), 1), 0);
+        assert_eq!(run_camp_start_heal_amount(RunCampTactic::LingerWard), 10);
+        assert_eq!(run_camp_start_mana_amount(RunCampTactic::SpiritFocus), 8);
+        assert_eq!(run_camp_guard_mp_bonus(Some(RunCampTactic::SpiritFocus)), 2);
+        assert_eq!(
+            battle_camp_summary(None, Some(RunCampTactic::SpiritFocus)),
+            "营策 凝灵"
+        );
     }
 
     #[test]
@@ -3016,11 +4635,11 @@ mod tests {
         let mut stats = PlayerStats::default();
         stats.hp = stats.max_hp - 10;
 
-        assert_eq!(companion_support(&quest, None, &mut stats), None);
+        assert_eq!(companion_support(&quest, None, None, &mut stats), None);
         quest.talk(QuestRole::SwordSister);
         quest.talk(QuestRole::Linger);
 
-        assert_eq!(companion_support(&quest, None, &mut stats), Some(5));
+        assert_eq!(companion_support(&quest, None, None, &mut stats), Some(5));
         assert_eq!(stats.hp, stats.max_hp - 5);
     }
 
@@ -3035,7 +4654,7 @@ mod tests {
         stats.hp = stats.max_hp - 20;
 
         assert_eq!(quest.bond_level(), 1);
-        assert_eq!(companion_support(&quest, None, &mut stats), Some(7));
+        assert_eq!(companion_support(&quest, None, None, &mut stats), Some(7));
         assert_eq!(stats.hp, stats.max_hp - 13);
     }
 
@@ -3052,10 +4671,25 @@ mod tests {
 
         assert_eq!(quest.bond_tender_level(), 1);
         assert_eq!(
-            companion_support(&quest, Some(BondBonus::Tender), &mut stats),
+            companion_support(&quest, None, Some(BondBonus::Tender), &mut stats),
             Some(10)
         );
         assert_eq!(stats.hp, stats.max_hp - 10);
+    }
+
+    #[test]
+    fn spirit_witch_support_restores_mp_after_southern_join() {
+        let quest = quest_with_spirit_witch();
+        let mut stats = PlayerStats::default();
+        stats.mp = stats.max_mp - 6;
+
+        assert_eq!(
+            spirit_witch_support(&QuestLog::default(), None, &mut stats),
+            None
+        );
+        assert_eq!(spirit_witch_support(&quest, None, &mut stats), Some(2));
+        assert_eq!(stats.mp, stats.max_mp - 4);
+        assert!(party_support_message(None, Some(2)).contains("南瑶 叩响袖中铜铃，回稳 2 点灵力"));
     }
 
     #[test]
@@ -3081,6 +4715,42 @@ mod tests {
     fn battle_gold_reward_scales_for_bosses() {
         assert_eq!(battle_gold_reward(12, false), 12);
         assert_eq!(battle_gold_reward(60, true), 70);
+    }
+
+    #[test]
+    fn legacy_boss_breakthrough_grants_chapter_growth() {
+        let mut stats = PlayerStats::default();
+        stats.hp = 40;
+        stats.mp = 6;
+        let hp = stats.max_hp;
+        let mp = stats.max_mp;
+        let atk = stats.atk;
+        let def = stats.def;
+
+        let line = apply_legacy_boss_breakthrough(BossKind::RiverDemon, &mut stats)
+            .expect("river boss should grant a breakthrough");
+
+        assert!(line.contains("章末突破"));
+        assert!(line.contains("苏州河灯"));
+        assert_eq!(stats.max_hp, hp + 20);
+        assert_eq!(stats.hp, 60);
+        assert_eq!(stats.max_mp, mp + 8);
+        assert_eq!(stats.mp, 14);
+        assert_eq!(stats.atk, atk + 5);
+        assert_eq!(stats.def, def + 2);
+
+        let hp = stats.max_hp;
+        let mp = stats.max_mp;
+        let atk = stats.atk;
+        let def = stats.def;
+        let final_line = apply_legacy_boss_breakthrough(BossKind::DreamEclipse, &mut stats)
+            .expect("final boss should still report chapter closure");
+
+        assert!(final_line.contains("心渊照影"));
+        assert_eq!(stats.max_hp, hp);
+        assert_eq!(stats.max_mp, mp);
+        assert_eq!(stats.atk, atk);
+        assert_eq!(stats.def, def);
     }
 
     #[test]
@@ -3124,6 +4794,39 @@ mod tests {
         let dmg = combo_damage(&quest, &stats, &enemy, &mut rng);
 
         assert!(dmg >= stats.atk * 3 + quest.bond_level() as i32 * 5 - enemy.def + 4);
+    }
+
+    #[test]
+    fn spirit_witch_extends_late_party_combo() {
+        let mut core_party = QuestLog::default();
+        core_party.talk(QuestRole::SwordSister);
+        core_party.talk(QuestRole::Linger);
+        core_party.interact_bond_scene();
+        core_party.talk(QuestRole::StarMage);
+        core_party.record_victory();
+        core_party.record_victory();
+        core_party.talk(QuestRole::SwordSister);
+        let full_party = quest_with_spirit_witch();
+
+        let stats = PlayerStats::default();
+        let enemy = EnemyInstance {
+            name: "试炼妖".into(),
+            hp: 80,
+            max_hp: 80,
+            atk: 1,
+            def: 4,
+            exp: 0,
+        };
+        let mut rng_a = Rng::default();
+        let mut rng_b = Rng::default();
+
+        let core = combo_damage(&core_party, &stats, &enemy, &mut rng_a);
+        let full = combo_damage(&full_party, &stats, &enemy, &mut rng_b);
+
+        assert_eq!(spirit_witch_combo_bonus(&full_party), 6);
+        assert_eq!(full, core + 6);
+        assert!(combo_party_message(&full_party, full).contains("南瑶"));
+        assert!(!combo_party_message(&core_party, core).contains("南瑶"));
     }
 
     #[test]
@@ -3187,17 +4890,19 @@ mod tests {
             guarding: false,
             boss_phase2: false,
             eclipse_heart: false,
+            hex_first_hit_used: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,
+            run_camp_tactic: None,
             bond_bonus: None,
         };
         let mut stats = PlayerStats::default();
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
 
         assert!(attack.damage > 0);
         assert!(!attack.strong);
@@ -3227,17 +4932,19 @@ mod tests {
             guarding: false,
             boss_phase2: false,
             eclipse_heart: false,
+            hex_first_hit_used: false,
             momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
             camp_bonus: None,
+            run_camp_tactic: None,
             bond_bonus: None,
         };
         let mut stats = PlayerStats::default();
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
 
         assert!(attack.damage > 0);
         assert!(attack.damage < 7);
@@ -3266,10 +4973,12 @@ mod tests {
             guarding: false,
             boss_phase2: false,
             eclipse_heart: false,
+            hex_first_hit_used: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,
+            run_camp_tactic: None,
             bond_bonus: None,
         };
         let mut stats = PlayerStats::default();
@@ -3277,7 +4986,7 @@ mod tests {
         let before_hp = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("月影噬灵"));
@@ -3308,16 +5017,18 @@ mod tests {
             guarding: false,
             boss_phase2: false,
             eclipse_heart: false,
+            hex_first_hit_used: false,
             momentum: 0,
             message: String::new(),
             blessing: None,
             camp_bonus: None,
+            run_camp_tactic: None,
             bond_bonus: None,
         };
         let mut stats = PlayerStats::default();
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35);
+        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
 
         assert!(attack.strong);
         assert!(state.message.contains("旧梦潮声"));
@@ -3358,6 +5069,22 @@ mod tests {
     }
 
     #[test]
+    fn spirit_witch_motion_joins_spell_and_combo_casts() {
+        let (offset, scale, color) = companion_motion(
+            BattleCompanionKind::SpiritWitch,
+            Phase::PlayerActing,
+            Some(PlayerAction::Combo),
+            0.4,
+            0.0,
+        );
+
+        assert!(offset.x > 11.0);
+        assert!(offset.y > 27.0);
+        assert!(scale > 1.04);
+        assert!(color.to_srgba().red < 0.86);
+    }
+
+    #[test]
     fn sword_sister_followup_requires_joining_party() {
         let mut quest = QuestLog::default();
         let stats = PlayerStats::default();
@@ -3372,7 +5099,7 @@ mod tests {
         };
 
         assert_eq!(
-            sword_sister_followup(&quest, &stats, &mut enemy, &mut rng),
+            sword_sister_followup(&quest, None, &stats, &mut enemy, &mut rng),
             None
         );
         assert_eq!(enemy.hp, 30);
@@ -3385,7 +5112,7 @@ mod tests {
         quest.talk(QuestRole::SwordSister);
 
         let before = enemy.hp;
-        let dmg = sword_sister_followup(&quest, &stats, &mut enemy, &mut rng)
+        let dmg = sword_sister_followup(&quest, None, &stats, &mut enemy, &mut rng)
             .expect("joined sword sister should follow up");
         assert!(dmg >= 2);
         assert_eq!(enemy.hp, before - dmg);
@@ -3430,9 +5157,10 @@ mod tests {
             exp: 0,
         };
 
-        let base = sword_sister_followup(&base_quest, &stats, &mut enemy_a, &mut rng_a).unwrap();
+        let base =
+            sword_sister_followup(&base_quest, None, &stats, &mut enemy_a, &mut rng_a).unwrap();
         let bonded =
-            sword_sister_followup(&bonded_quest, &stats, &mut enemy_b, &mut rng_b).unwrap();
+            sword_sister_followup(&bonded_quest, None, &stats, &mut enemy_b, &mut rng_b).unwrap();
         assert_eq!(bonded, base + 1);
     }
 }

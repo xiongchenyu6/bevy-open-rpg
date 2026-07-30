@@ -1,6 +1,6 @@
 {
-  "method": "codex imagegen built-in, flat #00ff00 chroma key, ImageMagick alpha extraction",
-  "generatedAt": "2026-07-02",
+  "method": "codex imagegen built-in; NPC cutouts use flat #00ff00 chroma key plus ImageMagick alpha extraction, chapter art uses 16:9 resize/crop, late chapter sheets use ImageMagick 32-frame pan/zoom atlas derivation",
+  "generatedAt": "2026-07-24",
   "assets": [
     {
       "id": "ai_plague_elder",
@@ -43,6 +43,42 @@
       "out": "assets/npcs/ai_final_oracle.png",
       "raw": "assets/generated/imagegen/raw/ai_final_oracle.png",
       "promptSummary": "spirit abyss lamp keeper, black-white-blue robes, memory pearl lantern"
+    },
+    {
+      "id": "chapter5_art",
+      "out": "assets/ui/chapter5_art.png",
+      "raw": "assets/generated/imagegen/raw/chapter5_art.png",
+      "promptSummary": "capital intrigue chapter art, moonlit imperial street, lacquered mansion, mirror shards and secret letters"
+    },
+    {
+      "id": "chapter6_art",
+      "out": "assets/ui/chapter6_art.png",
+      "raw": "assets/generated/imagegen/raw/chapter6_art.png",
+      "promptSummary": "southern spirit road chapter art, jungle cliff path, ancient war drums, thunder qilin cloud"
+    },
+    {
+      "id": "chapter7_art",
+      "out": "assets/ui/chapter7_art.png",
+      "raw": "assets/generated/imagegen/raw/chapter7_art.png",
+      "promptSummary": "finale spirit abyss gate chapter art, dream-water canal, memory lamps, violet eclipse"
+    },
+    {
+      "id": "chapter5_sheet",
+      "out": "assets/ui/anim/chapter5_sheet.png",
+      "raw": "assets/generated/imagegen/raw/chapter5_art.png",
+      "promptSummary": "derived 32-frame 8x4 atlas from chapter5_art with subtle pan/zoom and lantern-light pulse"
+    },
+    {
+      "id": "chapter6_sheet",
+      "out": "assets/ui/anim/chapter6_sheet.png",
+      "raw": "assets/generated/imagegen/raw/chapter6_art.png",
+      "promptSummary": "derived 32-frame 8x4 atlas from chapter6_art with subtle pan/zoom and lightning-light pulse"
+    },
+    {
+      "id": "chapter7_sheet",
+      "out": "assets/ui/anim/chapter7_sheet.png",
+      "raw": "assets/generated/imagegen/raw/chapter7_art.png",
+      "promptSummary": "derived 32-frame 8x4 atlas from chapter7_art with subtle pan/zoom and dream-water light pulse"
     }
   ]
 }

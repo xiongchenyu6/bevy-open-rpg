@@ -3,6 +3,7 @@ use bevy::prelude::*;
 pub mod animation;
 pub mod battle;
 pub mod core;
+pub mod cutout;
 pub mod explore;
 pub mod fog;
 pub mod lighting;

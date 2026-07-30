@@ -8,8 +8,11 @@ use bevy::prelude::*;
 use bevy::ui::widget::NodeImageMode;
 
 use super::super::core::{GameFont, Intent, PlayerStats, Rng};
+use super::super::quest::Companion;
 use super::content::{self, Effect, Outcome};
-use super::{ALL_RELICS, RunState};
+use super::graph::NodeKind;
+use super::{ALL_RELICS, RunCampTactic, RunChapterVow, RunState};
+use crate::game::state::AppState;
 
 // ---------------------------------------------------------------------------
 // Overlay state
@@ -28,6 +31,12 @@ pub enum DialogueSource {
     },
     Rest,
     Market,
+    /// Explicit route-task contract shown at the start of each run map.
+    RouteTask,
+    /// Optional local errand offered by a visible Guide marker.
+    RouteCommission {
+        target: NodeKind,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -46,6 +55,8 @@ pub struct RunDialogue {
     pub portrait: Option<&'static str>,
     /// 对峙对话结束后立即开打(章末魔门的先礼后兵)。
     pub boss_battle_after: bool,
+    /// 任务交付对话关闭后推进下一程。
+    pub advance_stage_after: bool,
 }
 
 impl RunDialogue {
@@ -56,6 +67,77 @@ impl RunDialogue {
             lines: lines.iter().map(|s| s.to_string()).collect(),
             source: DialogueSource::Plain,
             resolved: true,
+            ..default()
+        };
+    }
+
+    pub fn open_plain_owned(&mut self, title: &str, lines: Vec<String>) {
+        *self = Self {
+            active: true,
+            title: title.to_string(),
+            lines,
+            source: DialogueSource::Plain,
+            resolved: true,
+            ..default()
+        };
+    }
+
+    pub fn open_plain_owned_with_portrait(
+        &mut self,
+        title: &str,
+        lines: Vec<String>,
+        portrait: Option<&'static str>,
+    ) {
+        *self = Self {
+            active: true,
+            title: title.to_string(),
+            lines,
+            source: DialogueSource::Plain,
+            resolved: true,
+            portrait,
+            ..default()
+        };
+    }
+
+    pub fn open_route_task(&mut self, title: &str, lines: Vec<String>) {
+        *self = Self {
+            active: true,
+            title: title.to_string(),
+            lines,
+            options: vec!["领取并追踪".to_string(), "先看地图".to_string()],
+            source: DialogueSource::RouteTask,
+            resolved: false,
+            ..default()
+        };
+    }
+
+    pub fn open_route_task_turn_in(&mut self, title: &str, lines: Vec<String>) {
+        *self = Self {
+            active: true,
+            title: title.to_string(),
+            lines,
+            source: DialogueSource::Plain,
+            resolved: true,
+            advance_stage_after: true,
+            ..default()
+        };
+    }
+
+    pub fn open_route_commission(
+        &mut self,
+        title: &str,
+        lines: Vec<String>,
+        target: NodeKind,
+        portrait: Option<&'static str>,
+    ) {
+        *self = Self {
+            active: true,
+            title: title.to_string(),
+            lines,
+            options: vec!["领取并追踪".to_string(), "只问路线".to_string()],
+            source: DialogueSource::RouteCommission { target },
+            resolved: false,
+            portrait,
             ..default()
         };
     }
@@ -83,23 +165,38 @@ impl RunDialogue {
             lines,
             options: scene.options.iter().map(|o| o.label.to_string()).collect(),
             source: DialogueSource::Story { chapter, roll },
-            portrait: Some(content::PORTRAIT_LINGER),
+            portrait: Some(content::story_portrait(chapter, roll)),
             ..default()
         };
     }
 
-    pub fn open_rest(&mut self) {
+    pub fn open_rest(&mut self, run: &RunState) {
+        let mut lines = content::REST_INTRO
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        lines.push(run.camp_scene_line());
+        lines.push(run.camp_party_line().to_string());
+        lines.push("选择今晚的营策；它会写入行囊，并在下一场战斗开场消耗。".to_string());
+        let options = run
+            .available_camp_tactics()
+            .into_iter()
+            .map(|tactic| run.camp_tactic_label(tactic).to_string())
+            .collect();
+        let portrait = if run.party_companions().contains(&Companion::SpiritWitch) {
+            Some(content::PORTRAIT_SPIRIT_WITCH)
+        } else if run.party_companions().contains(&Companion::SwordSister) {
+            Some(content::PORTRAIT_SWORD_SISTER)
+        } else {
+            Some(content::PORTRAIT_LINGER)
+        };
         *self = Self {
             active: true,
-            title: "歇脚".to_string(),
-            lines: content::REST_INTRO.iter().map(|s| s.to_string()).collect(),
-            options: vec![
-                content::REST_MEDITATE.to_string(),
-                content::REST_SPAR.to_string(),
-                content::REST_TALK.to_string(),
-            ],
+            title: "营地 · 歇脚".to_string(),
+            lines,
+            options,
             source: DialogueSource::Rest,
-            portrait: Some(content::PORTRAIT_LINGER),
+            portrait,
             ..default()
         };
     }
@@ -257,6 +354,7 @@ pub fn run_dialogue_input(
     mut stats: ResMut<PlayerStats>,
     run: Option<ResMut<RunState>>,
     mut rng: ResMut<Rng>,
+    mut next: ResMut<NextState<AppState>>,
 ) {
     if !dialogue.active {
         return;
@@ -286,7 +384,13 @@ pub fn run_dialogue_input(
         if dialogue.idx + 1 < dialogue.lines.len() {
             dialogue.idx += 1;
         } else {
+            let advance_stage = dialogue.advance_stage_after;
+            dialogue.advance_stage_after = false;
             dialogue.active = false;
+            if advance_stage {
+                run.stage += 1;
+                next.set(AppState::NodeMap);
+            }
         }
     }
     intent.clear();
@@ -313,37 +417,65 @@ fn resolve_choice(
             }
         }
         DialogueSource::Story { chapter, roll } => {
-            content::pick_story(chapter, roll).options[pick].outcome
+            let outcome = content::pick_story(chapter, roll).options[pick].outcome;
+            let vow = RunChapterVow::from_scores(outcome.daoxin, outcome.qingyuan);
+            let fresh = run.record_chapter_vow(chapter, vow);
+            let state = if fresh { "已立下" } else { "已记录过" };
+            dialogue.lines.push(format!(
+                "【本卷誓记】{} {state}:{}",
+                vow.name(),
+                vow.record_line()
+            ));
+            outcome
         }
         DialogueSource::Rest => {
-            // Resolved fully in code: 0 = meditate, 1 = spar, 2 = heart-to-heart.
+            let tactics = run.available_camp_tactics();
+            let tactic = tactics.get(pick).copied().unwrap_or(RunCampTactic::Breath);
+            let first_visit = run.record_camp_scene();
+            run.set_camp_tactic(tactic);
             let mult = run.rest_multiplier();
-            match pick {
-                0 => {
+            let mut result_line = match tactic {
+                RunCampTactic::Breath => {
                     let amount = stats.max_hp * 50 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
-                    dialogue
-                        .lines
-                        .push(format!("一夜吐纳,气血回复了 {amount} 点。"));
+                    let mana = (stats.max_mp * 30 / 100).max(1);
+                    stats.mp = (stats.mp + mana).min(stats.max_mp);
+                    format!("一夜吐纳,气血回复了 {amount} 点,灵力回稳 {mana} 点。")
                 }
-                1 => {
+                RunCampTactic::SwordGuard => {
                     stats.atk += 2;
                     let amount = stats.max_hp * 10 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
-                    dialogue
-                        .lines
-                        .push("以火光为敌手拆招至深夜,剑势又利了几分。(攻击 +2)".to_string());
+                    "以火光为敌手拆招至深夜,剑势又利了几分。(攻击 +2)".to_string()
                 }
-                _ => {
+                RunCampTactic::LingerWard => {
                     run.qingyuan += 1;
                     let amount = stats.max_hp * 30 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
-                    dialogue.lines.push(
-                        "灵儿讲起小时候偷摘桃子被追着跑的糗事,火堆边的夜忽然就不冷了。(情缘 +1)"
-                            .to_string(),
-                    );
+                    "灵儿讲起小时候偷摘桃子被追着跑的糗事,火堆边的夜忽然就不冷了。(情缘 +1)"
+                        .to_string()
                 }
+                RunCampTactic::SpiritFocus => {
+                    run.daoxin += 1;
+                    let mana = (stats.max_mp * 60 / 100).max(1);
+                    stats.mp = (stats.mp + mana).min(stats.max_mp);
+                    "南瑶以铜铃压住杂乱灵纹,队伍心口都清明了一线。(道心 +1)".to_string()
+                }
+            };
+            if first_visit {
+                result_line.push_str(&format!(
+                    "\n【营火照应】本世已记下 {} 处营地。",
+                    run.camp_scenes_seen.len()
+                ));
+            } else {
+                result_line.push_str("\n【营火照应】这处营地已记录过,本次只更新下一战营策。");
             }
+            result_line.push_str(&format!(
+                "\n【营策已备】{}:{}",
+                tactic.name(),
+                tactic.battle_line()
+            ));
+            dialogue.lines.push(result_line);
             dialogue.resolved = true;
             dialogue.options.clear();
             dialogue.idx += 1;
@@ -398,6 +530,53 @@ fn resolve_choice(
             dialogue.idx = dialogue.lines.len() - 1;
             return;
         }
+        DialogueSource::RouteTask => {
+            if pick == 0 {
+                let receipt = run.journey_task_receipt();
+                let already = !run.accept_journey_task();
+                let state = if already {
+                    "已经在任务札中"
+                } else {
+                    "已写入任务札"
+                };
+                dialogue.lines.push(format!(
+                    "【主线已接取】{receipt} {state}。HUD 与行囊会持续追踪完成条件。"
+                ));
+            } else {
+                dialogue.lines.push(format!(
+                    "【暂未签收】{} 仍待确认；靠近主线标记或界门前会再次展开任务契约。",
+                    run.journey_task_receipt()
+                ));
+            }
+            dialogue.resolved = true;
+            dialogue.options.clear();
+            dialogue.idx += 1;
+            return;
+        }
+        DialogueSource::RouteCommission { target } => {
+            if pick == 0 {
+                let receipt = run.route_commission_receipt();
+                let already = !run.accept_route_commission(target);
+                let state = if already {
+                    "已经在行囊中追踪"
+                } else {
+                    "已写入行囊"
+                };
+                dialogue.lines.push(format!(
+                    "【路人委托已接取】{receipt} {state}。目标：清理本程的「{}」标记；完成后自动回执。",
+                    target.label()
+                ));
+            } else {
+                dialogue.lines.push(format!(
+                    "【只问路线】{} 暂不接取；本程仍可继续主线。",
+                    run.route_commission_receipt()
+                ));
+            }
+            dialogue.resolved = true;
+            dialogue.options.clear();
+            dialogue.idx += 1;
+            return;
+        }
         DialogueSource::Plain => return,
     };
 
@@ -412,6 +591,171 @@ fn resolve_choice(
     dialogue.resolved = true;
     dialogue.options.clear();
     dialogue.idx += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::core::{PlayerStats, Rng};
+    use super::*;
+
+    #[test]
+    fn route_task_choice_accepts_current_journey_receipt() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        let mut stats = PlayerStats::default();
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_route_task("任务札", vec!["【主线契约】主线签 卷1-01".to_string()]);
+        assert!(!run.is_journey_task_accepted());
+
+        resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
+
+        assert!(run.is_journey_task_accepted());
+        assert!(dialogue.resolved);
+        assert!(dialogue.options.is_empty());
+        assert!(
+            dialogue
+                .lines
+                .iter()
+                .any(|line| line.contains("【主线已接取】主线签 卷1-01"))
+        );
+    }
+
+    #[test]
+    fn route_task_cancel_leaves_receipt_unsigned() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        let mut stats = PlayerStats::default();
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_route_task("任务札", vec!["【主线契约】主线签 卷1-01".to_string()]);
+        resolve_choice(&mut dialogue, 1, &mut stats, &mut run, &mut rng);
+
+        assert!(!run.is_journey_task_accepted());
+        assert!(
+            dialogue
+                .lines
+                .iter()
+                .any(|line| line.contains("【暂未签收】主线签 卷1-01"))
+        );
+    }
+
+    #[test]
+    fn route_task_turn_in_dialogue_marks_deferred_stage_advance() {
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_route_task_turn_in("任务归档", vec!["【交付任务】主线签 卷1-01".to_string()]);
+
+        assert!(dialogue.active);
+        assert!(dialogue.resolved);
+        assert!(dialogue.options.is_empty());
+        assert!(dialogue.advance_stage_after);
+    }
+
+    #[test]
+    fn route_commission_choice_tracks_local_errand_target() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        let mut stats = PlayerStats::default();
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_route_commission(
+            "路人委托",
+            vec!["【路人签】路人签 卷1-01".to_string()],
+            NodeKind::Event,
+            None,
+        );
+        resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
+
+        assert!(run.is_route_commission_active());
+        assert_eq!(
+            run.route_commission_hud_label(),
+            Some("路人签 卷1-01 -> 奇遇".to_string())
+        );
+        assert!(
+            dialogue
+                .lines
+                .iter()
+                .any(|line| line.contains("【路人委托已接取】路人签 卷1-01"))
+        );
+    }
+
+    #[test]
+    fn story_choice_records_current_chapter_vow() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        let mut stats = PlayerStats::default();
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_story(0, 0);
+        resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
+
+        assert_eq!(run.current_chapter_vow(), Some(RunChapterVow::Heart));
+        assert_eq!(run.chapter_vow_summary(), "护心誓");
+        assert!(
+            dialogue
+                .lines
+                .iter()
+                .any(|line| line.contains("【本卷誓记】护心誓"))
+        );
+    }
+
+    #[test]
+    fn rest_choice_records_camp_scene_and_next_battle_tactic() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        run.stage = 3;
+        let mut stats = PlayerStats {
+            hp: 40,
+            ..default()
+        };
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_rest(&run);
+        assert!(dialogue.title.contains("营地"));
+        assert!(
+            dialogue
+                .options
+                .iter()
+                .any(|option| option.contains("灵儿护念"))
+        );
+
+        resolve_choice(&mut dialogue, 2, &mut stats, &mut run, &mut rng);
+
+        assert_eq!(run.active_camp_tactic, Some(RunCampTactic::LingerWard));
+        assert_eq!(run.qingyuan, 1);
+        assert_eq!(run.camp_scenes_seen.len(), 1);
+        assert!(stats.hp > 40);
+        assert!(
+            dialogue
+                .lines
+                .iter()
+                .any(|line| line.contains("【营策已备】灵护"))
+        );
+    }
+
+    #[test]
+    fn late_rest_unlocks_spirit_focus_tactic() {
+        let mut rng = Rng::default();
+        let mut run = RunState::new(&mut rng);
+        run.chapter = 5;
+        let mut stats = PlayerStats { mp: 1, ..default() };
+        let mut dialogue = RunDialogue::default();
+
+        dialogue.open_rest(&run);
+        assert!(
+            dialogue
+                .options
+                .iter()
+                .any(|option| option.contains("南瑶凝灵"))
+        );
+
+        resolve_choice(&mut dialogue, 3, &mut stats, &mut run, &mut rng);
+
+        assert_eq!(run.active_camp_tactic, Some(RunCampTactic::SpiritFocus));
+        assert_eq!(run.daoxin, 1);
+        assert!(stats.mp > 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
