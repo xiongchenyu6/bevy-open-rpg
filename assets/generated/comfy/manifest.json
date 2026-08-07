@@ -1,0 +1,300 @@
+{
+  "base": "http://127.0.0.1:18188",
+  "model": "flux1-dev-fp8.safetensors",
+  "steps": 28,
+  "guidance": 3.8,
+  "seedOffset": 0,
+  "cutoutMode": "rembg",
+  "generatedAt": "2026-07-24T06:39:04.448Z",
+  "assets": [
+    {
+      "id": "ai_sword_sister",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_sword_sister.png",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young xianxia sword cultivator heroine, long black hair in a high warrior ponytail, layered crimson and ivory travel robes with restrained silver embroidery, holding a slender jade-hilt sword in a ready low guard, alert resolute expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_sword_sister.png"
+    },
+    {
+      "id": "ai_linger_companion",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_linger_companion.png",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young xianxia healer heroine, long black hair tied with a large white ribbon, flowing moon-white and pale blue hanfu travel robes, holding a small golden spirit bell, warm gentle determined expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_linger_companion.png"
+    },
+    {
+      "id": "ai_nanyao_companion",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_nanyao_companion.png",
+      "size": 512,
+      "prompt": "premium 2D game character cutout, full body young Baiyue spirit witch heroine, long dark braided hair with silver ornaments, layered indigo teal and white ceremonial travel robe, jade serpent motifs, holding a carved spirit staff and bronze bell, poised protective expression, classic Chinese fantasy RPG painted sprite, front three-quarter view, feet fully visible, centered, clean readable silhouette, crisp edges, no shadow, no magenta anywhere on character, perfectly flat pure #ff00ff magenta screen background",
+      "raw": "assets/generated/comfy/raw/ai_nanyao_companion.png"
+    },
+    {
+      "id": "ai_herb_healer",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_herb_healer.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body young xianxia herbalist healer, medicine gourd, cloth satchel, pale robe with gold trim, anime RPG sprite illustration, centered, clean silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_herb_healer.png"
+    },
+    {
+      "id": "ai_mountain_monk",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_mountain_monk.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body old mountain monk hermit, prayer beads, bamboo staff, weathered robe, xianxia RPG sprite illustration, centered, sharp silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_mountain_monk.png"
+    },
+    {
+      "id": "ai_fox_spirit",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_fox_spirit.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body fox spirit girl NPC, white fox ears, fluffy tails, moonlit blue robe, anime RPG sprite illustration, centered, sharp silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_fox_spirit.png"
+    },
+    {
+      "id": "ai_fire_wisp",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_fire_wisp.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, floating fire wisp creature, orange flame core, ember sparks, readable silhouette, centered, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_fire_wisp.png"
+    },
+    {
+      "id": "ai_stone_guardian",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_stone_guardian.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, squat stone guardian monster, mossy carved rocks, glowing eyes, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_stone_guardian.png"
+    },
+    {
+      "id": "ai_water_serpent",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_water_serpent.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, blue water serpent spirit, curling body, fins and pearl glow, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_water_serpent.png"
+    },
+    {
+      "id": "ai_cave_bat",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_cave_bat.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, shadow cave bat demon, spread wings, purple eyes, dark fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_cave_bat.png"
+    },
+    {
+      "id": "ai_bamboo_path",
+      "kind": "tile",
+      "out": "assets/tiles/ai_bamboo_path.png",
+      "prompt": "top-down seamless 2D RPG map tile, bamboo forest dirt path with scattered leaves, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_bamboo_path.png"
+    },
+    {
+      "id": "ai_cave_floor",
+      "kind": "tile",
+      "out": "assets/tiles/ai_cave_floor.png",
+      "prompt": "top-down seamless 2D RPG map tile, wet cave stone floor with subtle blue mineral veins, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_cave_floor.png"
+    },
+    {
+      "id": "ai_shrine_floor",
+      "kind": "tile",
+      "out": "assets/tiles/ai_shrine_floor.png",
+      "prompt": "top-down seamless 2D RPG map tile, ancient shrine stone floor with faint gold rune cracks, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_shrine_floor.png"
+    },
+    {
+      "id": "ai_mystic_grass",
+      "kind": "tile",
+      "out": "assets/tiles/ai_mystic_grass.png",
+      "prompt": "top-down seamless 2D RPG map tile, mystic night grass with tiny blue spirit flowers, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_mystic_grass.png"
+    },
+    {
+      "id": "ai_bamboo_scout",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_bamboo_scout.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body young xianxia bamboo forest scout, green travel cloak, short bow, leaf talisman, anime RPG sprite illustration, centered, clean readable silhouette, sharp edges, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_bamboo_scout.png"
+    },
+    {
+      "id": "ai_wandering_merchant",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_wandering_merchant.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body cheerful xianxia wandering merchant, pack of scrolls and medicine bottles, warm layered robe, anime RPG sprite illustration, centered, clean silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_wandering_merchant.png"
+    },
+    {
+      "id": "ai_cave_priestess",
+      "kind": "cutout",
+      "out": "assets/npcs/ai_cave_priestess.png",
+      "size": 192,
+      "prompt": "crisp 2D game asset, full body moon cave priestess NPC, silver blue ritual robe, crescent staff, calm expression, anime RPG sprite illustration, centered, clean silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_cave_priestess.png"
+    },
+    {
+      "id": "ai_thunder_roc",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_thunder_roc.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, thunder roc bird spirit, jagged gold feathers, blue lightning aura, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_thunder_roc.png"
+    },
+    {
+      "id": "ai_blood_mantis",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_blood_mantis.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, crimson blade mantis demon, sharp forearms, dark shell, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_blood_mantis.png"
+    },
+    {
+      "id": "ai_shadow_swordsman",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_shadow_swordsman.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, ghostly shadow swordsman demon, torn black robes, pale mask, cursed sword glow, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_shadow_swordsman.png"
+    },
+    {
+      "id": "ai_moss_turtle",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_moss_turtle.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, ancient moss turtle guardian, stone shell with tiny plants, glowing jade eyes, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_moss_turtle.png"
+    },
+    {
+      "id": "ai_lotus_spirit",
+      "kind": "cutout",
+      "out": "assets/creatures/ai_lotus_spirit.png",
+      "size": 256,
+      "prompt": "crisp 2D game enemy asset, floating lotus spirit, pink petals, pale blue core, ribbon-like water wisps, fantasy RPG creature, centered, readable silhouette, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_lotus_spirit.png"
+    },
+    {
+      "id": "boss_mountain_fiend",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_mountain_fiend.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, hulking red-haired mountain ogre demon, charred horned mask, iron club wrapped in prayer rope, scorched hide armor and ember cracks, menacing full body pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_mountain_fiend.png"
+    },
+    {
+      "id": "boss_moon_wraith",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_moon_wraith.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, spectral moon wraith queen, pale female spirit rising from a coiling violet water-serpent tail, torn lunar robes, crescent crown, long black hair floating in ghost wind, cold glowing eyes, classic Chinese fantasy RPG hand-painted monster, full body front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_moon_wraith.png"
+    },
+    {
+      "id": "boss_river_demon",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_river_demon.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, black-scaled river flood dragon demon with long serpentine body, antler horns, torn river lanterns caught on fins, blue water streaming from claws, fierce full body coiled pose, classic Chinese fantasy RPG hand-painted monster, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_river_demon.png"
+    },
+    {
+      "id": "boss_miasma_root",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_miasma_root.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, enormous plague banyan root demon, twisted blood-red and charcoal roots forming a snarling mask, hanging medicine talismans, poisonous violet spores and grasping root claws, classic Chinese fantasy RPG hand-painted monster, full body front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_miasma_root.png"
+    },
+    {
+      "id": "boss_mirror_minister",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_mirror_minister.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, sinister imperial mirror sorcerer, tall masked minister in black violet and tarnished gold ceremonial robes, one hand casting with floating cracked bronze mirrors, hidden sword at waist, elegant threatening full body pose, classic Chinese fantasy RPG hand-painted villain, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_mirror_minister.png"
+    },
+    {
+      "id": "boss_thunder_qilin",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_thunder_qilin.png",
+      "size": 512,
+      "prompt": "premium 2D game boss cutout, majestic thunder qilin spirit, blue-black scales, branching gold antlers, white mane lifted by lightning, bronze drum charms around the neck, powerful full body stance, classic Chinese fantasy RPG hand-painted beast, front three-quarter view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_thunder_qilin.png"
+    },
+    {
+      "id": "boss_dream_eclipse",
+      "kind": "cutout",
+      "out": "assets/creatures/boss_dream_eclipse.png",
+      "size": 512,
+      "prompt": "premium 2D game final boss cutout, colossal humanoid water-shadow deity formed from midnight waves, pale moon mask with one sorrowful eye and one wrathful eye, many flowing ribbon arms, broken palace lanterns orbiting the body, tragic and terrifying full silhouette, classic Chinese fantasy RPG hand-painted final monster, front view, centered, dramatic readable silhouette, crisp edges, no floor, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/boss_dream_eclipse.png"
+    },
+    {
+      "id": "ai_quest_board",
+      "kind": "cutout",
+      "out": "assets/props/ai_quest_board.png",
+      "size": 160,
+      "prompt": "crisp 2D top-down RPG map prop, wooden village quest board with pinned blank parchment sheets and red cords, no readable text, centered, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_quest_board.png"
+    },
+    {
+      "id": "ai_spirit_lantern",
+      "kind": "cutout",
+      "out": "assets/props/ai_spirit_lantern.png",
+      "size": 128,
+      "prompt": "crisp 2D top-down RPG map prop, glowing paper spirit lantern on a short wooden post, warm gold light, centered, no text, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_spirit_lantern.png"
+    },
+    {
+      "id": "ai_bamboo_gate",
+      "kind": "cutout",
+      "out": "assets/props/ai_bamboo_gate.png",
+      "size": 192,
+      "prompt": "crisp 2D top-down RPG map prop, small bamboo torii gate with green talismans, forest shrine entrance, centered, no text, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_bamboo_gate.png"
+    },
+    {
+      "id": "ai_cave_crystal",
+      "kind": "cutout",
+      "out": "assets/props/ai_cave_crystal.png",
+      "size": 160,
+      "prompt": "crisp 2D top-down RPG map prop, cluster of blue cave crystals, magical glow, centered, no text, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_cave_crystal.png"
+    },
+    {
+      "id": "ai_shrine_statue",
+      "kind": "cutout",
+      "out": "assets/props/ai_shrine_statue.png",
+      "size": 192,
+      "prompt": "crisp 2D top-down RPG map prop, ancient stone fox shrine statue with moss and small offering plate, centered, no text, no shadow, perfectly flat pure #00ff00 green screen background",
+      "raw": "assets/generated/comfy/raw/ai_shrine_statue.png"
+    },
+    {
+      "id": "ai_village_moss_path",
+      "kind": "tile",
+      "out": "assets/tiles/ai_village_moss_path.png",
+      "prompt": "top-down seamless 2D RPG map tile, old village dirt road with moss between worn stones, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_village_moss_path.png"
+    },
+    {
+      "id": "ai_bamboo_thicket",
+      "kind": "tile",
+      "out": "assets/tiles/ai_bamboo_thicket.png",
+      "prompt": "top-down seamless 2D RPG map tile, dense bamboo thicket canopy, deep green leaves and stalk shadows, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_bamboo_thicket.png"
+    },
+    {
+      "id": "ai_moon_cave_wall",
+      "kind": "tile",
+      "out": "assets/tiles/ai_moon_cave_wall.png",
+      "prompt": "top-down seamless 2D RPG map tile, moonlit cave wall rock with violet minerals and damp highlights, hand painted game texture, no characters, no text, tileable square",
+      "raw": "assets/generated/comfy/raw/ai_moon_cave_wall.png"
+    }
+  ]
+}
