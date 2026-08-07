@@ -16,7 +16,8 @@ use super::core::{
     EncounterRate, GameFont, Intent, MAP_H, MAP_W, PlayerStats, Rng, TILE, tile_to_world,
 };
 use super::cutout::{
-    CutoutPart, brighten_color, cutout_part_motion, cutout_part_specs, cutout_source_px_for_path,
+    COMPANION_OVERWORLD_SIZE, CutoutPart, brighten_color, companion_cutout_path,
+    cutout_part_motion, cutout_part_specs, cutout_source_px_for_path,
 };
 use super::fog;
 use super::lighting::{self, LightingAssets};
@@ -6905,14 +6906,6 @@ fn encounter_zone(kind: MapKind) -> EncounterZone {
     }
 }
 
-fn companion_style(companion: Companion) -> PaperdollStyle {
-    match companion {
-        Companion::Linger => PaperdollStyle::Linger,
-        Companion::SwordSister => PaperdollStyle::Ranger,
-        Companion::SpiritWitch => PaperdollStyle::Mystic,
-    }
-}
-
 fn companion_afterimage_color(companion: Companion) -> Color {
     match companion {
         Companion::Linger => Color::srgba(0.90, 0.70, 1.0, 0.32),
@@ -10019,7 +10012,7 @@ fn sync_player_transform(
 
 fn sync_party_followers(
     mut commands: Commands,
-    dolls: Res<PaperdollAssets>,
+    asset_server: Res<AssetServer>,
     lights: Res<LightingAssets>,
     quest: Res<QuestLog>,
     pos: Res<PlayerPos>,
@@ -10075,14 +10068,17 @@ fn sync_party_followers(
             continue;
         }
 
-        let follower = paperdoll::spawn_paperdoll(
-            &mut commands,
-            &dolls,
-            companion_style(companion),
-            follower_slot_position(&pos, slot, moving, phase),
-            paperdoll::OVERWORLD_SIZE * 0.92,
-            AppState::Explore,
-        );
+        let follower = commands
+            .spawn((
+                Sprite {
+                    image: asset_server.load(companion_cutout_path(companion)),
+                    custom_size: Some(Vec2::splat(COMPANION_OVERWORLD_SIZE)),
+                    ..default()
+                },
+                Transform::from_translation(follower_slot_position(&pos, slot, moving, phase)),
+                DespawnOnExit(AppState::Explore),
+            ))
+            .id();
         let follower_origin = follower_slot_position(&pos, slot, moving, phase);
         commands.entity(follower).insert((
             MapContent,
@@ -10096,10 +10092,10 @@ fn sync_party_followers(
             &lights,
             follower,
             follower_origin,
-            Vec2::new(0.0, -paperdoll::OVERWORLD_SIZE * 0.36),
+            Vec2::new(0.0, -COMPANION_OVERWORLD_SIZE * 0.36),
             Vec2::new(
-                paperdoll::OVERWORLD_SIZE * 0.62,
-                paperdoll::OVERWORLD_SIZE * 0.15,
+                COMPANION_OVERWORLD_SIZE * 0.62,
+                COMPANION_OVERWORLD_SIZE * 0.15,
             ),
             phase + slot as f32 * 0.61,
             0.22,

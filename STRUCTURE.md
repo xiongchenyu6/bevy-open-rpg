@@ -100,7 +100,7 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   one-shot `open_journey_intro` route dialogue after chapter cards close,
   run-stage `主线签` pickup/progress text in both HUD and inventory, including
   the required marker mix, approximate stage minutes, and chapter runtime focus,
-  `sync_run_party_followers` paperdoll companions that appear by route progress,
+  `sync_run_party_followers` dedicated generated companion cutouts that appear by route progress,
   界门 spirit-gate sprite over the portal (boss gates reuse it violet-tinted), fill lights, HUD, and rebuilds losslessly after battles
   (`RunSceneState` persists). `run_scene_movement`: grid movement, marker
   contact fires the payload (battle → `AppState::Battle`; others open the
@@ -141,7 +141,8 @@ game fills any window) and the capture binary wire those separately. While in
 clamped to the bordered map (`scene::zoom_camera_in/out`, `camera_follow`).
 
 ### `battle.rs` — `BattlePlugin` (shared by run + legacy)
-- `ENEMIES[9]` zone pools + 6 boss defs; `PendingEncounter{zone, kind}` is the
+- `ENEMIES[9]` zone pools + 7 boss defs, each with a distinct generated
+  `creatures/boss_*.png` cutout; `PendingEncounter{zone, kind}` is the
   entry API from both flows.
 - **Decision layer**: every enemy telegraphs its next move (`EnemyIntent`:
   Strike / Heavy 1.8× / Gather heal+def / Drain mp-steal, shown in the enemy

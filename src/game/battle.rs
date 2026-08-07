@@ -4,10 +4,10 @@ use bevy::ui::widget::NodeImageMode;
 use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::cutout::{
-    CutoutPart, brighten_color, cutout_part_motion, cutout_part_specs, cutout_source_px_for_path,
+    COMPANION_BATTLE_SIZE, CutoutPart, brighten_color, companion_cutout_path, cutout_part_motion,
+    cutout_part_specs, cutout_source_px_for_path,
 };
 use super::lighting::{self, LightingAssets};
-use super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
 use super::quest::{
     BondBonus, BondScene, BossKind, CampBonus, CampScene, Chapter, Companion, CompanionScene,
     QuestLog, ShrineBlessing, SideQuest,
@@ -175,8 +175,8 @@ const MOUNTAIN_FIEND_BOSS: EnemyDef = EnemyDef {
     max_hp: 112,
     atk: 23,
     def: 6,
-    image: "creatures/ai_blood_mantis.png",
-    size: 248.0,
+    image: "creatures/boss_mountain_fiend.png",
+    size: 280.0,
     light: [1.0, 0.34, 0.16, 0.40],
     exp: 52,
 };
@@ -186,8 +186,8 @@ const MOON_WRAITH_BOSS: EnemyDef = EnemyDef {
     max_hp: 128,
     atk: 26,
     def: 7,
-    image: "creatures/ai_lotus_spirit.png",
-    size: 258.0,
+    image: "creatures/boss_moon_wraith.png",
+    size: 286.0,
     light: [0.95, 0.55, 1.0, 0.42],
     exp: 60,
 };
@@ -197,8 +197,8 @@ const RIVER_DEMON_BOSS: EnemyDef = EnemyDef {
     max_hp: 156,
     atk: 29,
     def: 8,
-    image: "creatures/ai_water_serpent.png",
-    size: 272.0,
+    image: "creatures/boss_river_demon.png",
+    size: 292.0,
     light: [0.30, 0.82, 1.0, 0.46],
     exp: 82,
 };
@@ -208,8 +208,8 @@ const MIASMA_ROOT_BOSS: EnemyDef = EnemyDef {
     max_hp: 184,
     atk: 32,
     def: 10,
-    image: "creatures/ai_moss_turtle.png",
-    size: 286.0,
+    image: "creatures/boss_miasma_root.png",
+    size: 300.0,
     light: [0.50, 0.90, 0.42, 0.44],
     exp: 104,
 };
@@ -219,8 +219,8 @@ const MIRROR_MINISTER_BOSS: EnemyDef = EnemyDef {
     max_hp: 216,
     atk: 35,
     def: 12,
-    image: "creatures/ai_shadow_swordsman.png",
-    size: 292.0,
+    image: "creatures/boss_mirror_minister.png",
+    size: 290.0,
     light: [0.72, 0.62, 1.0, 0.48],
     exp: 132,
 };
@@ -230,8 +230,8 @@ const THUNDER_QILIN_BOSS: EnemyDef = EnemyDef {
     max_hp: 252,
     atk: 39,
     def: 13,
-    image: "creatures/qilin.png",
-    size: 260.0,
+    image: "creatures/boss_thunder_qilin.png",
+    size: 296.0,
     light: [0.52, 0.88, 1.0, 0.52],
     exp: 160,
 };
@@ -241,8 +241,8 @@ const DREAM_ECLIPSE_BOSS: EnemyDef = EnemyDef {
     max_hp: 288,
     atk: 43,
     def: 15,
-    image: "creatures/frost_dragon.png",
-    size: 286.0,
+    image: "creatures/boss_dream_eclipse.png",
+    size: 300.0,
     light: [0.46, 0.78, 1.0, 0.56],
     exp: 190,
 };
@@ -513,6 +513,25 @@ const LINGER_POS: Vec3 = Vec3::new(HERO_POS.x + 130.0, HERO_POS.y + 8.0, 0.9);
 const SWORD_SISTER_POS: Vec3 = Vec3::new(HERO_POS.x + 245.0, HERO_POS.y - 6.0, 0.92);
 const SPIRIT_WITCH_POS: Vec3 = Vec3::new(HERO_POS.x + 340.0, HERO_POS.y + 16.0, 0.88);
 
+fn spawn_battle_companion_sprite(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    companion: Companion,
+    position: Vec3,
+) -> Entity {
+    commands
+        .spawn((
+            Sprite {
+                image: asset_server.load(companion_cutout_path(companion)),
+                custom_size: Some(Vec2::splat(COMPANION_BATTLE_SIZE)),
+                ..default()
+            },
+            Transform::from_translation(position),
+            DespawnOnExit(AppState::Battle),
+        ))
+        .id()
+}
+
 pub struct BattlePlugin;
 
 impl Plugin for BattlePlugin {
@@ -546,7 +565,6 @@ fn spawn_battle(
     asset_server: Res<AssetServer>,
     lights: Res<LightingAssets>,
     anims: Res<AnimationAssets>,
-    dolls: Res<PaperdollAssets>,
     mut quest: ResMut<QuestLog>,
     mut rng: ResMut<Rng>,
     mut stats: ResMut<PlayerStats>,
@@ -772,13 +790,11 @@ fn spawn_battle(
             Color::srgba(0.72, 0.92, 1.0, 0.24),
             AppState::Battle,
         );
-        let companion = paperdoll::spawn_paperdoll(
+        let companion = spawn_battle_companion_sprite(
             &mut commands,
-            &dolls,
-            PaperdollStyle::Linger,
+            &asset_server,
+            Companion::Linger,
             LINGER_POS,
-            paperdoll::BATTLE_SIZE * 0.72,
-            AppState::Battle,
         );
         commands.entity(companion).insert(BattleCompanion {
             kind: BattleCompanionKind::Linger,
@@ -796,13 +812,11 @@ fn spawn_battle(
             Color::srgba(1.0, 0.58, 0.36, 0.24),
             AppState::Battle,
         );
-        let companion = paperdoll::spawn_paperdoll(
+        let companion = spawn_battle_companion_sprite(
             &mut commands,
-            &dolls,
-            PaperdollStyle::Ranger,
+            &asset_server,
+            Companion::SwordSister,
             SWORD_SISTER_POS,
-            paperdoll::BATTLE_SIZE * 0.70,
-            AppState::Battle,
         );
         commands.entity(companion).insert(BattleCompanion {
             kind: BattleCompanionKind::SwordSister,
@@ -820,13 +834,11 @@ fn spawn_battle(
             Color::srgba(0.48, 1.0, 0.62, 0.23),
             AppState::Battle,
         );
-        let companion = paperdoll::spawn_paperdoll(
+        let companion = spawn_battle_companion_sprite(
             &mut commands,
-            &dolls,
-            PaperdollStyle::Mystic,
+            &asset_server,
+            Companion::SpiritWitch,
             SPIRIT_WITCH_POS,
-            paperdoll::BATTLE_SIZE * 0.68,
-            AppState::Battle,
         );
         commands.entity(companion).insert(BattleCompanion {
             kind: BattleCompanionKind::SpiritWitch,
@@ -4883,6 +4895,27 @@ mod tests {
 
         assert_eq!(enemy.name, "宿命水影");
         assert_eq!(enemy.max_hp, 288);
+    }
+
+    #[test]
+    fn chapter_bosses_use_distinct_generated_cutouts() {
+        let bosses = [
+            &MOUNTAIN_FIEND_BOSS,
+            &MOON_WRAITH_BOSS,
+            &RIVER_DEMON_BOSS,
+            &MIASMA_ROOT_BOSS,
+            &MIRROR_MINISTER_BOSS,
+            &THUNDER_QILIN_BOSS,
+            &DREAM_ECLIPSE_BOSS,
+        ];
+
+        for (index, boss) in bosses.iter().enumerate() {
+            assert!(boss.image.starts_with("creatures/boss_"));
+            assert_eq!(cutout_source_px_for_path(boss.image), 512.0);
+            for previous in &bosses[..index] {
+                assert_ne!(boss.image, previous.image);
+            }
+        }
     }
 
     #[test]

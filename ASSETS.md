@@ -22,16 +22,20 @@ COMFY_BASE=http://127.0.0.1:18188 COMFY_STEPS=20 node tools/comfy_batch_assets.m
 
 The script writes raw outputs to `assets/generated/comfy/raw/`, processed game
 assets to `assets/`, and metadata to `assets/generated/comfy/manifest.json`.
-Cutouts are generated on a flat chroma background and locally converted to alpha.
+Cutouts are generated against a simple background, then
+`scripts/cutout_harness.sh` uses local U²-Net segmentation to produce alpha and
+fail-closed size/coverage checks. `COMFY_CUTOUT_MODE=chroma` remains an explicit
+offline fallback; it is not the default because broad color keys can erase robes
+and creature details.
 
 ## Current Generated Set
 
 | Type | Count | Paths |
 |------|-------|-------|
-| NPC cutouts | 14 | `assets/npcs/ai_*.png`, plus `assets/npcs/star_mage_cutout.png` |
-| Creature cutouts | 9 | `assets/creatures/ai_*.png` |
-| Map props | 5 | `assets/props/ai_*.png` |
-| Tiles | 28 | `assets/tiles/*.png` and `assets/tiles/ai_*.png` |
+| NPC cutouts | 19 | 18 × `assets/npcs/ai_*.png`, plus `assets/npcs/star_mage_cutout.png` |
+| Creature cutouts | 16 | 9 × `assets/creatures/ai_*.png`, 7 × `assets/creatures/boss_*.png` |
+| Map props | 8 | `assets/props/ai_*.png` |
+| Tiles | 29 | `assets/tiles/*.png` and `assets/tiles/ai_*.png` |
 | Effects | 2 | `assets/effects/light_orb.png`, `assets/effects/skill-vfx-sheet.png` |
 | Actor sheets | 4 | `assets/actors/*.png` |
 
@@ -40,16 +44,20 @@ Late-story NPCs currently added through imagegen:
 `ai_mansion_spy`, `ai_spirit_guide`, `ai_tribal_chief`, and
 `ai_final_oracle`. Late chapter-card backdrops currently added through imagegen:
 `chapter5_art`, `chapter6_art`, and `chapter7_art`.
+The three run-party cutouts are `ai_linger_companion`, `ai_sword_sister`, and
+`ai_nanyao_companion`; every chapter boss has a matching `boss_*` cutout.
 
 ## In-Game Use
 
 - `src/game/explore.rs` loads generated tiles, props, NPC cutouts, lighting, and
   fog-visible map content across the chapter maps. Main quest NPCs from Plague
   Village onward use distinct generated cutouts instead of generic paperdoll
-  reuse.
+  reuse. The three companions also use their dedicated cutouts in legacy and
+  run-mode exploration while retaining sway, facing, trail, and follow motion.
 - `src/game/battle.rs` uses generated creature cutouts as the primary enemy
-  bodies, layers actor sprite sheets as translucent idle/attack aura motion, and
-  builds zone-specific battle backdrops from generated map tiles.
+  bodies, gives all seven bosses dedicated generated bodies, renders the three
+  companion cutouts with their battle motion, and builds zone-specific battle
+  backdrops from generated map tiles.
 - `src/game/quest.rs` drives the first quest chain through generated and
   paperdoll NPCs.
 

@@ -3,11 +3,10 @@
 仙侠风 **肉鸽回合制 RPG**,用 Bevy 0.19 代码优先构建,美术全部由
 ComfyUI(Flux 静帧 + Wan2.2 过场动画)生成。
 
-**▶ 在浏览器游玩:<https://xiongchenyu6.github.io/bevy-open-rpg/>**(需要
-WebGPU:最新 Chrome / Edge,或 Firefox 开启 `dom.webgpu.enabled`)
+[![御剑行实机演示：地图探索、主线契约、剧情抉择与终章真身战](docs/showcase.gif)](https://xiongchenyu6.github.io/bevy-open-rpg/)
 
-![章节开卷](docs/preview.png)
-![Boss 真身战](docs/preview_battle.png)
+**▶ 点击上方实机画面，或直接[在浏览器游玩](https://xiongchenyu6.github.io/bevy-open-rpg/)**
+(需要 WebGPU:最新 Chrome / Edge,或 Firefox 开启 `dom.webgpu.enabled`)
 
 ## 玩法
 
@@ -92,6 +91,7 @@ cargo run --bin love-rpg          # 桌面(Wayland)
 bash scripts/build_web.sh         # 构建 wasm 到 web/
 python3 scripts/serve_web.py      # 本地预览 web 构建
 bash scripts/run_audit.sh /tmp/love-rpg-run-audit  # 41 段全流程审计
+bash scripts/readme_gif.sh        # 从确定性实机截图重制 README GIF
 ```
 
 ## 架构与美术管线

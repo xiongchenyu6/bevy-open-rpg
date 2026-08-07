@@ -1,5 +1,19 @@
 use bevy::prelude::*;
 
+use super::quest::Companion;
+
+pub const COMPANION_CUTOUT_SOURCE_PX: f32 = 512.0;
+pub const COMPANION_BATTLE_SIZE: f32 = 176.0;
+pub const COMPANION_OVERWORLD_SIZE: f32 = 62.0;
+
+pub fn companion_cutout_path(companion: Companion) -> &'static str {
+    match companion {
+        Companion::Linger => "npcs/ai_linger_companion.png",
+        Companion::SwordSister => "npcs/ai_sword_sister.png",
+        Companion::SpiritWitch => "npcs/ai_nanyao_companion.png",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CutoutPart {
     Lower,
@@ -36,7 +50,13 @@ pub struct CutoutPartMotion {
 }
 
 pub fn cutout_source_px_for_path(path: &str) -> f32 {
-    if path.contains("frost_dragon")
+    if path.contains("boss_")
+        || path.contains("ai_linger_companion")
+        || path.contains("ai_nanyao_companion")
+        || path.contains("ai_sword_sister")
+    {
+        COMPANION_CUTOUT_SOURCE_PX
+    } else if path.contains("frost_dragon")
         || path.contains("qilin")
         || path.contains("forest_ranger")
         || path.contains("forge_engineer")
@@ -148,5 +168,23 @@ mod tests {
         assert_ne!(lower.rotation, head.rotation);
         assert!(head.offset.x.abs() > lower.offset.x.abs());
         assert!(head.brightness >= lower.brightness);
+    }
+
+    #[test]
+    fn companion_cutouts_are_distinct_generated_assets() {
+        let paths = [
+            companion_cutout_path(Companion::Linger),
+            companion_cutout_path(Companion::SwordSister),
+            companion_cutout_path(Companion::SpiritWitch),
+        ];
+
+        assert!(paths.iter().all(|path| path.starts_with("npcs/ai_")));
+        assert_ne!(paths[0], paths[1]);
+        assert_ne!(paths[1], paths[2]);
+        assert!(
+            paths
+                .iter()
+                .all(|path| cutout_source_px_for_path(path) == COMPANION_CUTOUT_SOURCE_PX)
+        );
     }
 }

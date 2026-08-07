@@ -15,6 +15,7 @@ use bevy::ui::widget::NodeImageMode;
 use super::super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::super::battle::{EncounterZone, PendingEncounter};
 use super::super::core::{GameFont, Intent, MAP_H, MAP_W, PlayerStats, Rng, TILE, tile_to_world};
+use super::super::cutout::{COMPANION_OVERWORLD_SIZE, companion_cutout_path};
 use super::super::explore::{
     ExploreAssets, MapData, MapKind, TerrainMaterial, Tile, spawn_terrain_map,
 };
@@ -2234,14 +2235,6 @@ pub fn animate_hero(
     sprite.flip_x = scene.facing_left;
 }
 
-fn run_companion_style(companion: Companion) -> PaperdollStyle {
-    match companion {
-        Companion::Linger => PaperdollStyle::Linger,
-        Companion::SwordSister => PaperdollStyle::Ranger,
-        Companion::SpiritWitch => PaperdollStyle::Mystic,
-    }
-}
-
 fn run_companion_tint(companion: Companion, pulse: f32) -> Color {
     match companion {
         Companion::Linger => Color::srgba(1.0, 0.96 + pulse * 0.04, 1.0, 1.0),
@@ -2268,7 +2261,7 @@ fn run_follower_position(scene: &RunSceneState, slot: usize, moving: bool, phase
 
 pub fn sync_run_party_followers(
     mut commands: Commands,
-    dolls: Res<PaperdollAssets>,
+    asset_server: Res<AssetServer>,
     time: Res<Time>,
     run: Option<Res<RunState>>,
     scene: Option<Res<RunSceneState>>,
@@ -2312,14 +2305,17 @@ pub fn sync_run_party_followers(
         if present.get(slot).copied().unwrap_or(false) {
             continue;
         }
-        let follower = paperdoll::spawn_paperdoll(
-            &mut commands,
-            &dolls,
-            run_companion_style(companion),
-            run_follower_position(&scene, slot, moving, phase),
-            paperdoll::OVERWORLD_SIZE * 0.88,
-            AppState::RunScene,
-        );
+        let follower = commands
+            .spawn((
+                Sprite {
+                    image: asset_server.load(companion_cutout_path(companion)),
+                    custom_size: Some(Vec2::splat(COMPANION_OVERWORLD_SIZE)),
+                    ..default()
+                },
+                Transform::from_translation(run_follower_position(&scene, slot, moving, phase)),
+                DespawnOnExit(AppState::RunScene),
+            ))
+            .id();
         commands
             .entity(follower)
             .insert(RunPartyFollower { companion });
