@@ -1,0 +1,578 @@
+[
+  {
+    "pose": "idle",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Idle pose: raise upper neck upright and bend head slightly downward, fan tail lifted, lower body remains broad coil. Mouth closed. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "clean-baseline.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Idle pose: raise upper neck upright and bend head slightly downward, fan tail lifted, lower body remains broad coil. Mouth closed. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610500,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v3-idle"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "5136bbf5-4a2f-4dc6-8a4a-8569132a2faa",
+      "number": 20163,
+      "node_errors": {}
+    }
+  },
+  {
+    "pose": "attack",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Attack impact pose: uncoil upper half and stretch neck far horizontally LEFT low to the ground, open mouth widely, tongue and fangs visible. Neck nearly horizontal, head far left of lower coil. Tail fins swept back. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "clean-baseline.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Attack impact pose: uncoil upper half and stretch neck far horizontally LEFT low to the ground, open mouth widely, tongue and fangs visible. Neck nearly horizontal, head far left of lower coil. Tail fins swept back. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610501,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v3-attack"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "61c596d8-2a52-4f18-aba2-c3d74d4c4033",
+      "number": 20164,
+      "node_errors": {}
+    }
+  },
+  {
+    "pose": "hit",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Hit recoil pose: bend upper neck and head far backward toward RIGHT, chin pointing upward, neck leaning diagonally right instead of upright. Lower body tightly coiled, fan tail flared to right. Strained mouth. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "clean-baseline.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact solid turquoise coiled snake dragon, orange yellow eye, two tall cyan ear fins, indigo dorsal spikes, pale striped belly and triple fan tail fins, clean painted cartoon game style. Solid intact contiguous skin, no holes. Hit recoil pose: bend upper neck and head far backward toward RIGHT, chin pointing upward, neck leaning diagonally right instead of upright. Lower body tightly coiled, fan tail flared to right. Strained mouth. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610502,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v3-hit"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "967391d5-d057-4922-9cf2-c97b4bb01873",
+      "number": 20165,
+      "node_errors": {}
+    }
+  }
+]

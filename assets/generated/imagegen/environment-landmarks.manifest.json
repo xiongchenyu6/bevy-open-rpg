@@ -1,0 +1,573 @@
+{
+  "generator": "built-in image_gen",
+  "atlas_size": [
+    1254,
+    1254
+  ],
+  "atlas_grid": [
+    4,
+    4
+  ],
+  "alpha_extrema": [
+    0,
+    255
+  ],
+  "transparent_pixels": 631293,
+  "sprites": [
+    {
+      "name": "inn",
+      "path": "assets/props/landmark-inn.png",
+      "cell": 0,
+      "atlas_box": [
+        0,
+        0,
+        314,
+        314
+      ],
+      "trim_box": [
+        13,
+        6,
+        314,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 25090,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        238,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "bridge",
+      "path": "assets/props/landmark-bridge.png",
+      "cell": 1,
+      "atlas_box": [
+        314,
+        0,
+        627,
+        314
+      ],
+      "trim_box": [
+        0,
+        21,
+        313,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 41202,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        228
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "pier",
+      "path": "assets/props/landmark-pier.png",
+      "cell": 2,
+      "atlas_box": [
+        627,
+        0,
+        940,
+        314
+      ],
+      "trim_box": [
+        0,
+        15,
+        312,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 38189,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        234
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "moon-altar",
+      "path": "assets/props/landmark-moon-altar.png",
+      "cell": 3,
+      "atlas_box": [
+        940,
+        0,
+        1254,
+        314
+      ],
+      "trim_box": [
+        1,
+        7,
+        302,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 30975,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        239,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "bamboo-pavilion",
+      "path": "assets/props/landmark-bamboo-pavilion.png",
+      "cell": 4,
+      "atlas_box": [
+        0,
+        314,
+        314,
+        627
+      ],
+      "trim_box": [
+        0,
+        0,
+        314,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 21739,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        243
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "market",
+      "path": "assets/props/landmark-market.png",
+      "cell": 5,
+      "atlas_box": [
+        314,
+        314,
+        627,
+        627
+      ],
+      "trim_box": [
+        0,
+        0,
+        313,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 35835,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "medicine-hut",
+      "path": "assets/props/landmark-medicine-hut.png",
+      "cell": 6,
+      "atlas_box": [
+        627,
+        314,
+        940,
+        627
+      ],
+      "trim_box": [
+        0,
+        0,
+        308,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 30954,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        240,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "shrine",
+      "path": "assets/props/landmark-shrine.png",
+      "cell": 7,
+      "atlas_box": [
+        940,
+        314,
+        1254,
+        627
+      ],
+      "trim_box": [
+        1,
+        0,
+        304,
+        309
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 29061,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        239,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "capital-gate",
+      "path": "assets/props/landmark-capital-gate.png",
+      "cell": 8,
+      "atlas_box": [
+        0,
+        627,
+        314,
+        940
+      ],
+      "trim_box": [
+        0,
+        0,
+        314,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 20479,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        243
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "manor",
+      "path": "assets/props/landmark-manor.png",
+      "cell": 9,
+      "atlas_box": [
+        314,
+        627,
+        627,
+        940
+      ],
+      "trim_box": [
+        0,
+        0,
+        313,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 25272,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "mirror-dais",
+      "path": "assets/props/landmark-mirror-dais.png",
+      "cell": 10,
+      "atlas_box": [
+        627,
+        627,
+        940,
+        940
+      ],
+      "trim_box": [
+        0,
+        0,
+        313,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 26684,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "south-hut",
+      "path": "assets/props/landmark-south-hut.png",
+      "cell": 11,
+      "atlas_box": [
+        940,
+        627,
+        1254,
+        940
+      ],
+      "trim_box": [
+        0,
+        5,
+        301,
+        313
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 25076,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        238,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "thunder-drum",
+      "path": "assets/props/landmark-thunder-drum.png",
+      "cell": 12,
+      "atlas_box": [
+        0,
+        940,
+        314,
+        1254
+      ],
+      "trim_box": [
+        0,
+        0,
+        314,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 28741,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "dream-bridge",
+      "path": "assets/props/landmark-dream-bridge.png",
+      "cell": 13,
+      "atlas_box": [
+        314,
+        940,
+        627,
+        1254
+      ],
+      "trim_box": [
+        0,
+        0,
+        313,
+        314
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 39992,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        243,
+        244
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "celestial-arch",
+      "path": "assets/props/landmark-celestial-arch.png",
+      "cell": 14,
+      "atlas_box": [
+        627,
+        940,
+        940,
+        1254
+      ],
+      "trim_box": [
+        0,
+        0,
+        313,
+        296
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 27621,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        231
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    },
+    {
+      "name": "crystals",
+      "path": "assets/props/landmark-crystals.png",
+      "cell": 15,
+      "atlas_box": [
+        940,
+        940,
+        1254,
+        1254
+      ],
+      "trim_box": [
+        0,
+        0,
+        311,
+        298
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "transparent_pixels": 26985,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "scaled_content_size": [
+        244,
+        234
+      ],
+      "ground_anchor": [
+        128,
+        250
+      ]
+    }
+  ],
+  "water": {
+    "path": "assets/tiles/water_surface.png",
+    "size": [
+      1254,
+      1254
+    ],
+    "prompt": "Square seamlessly repeating overhead deepteal mutedblue river water texture, softly painted gentle ripples, restrained glints, uniform light. Entire image onlywater, no shore/island/objects/text/perspective."
+  },
+  "review": "Correct sixteen row-major landmarks. Real transparent alpha. Tavern includes ornamental Chinese banner despite no-text request. Water only ripples; seamlessness pending runtime review.",
+  "processing": "Deterministic equal-grid extraction, alpha bbox trim, aspect-preserving Lanczos reduction, transparent 256px square pad with feet y250.",
+  "prompt": "Single4x4 transparent sprite atlas,16 isolated Chinese xianxia landmarks, consistent orthographic three-quarter overhead55degree view, dimensional roof/front faces, elegant hand-painted textured materials, deepteal shadows, warmgold trim, mutedstone andwood. Generous gutters; no ground squares, UI labels, scenery, people or text. Row-major order: inn, horizontal stone river bridge, ferry pier/boat, jade moonaltar; bamboo pavilion, marketstall, medicinehut, ruinedshrine; capitalredgate, courtyardmanor, ornate mirrordais, southernstilthut; bronzethunderdrum, dreambridge, celestialarch, crystalcave."
+}

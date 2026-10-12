@@ -1,0 +1,578 @@
+[
+  {
+    "pose": "idle",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Relaxed idle pose. Curl the lower body into a gentle round loop, flex neck slightly downward, spread tail fins softly. Mouth closed. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "reference-white.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Relaxed idle pose. Curl the lower body into a gentle round loop, flex neck slightly downward, spread tail fins softly. Mouth closed. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610220,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v2-idle"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "1fbbe116-8798-4521-bf42-873ff8319e5a",
+      "number": 20144,
+      "node_errors": {}
+    }
+  },
+  {
+    "pose": "attack",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Attack impact pose: tightly coil lower body and stretch neck far horizontally LEFT with mouth fully open, visible fangs, jaw biting. Tail fins swept backward. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "reference-white.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Attack impact pose: tightly coil lower body and stretch neck far horizontally LEFT with mouth fully open, visible fangs, jaw biting. Tail fins swept backward. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610221,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v2-attack"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "2d08d5b3-1398-478c-bcbc-a494086a1e36",
+      "number": 20145,
+      "node_errors": {}
+    }
+  },
+  {
+    "pose": "hit",
+    "prompt": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Hit recoil pose: sharply bend neck backward toward RIGHT, head tilts up, mouth strained, body compressed into reverse S curve, all fins flare outward. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation.",
+    "workflow": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "SelectModelDevice",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "clip_l.safetensors",
+          "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+          "type": "flux",
+          "device": "cpu"
+        }
+      },
+      "4": {
+        "class_type": "SelectCLIPDevice",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ae.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "SelectVAEDevice",
+        "inputs": {
+          "vae": [
+            "5",
+            0
+          ],
+          "device": "gpu:1"
+        }
+      },
+      "7": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "reference-white.png"
+        }
+      },
+      "8": {
+        "class_type": "FluxKontextImageScale",
+        "inputs": {
+          "image": [
+            "7",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "VAEEncode",
+        "inputs": {
+          "pixels": [
+            "8",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve cyan scale armor, yellow orange eye, slender dragon head, long blue fin frills, blue forked tail fins, original painted game sprite style. Hit recoil pose: sharply bend neck backward toward RIGHT, head tilts up, mouth strained, body compressed into reverse S curve, all fins flare outward. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+        }
+      },
+      "11": {
+        "class_type": "ReferenceLatent",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "12": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "guidance": 7.0
+        }
+      },
+      "13": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "4",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "14": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+          "width": 768,
+          "height": 768,
+          "batch_size": 1
+        }
+      },
+      "15": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 202610222,
+          "steps": 32,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "13",
+            0
+          ],
+          "latent_image": [
+            "14",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "15",
+            0
+          ],
+          "vae": [
+            "6",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "16",
+            0
+          ],
+          "filename_prefix": "love-rpg-serpent-probe-v2-hit"
+        }
+      }
+    },
+    "response": {
+      "prompt_id": "03c999bb-7f4b-43c3-add3-8ea60e43e10e",
+      "number": 20146,
+      "node_errors": {}
+    }
+  }
+]

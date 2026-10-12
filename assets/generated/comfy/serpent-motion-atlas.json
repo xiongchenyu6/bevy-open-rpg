@@ -1,0 +1,641 @@
+{
+  "path": "assets/actors/water-serpent-motion.png",
+  "cell": [
+    384,
+    384
+  ],
+  "grid": [
+    8,
+    3
+  ],
+  "size": [
+    3072,
+    1152
+  ],
+  "row_order": [
+    "idle",
+    "attack",
+    "hit"
+  ],
+  "attack_peak_column": 4,
+  "source_workflow": "assets/generated/comfy/serpent-motion-wan.json",
+  "selection": {
+    "idle": [
+      16,
+      22,
+      28,
+      36,
+      42,
+      34,
+      26,
+      18
+    ],
+    "attack": [
+      0,
+      3,
+      5,
+      9,
+      17,
+      28,
+      35,
+      48
+    ],
+    "hit": [
+      0,
+      6,
+      12,
+      18,
+      24,
+      32,
+      40,
+      48
+    ]
+  },
+  "processing": "Semantic u2net rembg, fixed512sourcecanvas to360 square uniformly then12pxpad on384cell; no per-frame trim/translation/scaling. Semantic mask retained enclosed white-background voids between coils; remove only near-neutral white RGB min>242 & spread<12, preserving blue-tinted pale belly.",
+  "frames": [
+    {
+      "action": "idle",
+      "column": 0,
+      "index": 0,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/016.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-00.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        21,
+        28,
+        367,
+        362
+      ],
+      "transparent_pixels": 92575,
+      "sha256": "1204770a1890c1045db25d46199d686fec7f03b4ea84c9ad55c6ea9d6be62d55",
+      "alpha_coverage": 0.3206786843426607
+    },
+    {
+      "action": "idle",
+      "column": 1,
+      "index": 1,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/022.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-01.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        42,
+        31,
+        364,
+        363
+      ],
+      "transparent_pixels": 93081,
+      "sha256": "428332504a5b937ae0f071e7f85d5e83c5fd8c905b3e78a3358dd7ca997e80c2",
+      "alpha_coverage": 0.3188266995166122
+    },
+    {
+      "action": "idle",
+      "column": 2,
+      "index": 2,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/028.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-02.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        33,
+        35,
+        365,
+        364
+      ],
+      "transparent_pixels": 92778,
+      "sha256": "19ddbbfa48be430ca4454547f49d28dc58a2954d2e2ca43a1ea6379623b6f829",
+      "alpha_coverage": 0.3250727102907135
+    },
+    {
+      "action": "idle",
+      "column": 3,
+      "index": 3,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/036.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-03.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        12,
+        31,
+        368,
+        372
+      ],
+      "transparent_pixels": 87886,
+      "sha256": "ea41084fdc863669da166d7a4e8a2334ab92b9d6a84933424029bcfa7ba1a0ec",
+      "alpha_coverage": 0.3436496576712282
+    },
+    {
+      "action": "idle",
+      "column": 4,
+      "index": 4,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/042.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-04.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        12,
+        27,
+        365,
+        361
+      ],
+      "transparent_pixels": 91836,
+      "sha256": "ab638df098d2603aa11d161c0d9572f550bf7ca41055bfa9b2b556844deb3e96",
+      "alpha_coverage": 0.3228099947661356
+    },
+    {
+      "action": "idle",
+      "column": 5,
+      "index": 5,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/034.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-05.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        15,
+        33,
+        368,
+        363
+      ],
+      "transparent_pixels": 88360,
+      "sha256": "6510b0a80b8e5e8762afd5e1b96968f0c18345465d7d754692c18ecfdc2a78ee",
+      "alpha_coverage": 0.3391358485668573
+    },
+    {
+      "action": "idle",
+      "column": 6,
+      "index": 6,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/026.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-06.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        46,
+        34,
+        364,
+        364
+      ],
+      "transparent_pixels": 92820,
+      "sha256": "9c2b0dfc4c36edb97ad5de880e6dc6d1362882735a849bdf7fadb5c15fd048d2",
+      "alpha_coverage": 0.3229529686223448
+    },
+    {
+      "action": "idle",
+      "column": 7,
+      "index": 7,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-idle/018.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/idle-07.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        28,
+        29,
+        366,
+        363
+      ],
+      "transparent_pixels": 92993,
+      "sha256": "5a45a4a468b6ed4fd356dfcd47f78e7d163c5befce4cd7d0772aed23266007f3",
+      "alpha_coverage": 0.3190627287156182
+    },
+    {
+      "action": "attack",
+      "column": 0,
+      "index": 8,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/000.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-00.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        18,
+        12,
+        365,
+        363
+      ],
+      "transparent_pixels": 89476,
+      "sha256": "7b6d38f4677e6346cc074389a3c92f8b23dfad33e5853c0663faec08cdab57bd",
+      "alpha_coverage": 0.33545304840686274
+    },
+    {
+      "action": "attack",
+      "column": 1,
+      "index": 9,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/003.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-01.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        19,
+        19,
+        365,
+        361
+      ],
+      "transparent_pixels": 90799,
+      "sha256": "2486eca2de58bfb76907f5e554dfac85e32d1e4e454093b2db9b8feb02fa7159",
+      "alpha_coverage": 0.32830869055521517
+    },
+    {
+      "action": "attack",
+      "column": 2,
+      "index": 10,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/005.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-02.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        20,
+        29,
+        364,
+        361
+      ],
+      "transparent_pixels": 90775,
+      "sha256": "448bd645be49bf010120f5b2c78eb4413193d8125b16ad3c24d839cd6f0ab5dd",
+      "alpha_coverage": 0.32663677938623364
+    },
+    {
+      "action": "attack",
+      "column": 3,
+      "index": 11,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/009.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-03.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        24,
+        42,
+        361,
+        361
+      ],
+      "transparent_pixels": 92088,
+      "sha256": "41d87555e5e0567bd6e9ae1fd96f2424a6e59a583aef1a36b008d1c69db11cf0",
+      "alpha_coverage": 0.32006617859817543
+    },
+    {
+      "action": "attack",
+      "column": 4,
+      "index": 12,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/017.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-04.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        29,
+        43,
+        361,
+        359
+      ],
+      "transparent_pixels": 95218,
+      "sha256": "e4066f94cf9afb121c6b46f70832c5ed7b3101c44c0bc3e9f1f85951b735213b",
+      "alpha_coverage": 0.3140902650122549
+    },
+    {
+      "action": "attack",
+      "column": 5,
+      "index": 13,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/028.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-05.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        19,
+        14,
+        361,
+        360
+      ],
+      "transparent_pixels": 83452,
+      "sha256": "9acd6788574347565be5fca87c59f517cf8fc494987d54de51a2c0609cfb028c",
+      "alpha_coverage": 0.3419953256910403
+    },
+    {
+      "action": "attack",
+      "column": 6,
+      "index": 14,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/035.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-06.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        20,
+        22,
+        363,
+        361
+      ],
+      "transparent_pixels": 90350,
+      "sha256": "3e64915a408e71d94847567cd3e33ee6536c240bab6d44b0b831cc3e676d9bc6",
+      "alpha_coverage": 0.3282091460716231
+    },
+    {
+      "action": "attack",
+      "column": 7,
+      "index": 15,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-attack/048.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/attack-07.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        18,
+        12,
+        365,
+        363
+      ],
+      "transparent_pixels": 89850,
+      "sha256": "09d78c749231abb9a959570488555078720ddaf5441161204545e5bc91dfe006",
+      "alpha_coverage": 0.33344359553717323
+    },
+    {
+      "action": "hit",
+      "column": 0,
+      "index": 16,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/000.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-00.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        18,
+        12,
+        365,
+        363
+      ],
+      "transparent_pixels": 89680,
+      "sha256": "28f84cb0835f6ef2e69e82f5bac922406ad3617413002409324d9fa90356eb62",
+      "alpha_coverage": 0.3344363542943219
+    },
+    {
+      "action": "hit",
+      "column": 1,
+      "index": 17,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/006.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-01.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        17,
+        12,
+        365,
+        363
+      ],
+      "transparent_pixels": 89191,
+      "sha256": "ab7f4c858035b1adb2733c4e9d0ea4aad4374720baf91d1187f60861c74b5c8c",
+      "alpha_coverage": 0.33418149594907404
+    },
+    {
+      "action": "hit",
+      "column": 2,
+      "index": 18,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/012.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-02.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        17,
+        33,
+        366,
+        361
+      ],
+      "transparent_pixels": 93176,
+      "sha256": "1a37cd4b293a78944208cb311c4ebd86aa0edd7bcd034690f124f939921a5868",
+      "alpha_coverage": 0.3272513595281863
+    },
+    {
+      "action": "hit",
+      "column": 3,
+      "index": 19,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/018.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-03.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        21,
+        36,
+        367,
+        363
+      ],
+      "transparent_pixels": 94639,
+      "sha256": "a4f0d00d94b3c761c59adf58b35a3f546bb307b2f600adbe95adbc783c94045d",
+      "alpha_coverage": 0.31927495553342866
+    },
+    {
+      "action": "hit",
+      "column": 4,
+      "index": 20,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/024.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-04.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        16,
+        45,
+        368,
+        363
+      ],
+      "transparent_pixels": 93914,
+      "sha256": "6daf6234ecfc2e6a862770f2d20195ac3a11f4780c6a3f2db2fcc2772a76d4ff",
+      "alpha_coverage": 0.3225471845639297
+    },
+    {
+      "action": "hit",
+      "column": 5,
+      "index": 21,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/032.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-05.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        15,
+        38,
+        368,
+        363
+      ],
+      "transparent_pixels": 93126,
+      "sha256": "63985ba341876a81766d178838066392fd8b9f8567cd7d3e8919a35f97fce492",
+      "alpha_coverage": 0.32858208550347223
+    },
+    {
+      "action": "hit",
+      "column": 6,
+      "index": 22,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/040.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-06.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        16,
+        21,
+        367,
+        363
+      ],
+      "transparent_pixels": 88967,
+      "sha256": "bccacd2cc0e2d95de08fd9d4f4146d3949243cb0f9abf4ba5adf502eda473af0",
+      "alpha_coverage": 0.33983457478043305
+    },
+    {
+      "action": "hit",
+      "column": 7,
+      "index": 23,
+      "source": "assets/generated/comfy/raw/serpent-motion/wan-hit/048.png",
+      "path": "assets/generated/comfy/serpent-motion-frames/hit-07.png",
+      "size": [
+        384,
+        384
+      ],
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "alpha_bbox": [
+        18,
+        12,
+        365,
+        363
+      ],
+      "transparent_pixels": 89234,
+      "sha256": "5b70eebb40bb8b0abd1382b0d5ad25b8cac1c43868f8eaa6273a8201dd1de37b",
+      "alpha_coverage": 0.33783355247480934
+    }
+  ],
+  "validation": {
+    "all24_unique": true,
+    "all24_alpha_bbox_strictly_inside": true,
+    "coverage_range": [
+      0.3140902650122549,
+      0.3436496576712282
+    ]
+  }
+}
