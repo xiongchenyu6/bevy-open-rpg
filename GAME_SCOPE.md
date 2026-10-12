@@ -433,15 +433,10 @@ ending. This keeps boss encounters distinct across the longer route.
   adding a map. The run-mode spine now names 41 authored journey beats across
   seven chapters, each with a place, objective, route-gate prompt, one-shot
   entry dialogue, and a persistent main-task receipt, so the procedural maps
-  read as a continuous RPG trip instead of isolated random rooms. Each receipt
-  moves through `待签收`, `已追踪`, and gate-side `已归档` states, and each chapter
+  read as a continuous RPG trip instead of isolated random rooms. Each route objective is automatically tracked on entry and archived on exit, and each chapter
   boss adds a named 章印 so chapter completion has persistent end-of-act feedback.
-  Run-mode now has an explicit 600-minute target ledger (`CHAPTER_PACING`) split
-  across the seven chapters, and each stage derives an estimated minute budget
-  from its required marker mix. Main-task contracts and run HUD summaries show
-  the current stage's required content list, approximate minutes, chapter focus,
-  and `全旅程目标 10小时`, so the 10-hour target is visible inside the route rather
-  than only documented here. Each beat also owns a required content mix, so
+  `CHAPTER_PACING` retains an authoring estimate of 600 minutes; this is a design
+  target, not measured playtime or a promise displayed to players. Each beat also owns a required content mix, so
   village/town beats can guarantee story, market, or rest moments while dungeon
   beats guarantee fights, elite pressure, events, and visible route puzzle maps
   inject required mechanism beats.
@@ -668,3 +663,43 @@ instead of replacing the main romance bond chain.
   mansion-mirror, thunder-drum, finale-lamp, shrine-offering, and route-mark
   frameworks with deeper multi-step local variants and stronger NPC follow-up
   reactions.
+
+## Main-run narrative continuity
+
+The default roguelike route uses ordered chapter scenes rather than randomly
+shuffling main-story dialogue. Chapter cards connect the route through clues:
+赤鬼残气 → 洞天黑鳞 → 苏州疫水 → 白河镇水符 → 国师密图 → 南疆锁阵
+→ 心渊水源. These cards recap the previous chapter and establish the next
+objective. Party membership follows existing chapter boundaries; Linger travels
+with Xiaoyao after the first stage rather than waiting at home. Southern scenes
+prepare the lock-array encounter before its boss resolves it. Finale scenes
+progress from illusion, through home and companions, to the third-bell farewell.
+Optional encounters remain random and do not establish mandatory plot facts.
+
+## Optional stories and reward design
+
+The default walkable run includes two authored travelling side arcs (阿狸’s
+three encounters and 苏弦’s two encounters) alongside map-specific ambient
+events and named local-guide errands. The fox relationship can be repaired
+after refusing the first rescue; the musician remembers funding versus quiet
+listening. Their final gifts change survival, guarding, draining, or warding,
+and actual resolved choices appear in the inventory journal and ending echoes.
+Chapter-primary story rewards now offer specific skills/relics as well as
+resources, so story choices help form a combat build. Costs are paid before
+chance, reward receipts use actual gains, and a resolved scene cannot pay twice.
+Design and verification contracts: `docs/changes/side-stories-and-rewards-2026-10-07.md`.
+
+## Verified location/difficulty repair scope
+
+All fifteen active map kinds now use matching dimensional landmarks and pure
+surface textures. Courtyards, canals/crossings and ritual partitions vary return
+visits; bridges retain visible water while supporting movement, and celestial
+arches have open centres. Location identity is visible in game, not only prose.
+Portrait camera/HUD follow the real viewport. Buildings use footprint visibility
+and contacts/objectives avoid roof overhangs. Combat reports retain enemy damage
+when allies heal/restore mana, with capped-restoration receipts.
+
+The last two chapters cap boss attack scaling at1.20; learned skills practise
++2/+4/+8/+12 across chapters4–7. Controlled novice policies with actual mixed
+main-story rewards finish32/32 seeds, with substantially different HP/potion/time
+costs. This is reproducible balance evidence, not proof of human enjoyment.

@@ -2,12 +2,13 @@
 name = "love-rpg"
 version = "0.1.0"
 edition = "2024"
+default-run = "love-rpg"
 
 [dependencies]
 # default-features disabled to avoid native system deps we don't need:
 # bevy_audio -> alsa-sys, bevy_gilrs -> libudev-sys. This is a 2D sprite+UI game.
 # Windowing is Wayland-only, following ../protect-carrot's native setup.
-bevy = { version = "0.19.0", default-features = false, features = [
+bevy = { version = "0.19.1", default-features = false, features = [
   "std",
   "async_executor",
   "bevy_asset",

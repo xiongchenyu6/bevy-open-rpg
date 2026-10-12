@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const BASE = process.env.COMFY_BASE || "http://127.0.0.1:18188";
+const DEVICE = process.env.COMFY_DEVICE || "gpu:1";
 const RAW_DIR = "assets/generated/comfy/raw";
 const MANIFEST = "assets/generated/comfy/manifest.json";
 const STEPS = Number(process.env.COMFY_STEPS || 24);
@@ -414,6 +415,7 @@ writeFileSync(
     {
       base: BASE,
       model: "flux1-dev-fp8.safetensors",
+      device: DEVICE,
       steps: STEPS,
       guidance: GUIDANCE,
       seedOffset: SEED_OFFSET,
@@ -449,25 +451,28 @@ async function generate(asset, out, seed) {
 function buildWorkflow(prompt, seed, size) {
   return {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "flux1-dev-fp8.safetensors" } },
+    "11": { class_type: "SelectModelDevice", inputs: { model: ["1", 0], device: DEVICE } },
+    "12": { class_type: "SelectCLIPDevice", inputs: { clip: ["1", 1], device: DEVICE } },
+    "13": { class_type: "SelectVAEDevice", inputs: { vae: ["1", 2], device: DEVICE } },
     "2": {
       class_type: "CLIPTextEncodeFlux",
       inputs: {
-        clip: ["1", 1],
+        clip: ["12", 0],
         clip_l: `${prompt}. ${AVOID}`,
         t5xxl: `${prompt}. ${AVOID}`,
         guidance: GUIDANCE,
       },
     },
-    "3": { class_type: "EmptyLatentImage", inputs: { width: size, height: size, batch_size: 1 } },
+    "3": { class_type: "EmptySD3LatentImage", inputs: { width: size, height: size, batch_size: 1 } },
     "4": { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     "5": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
-    "6": { class_type: "BasicScheduler", inputs: { model: ["1", 0], scheduler: "simple", steps: STEPS, denoise: 1.0 } },
-    "7": { class_type: "BasicGuider", inputs: { model: ["1", 0], conditioning: ["2", 0] } },
+    "6": { class_type: "BasicScheduler", inputs: { model: ["11", 0], scheduler: "simple", steps: STEPS, denoise: 1.0 } },
+    "7": { class_type: "BasicGuider", inputs: { model: ["11", 0], conditioning: ["2", 0] } },
     "8": {
       class_type: "SamplerCustomAdvanced",
       inputs: { noise: ["4", 0], guider: ["7", 0], sampler: ["5", 0], sigmas: ["6", 0], latent_image: ["3", 0] },
     },
-    "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["1", 2] } },
+    "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["13", 0] } },
     "10": { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: `bevy_open_rpg/${Date.now()}` } },
   };
 }

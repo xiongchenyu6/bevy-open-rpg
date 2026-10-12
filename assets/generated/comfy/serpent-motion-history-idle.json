@@ -1,0 +1,245 @@
+{
+  "96b4f91f-1c89-4bfc-82c3-2fc42f403a7c": {
+    "prompt": [
+      20173,
+      "96b4f91f-1c89-4bfc-82c3-2fc42f403a7c",
+      {
+        "1": {
+          "class_type": "UNETLoader",
+          "inputs": {
+            "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+            "weight_dtype": "default"
+          }
+        },
+        "2": {
+          "class_type": "SelectModelDevice",
+          "inputs": {
+            "model": [
+              "1",
+              0
+            ],
+            "device": "gpu:1"
+          }
+        },
+        "3": {
+          "class_type": "DualCLIPLoader",
+          "inputs": {
+            "clip_name1": "clip_l.safetensors",
+            "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+            "type": "flux",
+            "device": "cpu"
+          }
+        },
+        "4": {
+          "class_type": "SelectCLIPDevice",
+          "inputs": {
+            "clip": [
+              "3",
+              0
+            ],
+            "device": "gpu:1"
+          }
+        },
+        "5": {
+          "class_type": "VAELoader",
+          "inputs": {
+            "vae_name": "ae.safetensors"
+          }
+        },
+        "6": {
+          "class_type": "SelectVAEDevice",
+          "inputs": {
+            "vae": [
+              "5",
+              0
+            ],
+            "device": "gpu:1"
+          }
+        },
+        "7": {
+          "class_type": "LoadImage",
+          "inputs": {
+            "image": "painterly-baseline.png"
+          }
+        },
+        "8": {
+          "class_type": "FluxKontextImageScale",
+          "inputs": {
+            "image": [
+              "7",
+              0
+            ]
+          }
+        },
+        "9": {
+          "class_type": "VAEEncode",
+          "inputs": {
+            "pixels": [
+              "8",
+              0
+            ],
+            "vae": [
+              "6",
+              0
+            ]
+          }
+        },
+        "10": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "clip": [
+              "4",
+              0
+            ],
+            "text": "Dramatically change the anatomical pose of this creature as instructed. Do not preserve the original S shaped stance. Reillustrate the same creature in the requested action pose. Preserve this exact ornate blue scaled Chinese water dragon, golden eye, three long ivory horns, cyan cheek fins, indigo dorsal spikes, pale armored belly and connected cyan fan tail, detailed volumetric painted fantasy RPG style. Solid intact contiguous skin, no holes. Idle pose: raise upper neck upright and bend head slightly downward, fan tail lifted, lower body remains broad coil. Mouth closed. Single full creature centered, fully visible, facing left, plain white background, no shadows, no scenery, no text, no extra creatures. Internal anatomy changes, not image rotation or translation."
+          }
+        },
+        "11": {
+          "class_type": "ReferenceLatent",
+          "inputs": {
+            "conditioning": [
+              "10",
+              0
+            ],
+            "latent": [
+              "9",
+              0
+            ]
+          }
+        },
+        "12": {
+          "class_type": "FluxGuidance",
+          "inputs": {
+            "conditioning": [
+              "11",
+              0
+            ],
+            "guidance": 7.0
+          }
+        },
+        "13": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "clip": [
+              "4",
+              0
+            ],
+            "text": ""
+          }
+        },
+        "14": {
+          "class_type": "EmptySD3LatentImage",
+          "inputs": {
+            "width": 768,
+            "height": 768,
+            "batch_size": 1
+          }
+        },
+        "15": {
+          "class_type": "KSampler",
+          "inputs": {
+            "model": [
+              "2",
+              0
+            ],
+            "seed": 202610700,
+            "steps": 32,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+              "12",
+              0
+            ],
+            "negative": [
+              "13",
+              0
+            ],
+            "latent_image": [
+              "14",
+              0
+            ],
+            "denoise": 1.0
+          }
+        },
+        "16": {
+          "class_type": "VAEDecode",
+          "inputs": {
+            "samples": [
+              "15",
+              0
+            ],
+            "vae": [
+              "6",
+              0
+            ]
+          }
+        },
+        "17": {
+          "class_type": "SaveImage",
+          "inputs": {
+            "images": [
+              "16",
+              0
+            ],
+            "filename_prefix": "love-rpg-serpent-probe-v4-idle"
+          }
+        }
+      },
+      {
+        "client_id": "love-rpg-serpent-motion",
+        "create_time": 1791775324679
+      },
+      [
+        "17"
+      ]
+    ],
+    "outputs": {
+      "17": {
+        "images": [
+          {
+            "filename": "love-rpg-serpent-probe-v4-idle_00001_.png",
+            "subfolder": "",
+            "type": "output"
+          }
+        ]
+      }
+    },
+    "status": {
+      "status_str": "success",
+      "completed": true,
+      "messages": [
+        [
+          "execution_start",
+          {
+            "prompt_id": "96b4f91f-1c89-4bfc-82c3-2fc42f403a7c",
+            "timestamp": 1791775324679
+          }
+        ],
+        [
+          "execution_cached",
+          {
+            "nodes": [],
+            "prompt_id": "96b4f91f-1c89-4bfc-82c3-2fc42f403a7c",
+            "timestamp": 1791775324682
+          }
+        ],
+        [
+          "execution_success",
+          {
+            "prompt_id": "96b4f91f-1c89-4bfc-82c3-2fc42f403a7c",
+            "timestamp": 1791775377261
+          }
+        ]
+      ]
+    },
+    "meta": {
+      "17": {
+        "node_id": "17",
+        "display_node": "17",
+        "parent_node": null,
+        "real_node_id": "17"
+      }
+    }
+  }
+}

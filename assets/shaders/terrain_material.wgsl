@@ -27,8 +27,12 @@ fn terrain_id(coord: vec2<i32>) -> u32 {
     return u32(round(textureLoad(tile_ids, sample_coord, 0).r * 255.0));
 }
 
-fn id_weight(id: u32, expected: u32) -> f32 {
-    return select(0.0, 1.0, id == expected);
+// Paths and encounter grass are walkable; cliffs and water are distinct obstacles.
+fn boundary_class(id: u32) -> u32 {
+    // Architecture blocks movement like a wall, but uses ground underneath.
+    let blocked = select(select(0u, id, id >= 2u), 2u, id == 4u);
+    // A bridge displays the same water but its deck is traversable.
+    return select(blocked, 0u, id == 5u);
 }
 
 fn ping_pong(value: f32, span: f32) -> f32 {
@@ -45,51 +49,26 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         (material.map.y - 1.0) * 0.5 - mesh.world_position.y / tile_size,
     );
 
-    let base = vec2<i32>(floor(grid));
-    let cell_uv = fract(grid);
-    let blend_width = material.map.w;
-    let edge_warp = vec2<f32>(
-        sin((grid.y + material.phase.y) * 2.17)
-            + 0.55 * sin((grid.y - material.phase.x) * 5.11),
-        sin((grid.x + material.phase.x) * 2.43)
-            + 0.55 * sin((grid.x + material.phase.y) * 4.79),
-    ) * 0.075;
-    let blend = smoothstep(
-        vec2<f32>(0.5 - blend_width),
-        vec2<f32>(0.5 + blend_width),
-        cell_uv + edge_warp,
-    );
-    let corner_weights = vec4<f32>(
-        (1.0 - blend.x) * (1.0 - blend.y),
-        blend.x * (1.0 - blend.y),
-        (1.0 - blend.x) * blend.y,
-        blend.x * blend.y,
-    );
-    let ids = vec4<u32>(
-        terrain_id(base),
-        terrain_id(base + vec2<i32>(1, 0)),
-        terrain_id(base + vec2<i32>(0, 1)),
-        terrain_id(base + vec2<i32>(1, 1)),
-    );
-
-    let weights = vec4<f32>(
-        dot(corner_weights, vec4<f32>(
-            id_weight(ids.x, 0u), id_weight(ids.y, 0u),
-            id_weight(ids.z, 0u), id_weight(ids.w, 0u),
-        )),
-        dot(corner_weights, vec4<f32>(
-            id_weight(ids.x, 1u), id_weight(ids.y, 1u),
-            id_weight(ids.z, 1u), id_weight(ids.w, 1u),
-        )),
-        dot(corner_weights, vec4<f32>(
-            id_weight(ids.x, 2u), id_weight(ids.y, 2u),
-            id_weight(ids.z, 2u), id_weight(ids.w, 2u),
-        )),
-        dot(corner_weights, vec4<f32>(
-            id_weight(ids.x, 3u), id_weight(ids.y, 3u),
-            id_weight(ids.z, 3u), id_weight(ids.w, 3u),
-        )),
-    );
+    // Grid coordinates address tile centres. Ownership switches at the real
+    // collision edge, never through a four-way alpha blend of unrelated art.
+    let cell = vec2<i32>(floor(grid + vec2<f32>(0.5)));
+    let cell_uv = fract(grid + vec2<f32>(0.5));
+    let id = terrain_id(cell);
+    let surface_class = boundary_class(id);
+    let left_class = boundary_class(terrain_id(cell + vec2<i32>(-1, 0)));
+    let right_class = boundary_class(terrain_id(cell + vec2<i32>(1, 0)));
+    let top_class = boundary_class(terrain_id(cell + vec2<i32>(0, -1)));
+    let bottom_class = boundary_class(terrain_id(cell + vec2<i32>(0, 1)));
+    let edge_distance = min(min(
+        select(1.0, cell_uv.x, surface_class != left_class),
+        select(1.0, 1.0 - cell_uv.x, surface_class != right_class)), min(
+        select(1.0, cell_uv.y, surface_class != top_class),
+        select(1.0, 1.0 - cell_uv.y, surface_class != bottom_class)));
+    let wall_distance = min(min(
+        select(1.0, cell_uv.x, left_class == 2u),
+        select(1.0, 1.0 - cell_uv.x, right_class == 2u)), min(
+        select(1.0, cell_uv.y, top_class == 2u),
+        select(1.0, 1.0 - cell_uv.y, bottom_class == 2u)));
 
     let warp = vec2<f32>(
         sin((grid.y + material.phase.y) * 0.73),
@@ -102,13 +81,36 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     );
     let texture_uv = source / material.sample.x;
 
-    let floor_color = textureSample(floor_texture, floor_sampler, texture_uv) * material.floor_tint;
-    let grass_color = textureSample(grass_texture, grass_sampler, texture_uv) * material.grass_tint;
+    // Pure surface art is resolution-independent and has no painted objects.
+    let surface_uv = (source - vec2<f32>(material.sample.y)) / material.sample.z;
+    // Samples remain outside divergent branches to preserve implicit derivatives.
+    // Pure seamless ground repeats directly: reflecting cobbles created large
+    // artificial diamond patterns across courtyards. A rotated world sample
+    // keeps paving orientation independent of the collision grid.
+    let ground_uv = fract(vec2<f32>(
+        sample_grid.x * 0.966 - sample_grid.y * 0.259,
+        sample_grid.x * 0.259 + sample_grid.y * 0.966,
+    ) * (material.sample.w / material.sample.z));
+    let floor_color = textureSample(floor_texture, floor_sampler, ground_uv) * material.floor_tint;
+    let grass_color = textureSample(grass_texture, grass_sampler, ground_uv) * material.grass_tint;
     let wall_color = textureSample(wall_texture, wall_sampler, texture_uv) * material.wall_tint;
-    let water_color = textureSample(water_texture, water_sampler, texture_uv) * material.water_tint;
-    let color = floor_color * weights.x
-        + grass_color * weights.y
-        + wall_color * weights.z
-        + water_color * weights.w;
+    let water_color = textureSample(water_texture, water_sampler, surface_uv) * material.water_tint;
+    var color = select(floor_color, grass_color, id == 1u);
+    color = select(color, wall_color, id == 2u);
+    color = select(color, water_color, id == 3u || id == 5u);
+
+    // Brush-like contact shading belongs to the existing surface; it cannot
+    // introduce a fake island, rock or walkway from the adjacent texture.
+    let grain = 0.85 + 0.15 * sin(grid.x * 29.3 + sin(grid.y * 17.1));
+    let contact = (1.0 - smoothstep(0.0, material.map.w, edge_distance)) * grain;
+    let wall_shadow = 1.0 - smoothstep(0.0, 0.18, wall_distance);
+    if surface_class == 0u {
+        color = vec4<f32>(color.rgb * (1.0 - wall_shadow * 0.25 - contact * 0.10), 1.0);
+    } else if surface_class == 2u {
+        color = vec4<f32>(color.rgb * (1.0 + contact * 0.18), 1.0);
+    } else {
+        color = vec4<f32>(color.rgb * (1.0 - contact * 0.38)
+            + vec3<f32>(0.10, 0.17, 0.16) * contact * 0.25, 1.0);
+    }
     return vec4<f32>(color.rgb, 1.0);
 }

@@ -3,8 +3,8 @@
 Key discoveries and decisions for resuming work.
 
 ## Engine version
-- Targeting **Bevy 0.19.0**, NOT the scaffold's default 0.18.1. Reason: the local
-  `bevy-help` docs cache is 0.19.0, so matching code to available docs avoids API churn.
+- Preserve **Bevy 0.19.1**, verified in Cargo.toml/lock. The local bevy-help
+  docs cache is missing; consult installed 0.19.1 crate sources for exact APIs.
 
 ## Build environment (important)
 - Host is NixOS-like; native runtime libraries exist in `/nix/store` but are
@@ -27,10 +27,10 @@ Key discoveries and decisions for resuming work.
 - Text: `Text`/`Text2d` are newtypes (`.0` string), `TextFont{font, font_size}` (f32 → FontSize
   via .into()), `TextColor`, `BackgroundColor`; layout via `Node`.
 - `Sprite::from_color(color, size)` for solid sprites (no image asset needed).
-- Default embedded font is Latin-only → bundled `assets/fonts/unifont.otf` for Chinese.
+- Default embedded font is Latin-only → bundled `assets/fonts/NotoSansCJKsc-Regular.otf` for Chinese.
 
 ## Font
-- `unifont.otf` copied from nix store (`unifont-17.0.04`). Single-face OTF covering CJK.
+- Noto Sans CJK SC Regular (SIL OFL) supplies smooth CJK text; license shipped with the font.
   Noto/Sarasa were `.ttc`/variable collections → skipped to avoid extraction complexity.
 
 ## Headless capture environment (hard-won)
@@ -70,3 +70,30 @@ Key discoveries and decisions for resuming work.
 - rogue capture preset 用节奏脚本(非魔法帧号):非战斗每 18 帧 confirm、
   每 90 帧 down;战斗内每 14 帧 confirm(1.6x tempo 下 timer≈15 帧)。
   title_input 会用墙钟异或 Rng,故 rogue 捕获非严格确定,但足够出证明视频。
+
+## Side-story integration findings (2026-10-07)
+
+- Keep visited Guide markers `cleared` for navigation, but `is_visitable()`
+  preserves interaction and respawn visuals. A permanently uncleared guide
+  traps the flow-field controller even though movement is legal.
+- Narrative chain stages advance after paid/resolved choices, never on draw.
+  `narrative_log` is the one-time payout ledger and inventory record.
+- Fallback and learned spell costs must include both relic and hex modifiers.
+  Input, UI, inventory and capture now share their respective cost functions.
+- Modern skills previously bypassed spell relic/camp damage. Apply bonuses
+  once per cast (not each Flurry hit); do not buff wards/heals with damage relics.
+- Final evidence: `screenshots/result/26/`, 226 tests, 102 choice contracts,
+  928 actual-rule combats, full41-stage PASS plus completed two side arcs.
+
+## Player review (October 8)
+- Main objectives now track on map entry and archive directly at portals. Normal
+  nearby Space/Enter replaces automatic contact dialogues and task paperwork.
+- Shared dialogue UI lives in dialogue_ui.rs; six real retryable mechanisms in
+  puzzle.rs. Completion settles exactly once in scene movement.
+- Native player evidence requires the ordinary window and explicit owned Wayland
+  display. One-shot wlrctl destroyed its virtual device before meaningful input;
+  tools/native_wayland_pointer.sh keeps pointer capability alive and holds clicks.
+- Baseline imperfect combat:39 timeouts; capped boss healing and chapter skill
+  mastery:0 in the same96 journeys. HP-only0/32, Notice70 18/32, Fumble20 32/32:
+  these exclude overworld rewards and do not establish human novice difficulty.
+- Review diary and limitations: docs/playtests/player-review-2026-10-07.md.

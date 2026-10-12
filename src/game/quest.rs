@@ -6538,7 +6538,7 @@ impl QuestLog {
                 vec![
                     "月洞祭司：水纹倒映出了你最怕失去的东西。".to_string(),
                     "月洞祭司：月魄妖已醒，若你退一步，洞门会永远关上。".to_string(),
-                    "【Boss】月魄妖现身。".to_string(),
+                    "【首领】月魄妖现身。".to_string(),
                 ]
             }
             (QuestRole::CavePriestess, _) => {
@@ -6593,7 +6593,7 @@ impl QuestLog {
             (QuestRole::RiverBoatman, QuestStage::ConfrontRiverDemon) => {
                 vec![
                     "摆渡人：木牌在响，它就在船底，别让河灯全灭！".to_string(),
-                    "【Boss】河魇蛟破浪而出。".to_string(),
+                    "【首领】河魇蛟破浪而出。".to_string(),
                 ]
             }
             (QuestRole::RiverBoatman, _) => {
@@ -6651,7 +6651,7 @@ impl QuestLog {
                 vec![
                     "【任务推进】祠灰归位，瘴母根苏醒。".to_string(),
                     "祠祝：根在祠下，斩不断它，药再多也无用。".to_string(),
-                    "【Boss】瘴母根破土而出。".to_string(),
+                    "【首领】瘴母根破土而出。".to_string(),
                 ]
             }
             (QuestRole::ShrineKeeper, QuestStage::ConfrontMiasmaRoot) => {
@@ -6704,7 +6704,7 @@ impl QuestLog {
                 vec![
                     "【任务推进】密札合拢，镜阵显出真名。".to_string(),
                     "偏院内线：照影国师就在正堂，他借镜阵吞了许多人的证词。".to_string(),
-                    "【Boss】照影国师现身。".to_string(),
+                    "【首领】照影国师现身。".to_string(),
                 ]
             }
             (QuestRole::MansionSpy, QuestStage::ConfrontMirrorMinister) => {
@@ -6761,7 +6761,7 @@ impl QuestLog {
                 vec![
                     "【任务推进】雷纹玉牒归位，古路灵门显形。".to_string(),
                     "百越族长：玉牒只让雷声听见你，真正的考验还在雷麟面前。".to_string(),
-                    "【Boss】雷麟踏云而至。".to_string(),
+                    "【首领】雷麟踏云而至。".to_string(),
                 ]
             }
             (QuestRole::TribalChief, QuestStage::ConfrontThunderQilin) => {
@@ -6794,7 +6794,7 @@ impl QuestLog {
                 vec![
                     "【任务推进】忆梦珠归位，灵渊水影显形。".to_string(),
                     "守灯人：你们已经改写灯中的旧梦，剩下的宿命只能亲手斩断。".to_string(),
-                    "【Boss】宿命水影卷起灵渊。".to_string(),
+                    "【首领】宿命水影卷起灵渊。".to_string(),
                 ]
             }
             (QuestRole::FinalOracle, QuestStage::ConfrontDreamEclipse) => {
@@ -6891,7 +6891,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::MoonCave);
                 self.stage = QuestStage::ReturnToLinger;
                 Some(format!(
-                    "【Boss】月魄妖退散，获得月魄印。回村找赵灵儿。\n{seal_line}"
+                    "【首领】月魄妖退散，获得月魄印。回村找赵灵儿。\n{seal_line}"
                 ))
             }
             (BossKind::RiverDemon, QuestStage::ConfrontRiverDemon) => {
@@ -6900,7 +6900,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::RiverMedicine);
                 self.stage = QuestStage::RiverTownComplete;
                 Some(format!(
-                    "【Boss】河魇蛟沉入江心，获得河心珠。江岸小镇暂得安宁。\n{seal_line}"
+                    "【首领】河魇蛟沉入江心，获得河心珠。江岸小镇暂得安宁。\n{seal_line}"
                 ))
             }
             (BossKind::MiasmaRoot, QuestStage::ConfrontMiasmaRoot) => {
@@ -6909,7 +6909,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::PlagueRain);
                 self.stage = QuestStage::PlagueVillageComplete;
                 Some(format!(
-                    "【Boss】瘴母根断裂，获得解瘴符。瘴雨村的雨终于清了。\n{seal_line}"
+                    "【首领】瘴母根断裂，获得解瘴符。瘴雨村的雨终于清了。\n{seal_line}"
                 ))
             }
             (BossKind::MirrorMinister, QuestStage::ConfrontMirrorMinister) => {
@@ -6918,7 +6918,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::CapitalMirror);
                 self.stage = QuestStage::CapitalIntrigueComplete;
                 Some(format!(
-                    "【Boss】照影国师镜阵碎裂，获得照影印。云都府邸暗案暂告一段落。\n{seal_line}"
+                    "【首领】照影国师镜阵碎裂，获得照影印。云都府邸暗案暂告一段落。\n{seal_line}"
                 ))
             }
             (BossKind::ThunderQilin, QuestStage::ConfrontThunderQilin) => {
@@ -6927,7 +6927,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::SouthernThunder);
                 self.stage = QuestStage::SouthernRoadComplete;
                 Some(format!(
-                    "【Boss】雷麟收起天雷，获得雷麟角。南疆灵道重新亮起。\n{seal_line}"
+                    "【首领】雷麟收起天雷，获得雷麟角。南疆灵道重新亮起。\n{seal_line}"
                 ))
             }
             (BossKind::DreamEclipse, QuestStage::ConfrontDreamEclipse) => {
@@ -6936,7 +6936,7 @@ impl QuestLog {
                 let seal_line = self.record_chapter_seal_line(Chapter::FinalDream);
                 self.stage = QuestStage::FinaleComplete;
                 Some(format!(
-                    "【Boss】宿命水影散入灵渊，获得宿命印。终门后的水声终于平息。\n{seal_line}"
+                    "【首领】宿命水影散入灵渊，获得宿命印。终门后的水声终于平息。\n{seal_line}"
                 ))
             }
             _ => None,

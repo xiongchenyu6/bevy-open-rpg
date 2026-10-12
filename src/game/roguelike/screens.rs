@@ -1,12 +1,12 @@
 //! Title, post-battle Reward, and Ending screens for the roguelike run.
 
+use crate::game::ui as theme;
 use bevy::prelude::*;
-use bevy::ui::widget::NodeImageMode;
 
 use super::super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::super::quest::QuestLog;
 use super::content;
-use super::event;
+use super::narrative;
 use super::{CHAPTER_COUNT, FightRank, Relic, RunOutcome, RunState};
 use crate::game::state::AppState;
 
@@ -16,6 +16,30 @@ use crate::game::state::AppState;
 
 #[derive(Component)]
 pub struct TitleUi;
+
+#[derive(Component)]
+pub(super) struct StartButton;
+
+pub fn title_pointer_input(
+    mut intent: ResMut<Intent>,
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (With<StartButton>, Changed<Interaction>),
+    >,
+) {
+    for (interaction, mut background, mut border) in &mut buttons {
+        let hovered = *interaction != Interaction::None;
+        background.0 = if hovered {
+            Color::srgb(0.17, 0.19, 0.16)
+        } else {
+            theme::SURFACE
+        };
+        *border = BorderColor::all(if hovered { theme::GOLD } else { theme::EDGE });
+        if *interaction == Interaction::Pressed {
+            intent.confirm = true;
+        }
+    }
+}
 
 /// Full-screen backdrop image plus a dark letterbox band so overlay text
 /// stays readable on any art.
@@ -50,20 +74,13 @@ pub fn spawn_title(mut commands: Commands, font: Res<GameFont>, asset_server: Re
         ))
         .with_children(|parent| {
             parent
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(14.0),
-                        padding: UiRect::axes(Val::Px(46.0), Val::Px(22.0)),
-                        ..default()
-                    },
-                    ImageNode {
-                        image: asset_server.load("ui/panel_frame.png"),
-                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
-                        ..default()
-                    },
-                ))
+                .spawn((theme::panel(Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(14.0),
+                    padding: UiRect::axes(Val::Px(46.0), Val::Px(22.0)),
+                    ..default()
+                }),))
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new("御剑行 · 轮回"),
@@ -73,17 +90,37 @@ pub fn spawn_title(mut commands: Commands, font: Res<GameFont>, asset_server: Re
                     panel.spawn((
                         Text::new("仙侠肉鸽 · 一局一世 · 随机路途 · 剧情织缘"),
                         font.text_font(22.0),
-                        TextColor(Color::srgb(0.82, 0.87, 0.95)),
+                        TextColor(theme::MUTED),
                     ));
                     panel.spawn((
                         Text::new("没有练级,只有抉择:法宝、奇遇与誓言,决定这一世的结局。"),
                         font.text_font(18.0),
                         TextColor(Color::srgba(0.82, 0.87, 0.95, 0.8)),
                     ));
+                    panel
+                        .spawn((
+                            Button,
+                            StartButton,
+                            Node {
+                                padding: UiRect::axes(Val::Px(30.0), Val::Px(12.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(7.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme::SURFACE),
+                            BorderColor::all(theme::EDGE),
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("踏入轮回"),
+                                font.text_font(26.0),
+                                TextColor(theme::GOLD),
+                            ));
+                        });
                     panel.spawn((
-                        Text::new("—— 按 空格 踏入轮回 ——"),
-                        font.text_font(26.0),
-                        TextColor(Color::srgb(0.55, 0.92, 1.0)),
+                        Text::new("WASD / 方向键移动 · 空格 / 回车交互 · Esc 行囊"),
+                        font.text_font(15.0),
+                        TextColor(theme::MUTED),
                     ));
                 });
         });
@@ -128,11 +165,8 @@ pub fn title_input(
     };
     rng.0 ^= (wall_nanos << 16) | 1;
     let mut run = RunState::new(&mut rng);
-    // 开局技能:御剑·斩保底输出,再随机拓一式(每局起手不同)。
-    run.skills.push(super::skill::skill_id(
-        super::skill::Element::Sword,
-        super::skill::SkillKind::Slash,
-    ));
+    // 开局技能:御剑·流光保底输出,再随机拓一式(每局起手不同)。
+    run.skills.push(super::skill::SkillId::SwordGleam);
     if let Some(id) = super::skill::roll_skill(&run.skills, &mut rng) {
         run.skills.push(id);
     }
@@ -197,7 +231,10 @@ pub struct RewardChoices {
 }
 
 #[derive(Component)]
-pub struct RewardListText;
+pub(crate) struct RewardCard(usize);
+
+#[derive(Component)]
+pub(crate) struct RewardCardText(usize);
 
 fn roll_relic_option(
     run: &RunState,
@@ -262,7 +299,7 @@ fn roll_rewards(run: &RunState, rng: &mut Rng) -> Vec<RewardOption> {
             options.push(RewardOption::Hex(h));
         }
     }
-    // 技能槽:约四成战利里可拓一式百技谱。
+    // 技能槽:约四成战利里可拓一式仙术秘卷。
     if options.len() < 3 && rng.chance(0.40) {
         if let Some(id) = super::skill::roll_skill(&run.skills, rng) {
             options.push(RewardOption::Skill(id));
@@ -290,90 +327,121 @@ pub fn spawn_reward(
     run: Option<Res<RunState>>,
     mut choices: ResMut<RewardChoices>,
     mut rng: ResMut<Rng>,
-    mut next: ResMut<NextState<AppState>>,
 ) {
     let Some(run) = run else {
-        next.set(AppState::Title);
         return;
     };
     choices.options = roll_rewards(&run, &mut rng);
     choices.selected = 0;
-
     let scope = || DespawnOnExit(AppState::Reward);
     spawn_screen_backdrop(&mut commands, &asset_server, "ui/reward_bg.png", scope());
     commands
         .spawn((
-            scope(),
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: Val::Px(20.0),
-                padding: UiRect::axes(Val::Px(60.0), Val::Px(30.0)),
                 ..default()
             },
+            scope(),
         ))
-        .with_children(|parent| {
-            let title = match run.current_fight {
-                Some(FightRank::Boss) => "章末大胜 · 择一战利",
-                Some(FightRank::Elite) => "力克精英 · 择一战利",
-                _ => "小胜一场 · 择一战利",
-            };
-            parent
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(18.0),
-                        padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
-                        ..default()
-                    },
-                    ImageNode {
-                        image: asset_server.load("ui/panel_frame.png"),
-                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
-                        ..default()
-                    },
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        Text::new(title),
-                        font.text_font(34.0),
-                        TextColor(Color::srgb(0.95, 0.85, 0.55)),
+        .with_children(|root| {
+            root.spawn(theme::panel(Node {
+                width: Val::Percent(84.0),
+                max_width: Val::Px(1080.0),
+                padding: UiRect::all(Val::Px(28.0)),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(22.0),
+                ..default()
+            }))
+            .with_children(|p| {
+                let title = match run.current_fight {
+                    Some(FightRank::Boss) => "章末大胜",
+                    Some(FightRank::Elite) => "力克精英",
+                    _ => "小胜一场",
+                };
+                p.spawn((
+                    Text::new(title),
+                    font.text_font(34.0),
+                    TextColor(theme::GOLD),
+                ));
+                if matches!(run.current_fight, Some(FightRank::Boss)) {
+                    let clear = run.chapter_clear_reward();
+                    p.spawn((
+                        Text::new(format!(
+                            "章印 · {}\n{}\n境界突破：气血 +{} · 灵力 +{} · 攻击 +{} · 防御 +{}\n仙术修习：第四至七章的效力加成依次为 +2、+4、+8、+12。",
+                            clear.seal, clear.line, clear.hp, clear.mp, clear.atk, clear.def
+                        )),
+                        font.text_font(17.0),
+                        TextColor(theme::TEXT),
                     ));
-                    if matches!(run.current_fight, Some(FightRank::Boss)) {
-                        let clear = run.chapter_clear_reward();
-                        let clear_line = if run.chapter + 1 >= CHAPTER_COUNT {
-                            format!("章印【{}】\n{}\n终章章印会写入此世结局。", clear.seal, clear.line)
-                        } else {
-                            format!(
-                                "章印【{}】\n{}\n境界突破：气血上限 +{} · 灵力上限 +{} · 攻击 +{} · 防御 +{}",
-                                clear.seal, clear.line, clear.hp, clear.mp, clear.atk, clear.def
-                            )
+                }
+                p.spawn((
+                    Text::new("择一带上，继续此世旅途"),
+                    font.text_font(17.0),
+                    TextColor(theme::MUTED),
+                ));
+                p.spawn(Node {
+                    width: Val::Percent(100.0),
+                    column_gap: Val::Px(16.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for (index, option) in choices.options.iter().enumerate() {
+                        let icon = match option {
+                            RewardOption::Relic(_) => "guard",
+                            RewardOption::Hex(_) => "combo",
+                            RewardOption::Skill(_) => "spell",
+                            RewardOption::Atk(_) => "attack",
+                            _ => "item",
                         };
-                        panel.spawn((
-                            Text::new(clear_line),
-                            font.text_font(18.0),
-                            TextColor(Color::srgb(0.78, 0.92, 1.0)),
-                        ));
+                        row.spawn((
+                            Button,
+                            RewardCard(index),
+                            Node {
+                                flex_grow: 1.0,
+                                flex_basis: Val::Px(0.0),
+                                min_height: Val::Px(240.0),
+                                padding: UiRect::all(Val::Px(22.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(18.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(8.0)),
+                                ..default()
+                            },
+                            BackgroundColor(theme::SURFACE),
+                            BorderColor::all(theme::EDGE),
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                ImageNode::new(asset_server.load(format!("ui/icons/{icon}.png"))),
+                                Node {
+                                    width: Val::Px(48.0),
+                                    height: Val::Px(48.0),
+                                    ..default()
+                                },
+                            ));
+                            card.spawn((
+                                RewardCardText(index),
+                                Text::new(option.label().replace("——", "\n\n")),
+                                font.text_font(18.0),
+                                TextColor(theme::TEXT),
+                            ));
+                        });
                     }
-                    panel.spawn((
-                        RewardListText,
-                        Text::new(""),
-                        font.text_font(24.0),
-                        TextColor(Color::srgb(0.9, 0.92, 0.95)),
-                    ));
-                    panel.spawn((
-                        Text::new("上/下 选择 · 空格 拿取"),
-                        font.text_font(16.0),
-                        TextColor(Color::srgba(0.85, 0.87, 0.9, 0.7)),
-                    ));
                 });
+                p.spawn((
+                    Text::new("↑ ↓ 选择 · 空格拿取 · 点击战利品"),
+                    font.text_font(14.0),
+                    TextColor(theme::MUTED),
+                ));
+            });
         });
 }
 
-pub fn reward_input(
+pub(crate) fn reward_input(
     mut commands: Commands,
     mut intent: ResMut<Intent>,
     mut choices: ResMut<RewardChoices>,
@@ -381,13 +449,23 @@ pub fn reward_input(
     mut stats: ResMut<PlayerStats>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<AppState>>,
-    mut list: Query<&mut Text, With<RewardListText>>,
+    interactions: Query<(&RewardCard, &Interaction), Changed<Interaction>>,
+    mut cards: Query<(&RewardCard, &mut BackgroundColor, &mut BorderColor)>,
+    mut labels: Query<(&RewardCardText, &mut TextColor)>,
 ) {
     let Some(mut run) = run else {
         next.set(AppState::Title);
         return;
     };
 
+    for (card, interaction) in &interactions {
+        if *interaction != Interaction::None {
+            choices.selected = card.0;
+        }
+        if *interaction == Interaction::Pressed {
+            intent.confirm = true;
+        }
+    }
     if intent.up && choices.selected > 0 {
         choices.selected -= 1;
     }
@@ -399,7 +477,7 @@ pub fn reward_input(
         let picked = choices.options[choices.selected].clone();
         match picked {
             RewardOption::Relic(relic) => {
-                event::grant_relic(relic, &mut stats, &mut run);
+                narrative::grant_relic(relic, &mut stats, &mut run);
             }
             RewardOption::HealHalf => {
                 stats.hp = (stats.hp + stats.max_hp / 2).min(stats.max_hp);
@@ -454,26 +532,57 @@ pub fn reward_input(
     }
     intent.clear();
 
-    if let Ok(mut text) = list.single_mut() {
-        text.0 = choices
+    for (card, mut background, mut border) in &mut cards {
+        let selected = card.0 == choices.selected;
+        background.0 = if selected {
+            Color::srgb(0.16, 0.18, 0.15)
+        } else {
+            theme::SURFACE
+        };
+        *border = BorderColor::all(if selected { theme::GOLD } else { theme::EDGE });
+    }
+    for (label, mut color) in &mut labels {
+        let grade_color = choices
             .options
-            .iter()
-            .enumerate()
-            .map(|(i, option)| {
-                if i == choices.selected {
-                    format!("▶ {}", option.label())
-                } else {
-                    format!("　 {}", option.label())
-                }
+            .get(label.0)
+            .map(|option| match option {
+                RewardOption::Relic(r) => r.grade().color(),
+                RewardOption::Hex(h) => h.grade().color(),
+                RewardOption::Skill(id) => super::skill::skill(*id).grade.color(),
+                _ => theme::TEXT,
             })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .unwrap_or(theme::TEXT);
+        *color = TextColor(grade_color);
     }
 }
 
 // ---------------------------------------------------------------------------
 // Ending
 // ---------------------------------------------------------------------------
+
+/// Three actual recorded decisions explain how this hero grew; never fabricate
+/// unseen choices or repeat the whole inventory ledger on the ending screen.
+fn ending_choice_recap(run: &RunState) -> Vec<String> {
+    run.narrative_log
+        .iter()
+        .rev()
+        .take(3)
+        .map(|record| {
+            let consequence = record
+                .receipt
+                .lines()
+                .filter(|line| line.starts_with("【实得回礼】"))
+                .map(|line| line.trim_start_matches("【实得回礼】"))
+                .collect::<Vec<_>>()
+                .join("；");
+            format!(
+                "{}：{}
+这次选择带来：{}",
+                record.title, record.choice, consequence
+            )
+        })
+        .collect()
+}
 
 pub fn spawn_ending(
     mut commands: Commands,
@@ -510,68 +619,90 @@ pub fn spawn_ending(
         .with_children(|parent| {
             parent
                 .spawn((
-                    Node {
+                    crate::game::ui_scroll::ScrollPanel,
+                    ScrollPosition::default(),
+                    theme::panel(Node {
+                        width: Val::Percent(100.0),
+                        max_width: Val::Px(1120.0),
+                        max_height: Val::Percent(86.0),
+                        overflow: Overflow::scroll_y(),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
                         row_gap: Val::Px(12.0),
                         padding: UiRect::axes(Val::Px(44.0), Val::Px(26.0)),
                         ..default()
-                    },
-                    ImageNode {
-                        image: asset_server.load("ui/panel_frame.png"),
-                        image_mode: NodeImageMode::Sliced(super::event::panel_slicer()),
-                        ..default()
-                    },
+                    }),
                 ))
-                .with_children(|panel| {
-                    for (i, line) in lines.iter().enumerate() {
-                        let (size, color) = if i == 0 {
-                            (34.0, Color::srgb(0.95, 0.85, 0.55))
-                        } else {
-                            (21.0, Color::srgb(0.9, 0.92, 0.95))
-                        };
-                        panel.spawn((Text::new(*line), font.text_font(size), TextColor(color)));
-                    }
-                    // 此世回响:链式奇遇的抉择在结局被记起。
-                    let mut echoes: Vec<&str> = Vec::new();
-                    match (run.fox_stage, run.fox_kind) {
-                        (3, k) if k > 0 => echoes.push("山径上救下的那只白狐,最终以九尾月华相送。"),
-                        (3, _) => echoes.push("你偶尔会想起山径上那一眼——凉薄,原来有价。"),
-                        (s, k) if s > 0 && k > 0 => echoes.push("桃溪山径的白狐,不知伤好了没有。"),
-                        _ => {}
-                    }
-                    if run.qin_stage >= 2 {
-                        echoes.push("宫墙外那支《雾散》,如今真的应验了。");
-                    } else if run.qin_stage == 1 {
-                        echoes.push("疫城渡口的琴声,后来再没听见过。");
-                    }
-                    for echo in echoes {
-                        panel.spawn((
-                            Text::new(echo),
-                            font.text_font(18.0),
-                            TextColor(Color::srgba(0.85, 0.78, 0.95, 0.9)),
-                        ));
-                    }
-                    panel.spawn((
-                        Text::new(format!("章印：{}", run.chapter_seal_summary())),
-                        font.text_font(18.0),
-                        TextColor(Color::srgba(0.78, 0.92, 1.0, 0.9)),
-                    ));
-                    panel.spawn((
-                        Text::new(run.chapter_vow_archive_summary()),
-                        font.text_font(18.0),
-                        TextColor(Color::srgba(0.88, 0.82, 1.0, 0.9)),
-                    ));
-                    panel.spawn((
-                        Text::new(format!(
-                            "实测用时：{}\n{}",
-                            run.play_time_summary(),
-                            run.chapter_play_time_archive_summary()
-                        )),
-                        font.text_font(16.0),
-                        TextColor(Color::srgba(0.72, 0.9, 0.82, 0.9)),
-                    ));
-                    panel.spawn((
+                .with_children(|viewport| {
+                    viewport
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_shrink: 0.0,
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(12.0),
+                            ..default()
+                        })
+                        .with_children(|panel| {
+                            for (i, line) in lines.iter().enumerate() {
+                                let (size, color) = if i == 0 {
+                                    (34.0, Color::srgb(0.95, 0.85, 0.55))
+                                } else {
+                                    (21.0, Color::srgb(0.9, 0.92, 0.95))
+                                };
+                                panel.spawn((
+                                    Text::new(*line),
+                                    font.text_font(size),
+                                    TextColor(color),
+                                ));
+                            }
+                            // 此世回响:链式奇遇的抉择在结局被记起。
+                            let echoes = run.side_story_echoes(matches!(
+                                run.outcome,
+                                Some(
+                                    RunOutcome::VictoryLove
+                                        | RunOutcome::VictoryResolve
+                                        | RunOutcome::VictoryBoth
+                                )
+                            ));
+                            for echo in echoes {
+                                panel.spawn((
+                                    Text::new(echo),
+                                    font.text_font(18.0),
+                                    TextColor(Color::srgba(0.85, 0.78, 0.95, 0.9)),
+                                ));
+                            }
+                            for recap in ending_choice_recap(&run) {
+                                panel.spawn((
+                                    Text::new(recap),
+                                    font.text_font(16.0),
+                                    TextColor(theme::MUTED),
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                            panel.spawn((
+                                Text::new(format!("章印：{}", run.chapter_seal_summary())),
+                                font.text_font(18.0),
+                                TextColor(Color::srgba(0.78, 0.92, 1.0, 0.9)),
+                            ));
+                            panel.spawn((
+                                Text::new(run.chapter_vow_archive_summary()),
+                                font.text_font(18.0),
+                                TextColor(Color::srgba(0.88, 0.82, 1.0, 0.9)),
+                            ));
+                            panel.spawn((
+                                Text::new(format!(
+                                    "此世历时：{}\n{}",
+                                    run.play_time_summary(),
+                                    run.chapter_play_time_archive_summary()
+                                )),
+                                font.text_font(16.0),
+                                TextColor(Color::srgba(0.72, 0.9, 0.82, 0.9)),
+                            ));
+                            panel.spawn((
                         Text::new(format!(
                             "\n此世战绩:胜 {} 场 · 法宝 {} 件 · 缘忆 {} 段 · 道心 {} · 情缘 {}",
                             run.fights_won,
@@ -583,12 +714,22 @@ pub fn spawn_ending(
                         font.text_font(18.0),
                         TextColor(Color::srgba(0.75, 0.8, 0.9, 0.85)),
                     ));
-                    panel.spawn((
-                        Text::new("—— 按 空格 回到轮回之初 ——"),
-                        font.text_font(22.0),
-                        TextColor(Color::srgb(0.5, 0.9, 1.0)),
-                    ));
+                            panel.spawn((
+                                Text::new("—— 按 空格 回到轮回之初 ——"),
+                                font.text_font(22.0),
+                                TextColor(theme::GOLD),
+                            ));
+                        });
                 });
+            parent.spawn((
+                Text::new("滚轮或翻页键翻阅 · 空格重新开始"),
+                font.text_font(14.0),
+                TextColor(theme::TEXT),
+                Node {
+                    margin: UiRect::top(Val::Px(12.0)),
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -603,4 +744,52 @@ pub fn ending_input(
     intent.clear();
     commands.remove_resource::<RunState>();
     next.set(AppState::Title);
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+    #[test]
+    fn actual_start_button_hover_does_not_start_but_press_confirms() {
+        let mut app = App::new();
+        app.insert_resource(Intent::default())
+            .add_systems(Update, title_pointer_input);
+        let button = app
+            .world_mut()
+            .spawn((
+                Button,
+                StartButton,
+                Interaction::Hovered,
+                BackgroundColor(theme::SURFACE),
+                BorderColor::all(theme::EDGE),
+            ))
+            .id();
+        app.update();
+        assert!(!app.world().resource::<Intent>().confirm);
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+        assert!(app.world().resource::<Intent>().confirm);
+    }
+    #[test]
+    fn ending_recap_uses_only_actual_records_and_keeps_three() {
+        use super::super::narrative::{NarrativeKind, NarrativeRecord};
+        let mut run = RunState::new(&mut Rng::default());
+        assert!(ending_choice_recap(&run).is_empty());
+        for index in 0..5 {
+            run.narrative_log.push(NarrativeRecord {
+                kind: NarrativeKind::Event(index),
+                chapter: 0,
+                title: format!("事件{index}"),
+                choice: format!("选择{index}"),
+                receipt: format!("【已付代价】钱财 -10 文\n【实得回礼】灵力 +{index}"),
+            });
+        }
+        let recaps = ending_choice_recap(&run);
+        assert_eq!(recaps.len(), 3);
+        assert!(recaps[0].contains("事件4：选择4"));
+        assert!(recaps[0].contains("灵力 +4"));
+        assert!(!recaps.join("\n").contains("事件1"));
+    }
 }

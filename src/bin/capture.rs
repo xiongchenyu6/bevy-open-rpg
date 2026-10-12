@@ -58,9 +58,22 @@
 //!   rogue-rest    start directly by a run-mode rest marker with the late party
 //!   rogue-guide   start by a run-mode route contact offering a local errand
 //!   rogue-puzzle  start directly by a required run-mode route mechanism
+//!   rogue-cost-proof  MoonBite fallback price matches actual failed cast
+//!   rogue-side-fox    real paid fox repair → receipt → inventory journal
+//!   rogue-side-funds  unaffordable option → free alternative
+//!   rogue-side-qin    paid-patron reunion skill receipt
+//!   rogue-story-reward chapter-two defensive skill choice and receipt
 //!   rogue-story-south show the new southern old-drum story choice
 //!   rogue-story-final show the new finale bell-oath story choice
 //!   rogue-party-battle start directly in a late run-mode battle with full party
+//!   rogue-skill   play all 20 curated skill VFX in a durable battle
+//!   rogue-status  cast poison, burn, freeze and stun through the real battle menu
+//!   rogue-polish-inventory full 22-relic/14-hex/20-skill scroll proof
+//!   rogue-polish-ending complete ending with all seals, vows and chain echoes
+//!   rogue-polish-skills browse all spell pages and Return via real menu inputs
+//!   rogue-tactics real boss windup/guard/riposte/break demo with tactics-trace.csv
+//!   rogue-enemy-motion water-serpent idle/bite/hit animation in real combat
+//! Environment: CAPTURE_SIZE=960x540, CAPTURE_UI_AUDIT=1 checks visible button bounds.
 
 use bevy::{
     camera::RenderTarget,
@@ -107,9 +120,22 @@ struct CaptureBattleDriver {
 #[derive(Resource, Default)]
 struct CaptureUseCombo(bool);
 
-/// 百技谱取证:战斗中按固定序列打开技谱子菜单并轮放技能。
+/// 二十式仙术取证:战斗中按固定序列轮放全部独立演出。
 #[derive(Resource, Default)]
 struct CaptureSkillProof(bool);
+
+/// 状态取证:从正常战斗菜单施放技能并等待真实回合结算。
+#[derive(Resource, Default)]
+struct CaptureStatusProof {
+    enabled: bool,
+    step: usize,
+}
+
+#[derive(Component)]
+struct CaptureSkillLabel;
+
+#[derive(Resource, Default)]
+struct CaptureTacticsProof(bool);
 
 #[derive(Resource, Default)]
 struct CaptureTaskBoard(bool);
@@ -178,6 +204,16 @@ struct CaptureRouteMap(bool);
 struct CaptureStoryProof(bool);
 
 #[derive(Resource, Default)]
+struct CaptureCostProof(bool);
+
+#[derive(Resource, Default)]
+struct CaptureNarrativeProof {
+    enabled: bool,
+    recover_funds: bool,
+    journal: bool,
+}
+
+#[derive(Resource, Default)]
 struct CaptureRunAudit(bool);
 
 fn main() {
@@ -211,13 +247,28 @@ fn main() {
     )));
 
     // Allocate the offscreen render target before any system reads it.
-    let mut image = Image::new_target_texture(1280, 720, TextureFormat::Rgba8UnormSrgb, None);
+    let capture_size = std::env::var("CAPTURE_SIZE")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some(UVec2::new(w.parse().ok()?, h.parse().ok()?))
+        })
+        .filter(|s| s.x >= 320 && s.y >= 180)
+        .unwrap_or(UVec2::new(1280, 720));
+    let mut image = Image::new_target_texture(
+        capture_size.x,
+        capture_size.y,
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let handle = app.world_mut().resource_mut::<Assets<Image>>().add(image);
 
     app.add_plugins(GamePlugin);
     app.init_resource::<CaptureBattleDriver>();
     app.init_resource::<CaptureSkillProof>();
+    app.init_resource::<CaptureTacticsProof>();
+    app.init_resource::<CaptureStatusProof>();
     app.init_resource::<CaptureUseCombo>();
     app.init_resource::<CaptureTaskBoard>();
     app.init_resource::<CaptureTaskContact>();
@@ -241,8 +292,11 @@ fn main() {
     app.init_resource::<CaptureInventory>();
     app.init_resource::<CaptureRouteMap>();
     app.init_resource::<CaptureStoryProof>();
+    app.init_resource::<CaptureCostProof>();
+    app.init_resource::<CaptureNarrativeProof>();
     app.init_resource::<CaptureRunAudit>();
     app.add_systems(PreUpdate, reveal_route_map_capture);
+    app.add_systems(Update, drive_skill_showcase);
     match preset {
         "terrain-harness" => {
             use love_rpg::game::{
@@ -304,6 +358,10 @@ fn main() {
                 .resource_mut::<NextState<AppState>>()
                 .set(AppState::RunScene);
         }
+        "rogue-place-tour" => {
+            prepare_route_map_preset(&mut app, "route-map-1");
+            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
+        }
         preset if preset.starts_with("route-map-") => {
             prepare_route_map_preset(&mut app, preset);
         }
@@ -343,7 +401,7 @@ fn main() {
                 .resource_mut::<NextState<AppState>>()
                 .set(AppState::NodeMap);
         }
-        "rogue-inventory" => {
+        "rogue-inventory" | "rogue-polish-inventory" => {
             use love_rpg::game::explore::MapKind;
             use love_rpg::game::roguelike::{
                 Relic, RunState,
@@ -363,6 +421,11 @@ fn main() {
                 love_rpg::game::roguelike::hex::HexMark::DemonPact,
                 love_rpg::game::roguelike::hex::HexMark::MistWalk,
             ];
+            if preset == "rogue-polish-inventory" {
+                run.relics = love_rpg::game::roguelike::ALL_RELICS.to_vec();
+                run.hexes = love_rpg::game::roguelike::hex::ALL_HEXES.to_vec();
+                run.skills = love_rpg::game::roguelike::skill::ALL_SKILLS.to_vec();
+            }
             run.daoxin = 2;
             run.qingyuan = 3;
             run.accept_journey_task();
@@ -408,23 +471,12 @@ fn main() {
             run.card_shown = true;
             run.accept_journey_task();
             run.record_chapter_vow(run.chapter, RunChapterVow::Heart);
+            use love_rpg::game::roguelike::skill::SkillId;
             run.skills = vec![
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Fire,
-                    love_rpg::game::roguelike::skill::SkillKind::Burst,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Ice,
-                    love_rpg::game::roguelike::skill::SkillKind::Stun,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Dark,
-                    love_rpg::game::roguelike::skill::SkillKind::Drain,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Wood,
-                    love_rpg::game::roguelike::skill::SkillKind::Corrode,
-                ),
+                SkillId::CinderMeteor,
+                SkillId::FrostLance,
+                SkillId::SoulLantern,
+                SkillId::ThornCage,
             ];
             app.world_mut().insert_resource(run);
             {
@@ -464,78 +516,103 @@ fn main() {
                 .resource_mut::<NextState<AppState>>()
                 .set(AppState::RunScene);
         }
-        "rogue-skill" => {
-            use love_rpg::game::explore::MapKind;
-            use love_rpg::game::roguelike::{
-                RunChapterVow, RunState,
-                graph::NodeKind,
-                scene::{RunSceneState, SceneMarker},
-            };
-            app.world_mut().resource_mut::<CaptureRogue>().0 = true;
-            app.world_mut().resource_mut::<CaptureSkillProof>().0 = true;
+        "rogue-tactics" | "rogue-enemy-motion" => {
+            use love_rpg::game::roguelike::{FightRank, RunBattleMods, RunState};
             let mut run = {
                 let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
-                rng.0 = 0xB055_F16D;
+                rng.0 = 0x7AC71C5;
                 RunState::new(&mut rng)
             };
             run.card_shown = true;
-            run.accept_journey_task();
-            run.record_chapter_vow(run.chapter, RunChapterVow::Heart);
-            run.skills = vec![
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Fire,
-                    love_rpg::game::roguelike::skill::SkillKind::Burst,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Ice,
-                    love_rpg::game::roguelike::skill::SkillKind::Stun,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Dark,
-                    love_rpg::game::roguelike::skill::SkillKind::Drain,
-                ),
-                love_rpg::game::roguelike::skill::skill_id(
-                    love_rpg::game::roguelike::skill::Element::Wood,
-                    love_rpg::game::roguelike::skill::SkillKind::Corrode,
-                ),
-            ];
+            let motion = preset == "rogue-enemy-motion";
+            let rank = if motion {
+                FightRank::Normal
+            } else {
+                FightRank::Boss
+            };
+            run.current_fight = Some(rank);
             app.world_mut().insert_resource(run);
+            app.world_mut().insert_resource(RunBattleMods {
+                hp_mul: if motion { 12.0 } else { 3.0 },
+                atk_mul: 0.8,
+                rank,
+            });
+            app.world_mut().insert_resource(PendingEncounter {
+                zone: EncounterZone::Village,
+                kind: if motion {
+                    EncounterKind::Random
+                } else {
+                    EncounterKind::Boss(BossKind::MountainFiend)
+                },
+            });
             {
-                // 相当于打满一章的积累,让取证局能撑到 boss 二阶段。
                 let mut stats = app
                     .world_mut()
                     .resource_mut::<love_rpg::game::PlayerStats>();
-                stats.atk += 8;
-                stats.def += 4;
-                stats.max_hp += 80;
-                stats.hp = stats.max_hp;
-                stats.potions = 6;
+                stats.max_hp = 140;
+                stats.hp = 140;
+                stats.atk = 20;
+                stats.def = 8;
+                stats.max_mp = 40;
+                stats.mp = 40;
             }
-            // 单魔门标记:直达对峙台词 → 章 boss 战(取证二阶段变身)。
-            let mut scene = RunSceneState {
-                map: MapKind::Bamboo,
-                tiles: Vec::new(),
-                revealed: Vec::new(),
-                col: -1,
-                row: -1,
-                facing_left: false,
-                markers: vec![SceneMarker {
-                    kind: NodeKind::Fight,
-                    col: 15,
-                    row: 8,
-                    cleared: false,
-                }],
-                portals: Vec::new(),
-                flow: Vec::new(),
-                hazards: Vec::new(),
-                intro_shown: true,
-                cooldown: 0.0,
-            };
-            love_rpg::game::roguelike::scene::seed_flow(&mut scene);
-            app.world_mut().insert_resource(scene);
+            app.world_mut().resource_mut::<CaptureTacticsProof>().0 = true;
             app.world_mut()
                 .resource_mut::<NextState<AppState>>()
-                .set(AppState::RunScene);
+                .set(AppState::Battle);
+        }
+        "rogue-cost-proof" => {
+            use love_rpg::game::roguelike::{RunBattleMods, RunState, hex::HexMark};
+            prepare_skill_battle(&mut app, Vec::new(), 0xC057);
+            app.world_mut()
+                .resource_mut::<RunState>()
+                .hexes
+                .push(HexMark::MoonBite);
+            {
+                let mut stats = app
+                    .world_mut()
+                    .resource_mut::<love_rpg::game::PlayerStats>();
+                stats.max_hp = 80;
+                stats.hp = 80;
+                stats.max_mp = 20;
+                stats.mp = 6;
+            }
+            {
+                let mut mods = app.world_mut().resource_mut::<RunBattleMods>();
+                mods.hp_mul = 1.0;
+                mods.atk_mul = 1.0;
+            }
+            app.world_mut().resource_mut::<CaptureCostProof>().0 = true;
+        }
+        "rogue-polish-skills" => {
+            prepare_skill_battle(
+                &mut app,
+                love_rpg::game::roguelike::skill::ALL_SKILLS.to_vec(),
+                0x51_111A,
+            );
+        }
+        "rogue-skill" => {
+            app.world_mut().resource_mut::<CaptureSkillProof>().0 = true;
+            prepare_skill_battle(
+                &mut app,
+                love_rpg::game::roguelike::skill::ALL_SKILLS.to_vec(),
+                0xB055_F16D,
+            );
+        }
+        "rogue-status" => {
+            use love_rpg::game::roguelike::skill::SkillId;
+
+            app.world_mut().resource_mut::<CaptureStatusProof>().enabled = true;
+            prepare_skill_battle(
+                &mut app,
+                vec![
+                    SkillId::ThornCage,
+                    SkillId::CinderMeteor,
+                    SkillId::FrostLance,
+                    SkillId::ThunderPrison,
+                ],
+                0x57A7_0505,
+            );
         }
         "rogue-market" => {
             use love_rpg::game::explore::MapKind;
@@ -737,13 +814,84 @@ fn main() {
                 .resource_mut::<NextState<AppState>>()
                 .set(AppState::RunScene);
         }
+        "rogue-puzzle-choice" | "rogue-puzzle-wrong" => {
+            use love_rpg::game::roguelike::{RunState, event::RunDialogue, puzzle};
+            prepare_story_proof_preset(&mut app, 1, 0, MapKind::MoonEchoCorridor, 0, "机关线索");
+            app.world_mut()
+                .resource_scope(|world, mut rng: Mut<love_rpg::game::Rng>| {
+                    let mut dialogue = world.resource_mut::<RunDialogue>();
+                    puzzle::open(&mut dialogue, 0, MapKind::MoonEchoCorridor, &mut rng);
+                    dialogue.idx = dialogue.lines.len() - 1;
+                });
+            if preset == "rogue-puzzle-wrong" {
+                app.world_mut()
+                    .resource_scope(|world, mut dialogue: Mut<RunDialogue>| {
+                        let wrong = (dialogue.puzzle_answer.unwrap() + 1) % 3;
+                        world.resource_scope(|world, mut rng: Mut<love_rpg::game::Rng>| {
+                            world.resource_scope(|world, mut run: Mut<RunState>| {
+                                let mut stats = world.resource_mut::<love_rpg::game::PlayerStats>();
+                                puzzle::resolve_choice(
+                                    &mut dialogue,
+                                    wrong,
+                                    &mut stats,
+                                    &mut run,
+                                    &mut rng,
+                                );
+                            });
+                        });
+                    });
+            }
+        }
+        "rogue-side-fox" | "rogue-side-funds" | "rogue-side-qin" | "rogue-story-reward" => {
+            use love_rpg::game::roguelike::{RunState, content, event::RunDialogue};
+            let (chapter, map) = match preset {
+                "rogue-side-fox" | "rogue-side-funds" => (2, MapKind::RiverTown),
+                "rogue-side-qin" => (6, MapKind::DreamWaterway),
+                _ => (1, MapKind::Cave),
+            };
+            prepare_story_proof_preset(&mut app, chapter, 0, map, 0, "剧情回礼");
+            {
+                let mut run = app.world_mut().resource_mut::<RunState>();
+                run.fox_stage = 1;
+                run.fox_kind = -1;
+                run.qin_stage = 1;
+                run.qin_kind = 1;
+            }
+            {
+                let mut stats = app
+                    .world_mut()
+                    .resource_mut::<love_rpg::game::PlayerStats>();
+                stats.potions = 1;
+                if preset == "rogue-side-funds" {
+                    stats.gold = 0;
+                }
+            }
+            {
+                let mut d = app.world_mut().resource_mut::<RunDialogue>();
+                match preset {
+                    "rogue-side-fox" => d.open_event(content::EV_FOX2_COLD),
+                    "rogue-side-funds" => d.open_event(content::EV_QIN1),
+                    "rogue-side-qin" => d.open_event(content::EV_QIN2),
+                    _ => d.open_story(1, 0),
+                }
+                d.idx = d.lines.len() - 1;
+            }
+            app.world_mut().insert_resource(CaptureNarrativeProof {
+                enabled: true,
+                recover_funds: preset == "rogue-side-funds",
+                journal: preset == "rogue-side-fox",
+            });
+        }
+        "rogue-story-opening" => {
+            prepare_story_proof_preset(&mut app, 0, 0, MapKind::Village, 0, "剧情 · 渡口同行");
+        }
         "rogue-story-south" => {
             prepare_story_proof_preset(
                 &mut app,
                 5,
-                3,
-                MapKind::ThunderDrumPath,
                 2,
+                MapKind::ThunderDrumPath,
+                1,
                 "剧情 · 南疆旧鼓",
             );
         }
@@ -757,7 +905,7 @@ fn main() {
                 "剧情 · 终门铃誓",
             );
         }
-        "rogue-ending" | "rogue-ending-defeat" => {
+        "rogue-ending" | "rogue-ending-defeat" | "rogue-polish-ending" => {
             use love_rpg::game::roguelike::{RunOutcome, RunState};
             app.world_mut().resource_mut::<CaptureRogue>().0 = true;
             let mut run = {
@@ -773,6 +921,19 @@ fn main() {
             run.qingyuan = 7;
             run.daoxin = 3;
             run.fights_won = 12;
+            if preset == "rogue-polish-ending" {
+                run.chapter = 6;
+                run.chapter_seals = (0..7).collect();
+                run.fox_stage = 3;
+                run.fox_kind = 1;
+                run.qin_stage = 2;
+                for chapter in 0..7 {
+                    run.record_chapter_vow(
+                        chapter,
+                        love_rpg::game::roguelike::RunChapterVow::Heart,
+                    );
+                }
+            }
             app.world_mut().insert_resource(run);
             app.world_mut()
                 .resource_mut::<NextState<AppState>>()
@@ -906,17 +1067,196 @@ fn main() {
     }
 
     if app.world().resource::<CaptureRunAudit>().0 {
-        run_full_audit(&mut app, frames, &out);
+        run_full_audit(&mut app, frames, &out, &handle);
         return;
     }
 
+    let mut tactics_trace = String::from(
+        "frame,enemy_hp,player_hp,pressure,limit,breaks,counters,heavy,charge,brace,riposte,exposed\n",
+    );
+    let mut tactics_previous = String::new();
+    let mut ui_checks = 0;
+    let audit_ui = std::env::var_os("CAPTURE_UI_AUDIT").is_some();
+    let motion_image: Option<Handle<Image>> = (preset == "rogue-enemy-motion").then(|| {
+        app.world()
+            .resource::<AssetServer>()
+            .load("actors/water-serpent-motion.png")
+    });
+    let mut motion_trace = String::from("frame,atlas_index\n");
+    let mut motion_seen = std::collections::BTreeSet::new();
     for f in 0..frames {
         set_intent(&mut app, f);
+        if motion_image.is_some() && f < 45 {
+            clear_intent(&mut app);
+        }
+        if preset == "rogue-polish-ending" {
+            clear_intent(&mut app);
+        }
+        if preset == "rogue-polish-skills" {
+            let mut intent = app.world_mut().resource_mut::<Intent>();
+            intent.clear();
+            intent.down = f <= 1 || (20..=25).contains(&f) || (43..=56).contains(&f);
+            intent.confirm = f == 2 || f == 75;
+        }
+        if matches!(preset, "rogue-polish-inventory" | "rogue-polish-ending")
+            && (f == 60 || f == 80)
+        {
+            app.world_mut()
+                .write_message(bevy::input::mouse::MouseWheel {
+                    unit: bevy::input::mouse::MouseScrollUnit::Line,
+                    x: 0.0,
+                    y: -40.0,
+                    window: Entity::PLACEHOLDER,
+                    phase: bevy::input::touch::TouchPhase::Moved,
+                });
+        }
         let path = format!("{}/frame{:05}.png", out, f);
         app.world_mut()
             .spawn(Screenshot::image(handle.clone()))
             .observe(save_to_disk(path));
         app.update();
+        if let Some(image) = &motion_image {
+            let mut sprites = app.world_mut().query::<&Sprite>();
+            for sprite in sprites.iter(app.world()) {
+                if sprite.image == *image {
+                    let index = sprite
+                        .texture_atlas
+                        .as_ref()
+                        .expect("serpent motion atlas")
+                        .index;
+                    motion_seen.insert(index);
+                    motion_trace.push_str(&format!("{f},{index}\n"));
+                }
+            }
+        }
+        if app.world().resource::<CaptureTacticsProof>().0 {
+            let v = app
+                .world()
+                .resource::<love_rpg::game::battle::BattleAutomationView>();
+            let p = app.world().resource::<love_rpg::game::PlayerStats>();
+            let values = format!(
+                "{},{},{},{},{},{},{},{},{},{},{}",
+                v.enemy_hp,
+                p.hp,
+                v.pressure,
+                v.pressure_limit,
+                v.breaks,
+                v.counters,
+                v.enemy_heavy_intent,
+                v.enemy_charging,
+                v.enemy_bracing,
+                v.riposte_ready,
+                v.exposed
+            );
+            if values != tactics_previous {
+                tactics_trace.push_str(&format!("{f},{values}\n"));
+                tactics_previous = values;
+            }
+        }
+        if audit_ui && f > 4 {
+            let mut buttons = app.world_mut().query_filtered::<(
+                &ComputedNode,
+                &UiGlobalTransform,
+                &InheritedVisibility,
+            ), With<Button>>();
+            for (node, transform, visible) in buttons.iter(app.world()) {
+                let size = node.size();
+                if !visible.get() || size.min_element() <= 0.0 {
+                    continue;
+                }
+                let min = transform.translation - size * 0.5;
+                let max = transform.translation + size * 0.5;
+                assert!(
+                    min.x >= -1.0
+                        && min.y >= -1.0
+                        && max.x <= capture_size.x as f32 + 1.0
+                        && max.y <= capture_size.y as f32 + 1.0,
+                    "visible button outside viewport at frame {f}: {min:?}..{max:?}"
+                );
+                ui_checks += 1;
+            }
+        }
+    }
+    if motion_image.is_some() {
+        std::fs::write(format!("{out}/enemy-motion-trace.csv"), motion_trace)
+            .expect("write enemy motion trace");
+        assert_eq!(
+            motion_seen.len(),
+            24,
+            "motion proof must render all idle/bite/hit frames: {motion_seen:?}"
+        );
+    }
+    if app.world().resource::<CaptureTacticsProof>().0 {
+        std::fs::write(format!("{out}/tactics-trace.csv"), &tactics_trace)
+            .expect("write tactics trace");
+        let view = app
+            .world()
+            .resource::<love_rpg::game::battle::BattleAutomationView>();
+        assert!(
+            view.breaks > 0 && view.counters > 0,
+            "tactical proof must demonstrate both break and guarded counter"
+        );
+    }
+    if app.world().resource::<CaptureNarrativeProof>().enabled {
+        use love_rpg::game::roguelike::{
+            RunState, content, narrative::NarrativeKind, skill::SkillId,
+        };
+        let run = app.world().resource::<RunState>();
+        assert_eq!(
+            run.narrative_log.len(),
+            1,
+            "proof must resolve exactly one real choice"
+        );
+        match preset {
+            "rogue-side-fox" => {
+                assert_eq!(run.fox_kind, 2);
+                assert_eq!(
+                    app.world()
+                        .resource::<love_rpg::game::PlayerStats>()
+                        .potions,
+                    0
+                );
+                assert!(run.has_narrative_receipt(NarrativeKind::Event(content::EV_FOX2_COLD)));
+            }
+            "rogue-side-funds" => {
+                assert_eq!(
+                    app.world().resource::<love_rpg::game::PlayerStats>().gold,
+                    0
+                );
+                assert_eq!(run.qin_kind, -1);
+            }
+            "rogue-side-qin" => assert!(run.skills.contains(&SkillId::SoulLantern)),
+            "rogue-story-reward" => assert!(run.skills.contains(&SkillId::MoonHalo)),
+            _ => unreachable!(),
+        }
+        std::fs::write(
+            format!("{out}/narrative-proof.txt"),
+            run.narrative_summary(),
+        )
+        .expect("write choice proof");
+    }
+    if app.world().resource::<CaptureCostProof>().0 {
+        let view = app
+            .world()
+            .resource::<love_rpg::game::battle::BattleAutomationView>();
+        let stats = app.world().resource::<love_rpg::game::PlayerStats>();
+        assert_eq!(view.spell_cost, 7);
+        assert_eq!(stats.mp, 6, "rejected spell must not spend mana");
+        std::fs::write(
+            format!("{out}/cost-proof.txt"),
+            "actual_spell_cost=7\nremaining_mp=6\ninsufficient_cast_spends_no_mp=true\n",
+        )
+        .expect("write cost proof");
+    }
+    if audit_ui {
+        std::fs::write(
+            format!("{out}/ui-audit.txt"),
+            format!(
+                "viewport {}x{}\nvisible button bounds checked {} times\n",
+                capture_size.x, capture_size.y, ui_checks
+            ),
+        )
+        .expect("write UI audit");
     }
 
     // Flush pending async screenshot read-backs / disk writes.
@@ -928,7 +1268,47 @@ fn main() {
     println!("[capture] wrote {frames} frames to {out}");
 }
 
-fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
+fn prepare_skill_battle(
+    app: &mut App,
+    skills: Vec<love_rpg::game::roguelike::skill::SkillId>,
+    seed: u64,
+) {
+    use love_rpg::game::roguelike::{FightRank, RunBattleMods, RunState};
+
+    let mut run = {
+        let mut rng = app.world_mut().resource_mut::<love_rpg::game::Rng>();
+        rng.0 = seed;
+        RunState::new(&mut rng)
+    };
+    run.card_shown = true;
+    run.accept_journey_task();
+    run.skills = skills;
+    run.current_fight = Some(FightRank::Normal);
+    app.world_mut().insert_resource(run);
+
+    let mut stats = app
+        .world_mut()
+        .resource_mut::<love_rpg::game::PlayerStats>();
+    stats.max_hp = 999;
+    stats.hp = stats.max_hp;
+    stats.max_mp = 999;
+    stats.mp = stats.max_mp;
+
+    app.world_mut().insert_resource(RunBattleMods {
+        hp_mul: 100.0,
+        atk_mul: 0.01,
+        rank: FightRank::Normal,
+    });
+    app.world_mut().insert_resource(PendingEncounter {
+        zone: EncounterZone::Bamboo,
+        kind: EncounterKind::Random,
+    });
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::Battle);
+}
+
+fn run_full_audit(app: &mut App, max_frames: u32, out: &str, image: &Handle<Image>) {
     use love_rpg::game::{
         Rng,
         roguelike::{CHAPTER_COUNT, JOURNEY_ROUTE_STAGES, RunOutcome, RunState},
@@ -942,6 +1322,9 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
     let mut confirm_inputs = 0u32;
     let mut menu_inputs = 0u32;
     let mut frames_run = 0u32;
+    let mut battle_frames = 0u32;
+    let mut dialogue_frames = 0u32;
+    let mut exploration_frames = 0u32;
     let mut outcome = None;
     let mut play_time = "00:00:00".to_string();
     let mut chapter_times = String::new();
@@ -983,6 +1366,19 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
         }
 
         let state = *app.world().resource::<State<AppState>>().get();
+        if state == AppState::Battle {
+            battle_frames += 1;
+        } else if state == AppState::RunScene {
+            if app
+                .world()
+                .resource::<love_rpg::game::roguelike::event::RunDialogue>()
+                .active
+            {
+                dialogue_frames += 1;
+            } else {
+                exploration_frames += 1;
+            }
+        }
         if previous_state != Some(state) {
             state_trace.push(format!("{state:?}@{frame}"));
             previous_state = Some(state);
@@ -1038,12 +1434,26 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
         outcome,
         Some(RunOutcome::VictoryLove | RunOutcome::VictoryResolve | RunOutcome::VictoryBoth)
     );
+    let run = app.world().resource::<RunState>();
+    let side_chains_complete = run.fox_stage == 3 && run.qin_stage == 2;
+    let chapter_stories_resolved = (0..CHAPTER_COUNT).all(|chapter| {
+        run.has_narrative_receipt(love_rpg::game::roguelike::narrative::NarrativeKind::Story(
+            chapter, 0,
+        ))
+    });
+    std::fs::write(
+        format!("{out}/narrative-journey.txt"),
+        run.narrative_summary(),
+    )
+    .expect("write journey receipts");
     let passed = audit_seed_applied
         && victory
         && visited_stages.len() == JOURNEY_ROUTE_STAGES
         && accepted_tasks == JOURNEY_ROUTE_STAGES
         && completed_tasks == JOURNEY_ROUTE_STAGES
-        && chapter_seals == CHAPTER_COUNT;
+        && chapter_seals == CHAPTER_COUNT
+        && side_chains_complete
+        && chapter_stories_resolved;
     let status = if passed { "PASS" } else { "FAIL" };
     let outcome_label = outcome
         .map(|value| format!("{value:?}"))
@@ -1055,6 +1465,9 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
     writeln!(report, "seed_applied={audit_seed_applied}").unwrap();
     writeln!(report, "max_frames={max_frames}").unwrap();
     writeln!(report, "frames_run={frames_run}").unwrap();
+    writeln!(report, "automated_battle_frames={battle_frames}").unwrap();
+    writeln!(report, "automated_dialogue_frames={dialogue_frames}").unwrap();
+    writeln!(report, "automated_exploration_frames={exploration_frames}").unwrap();
     writeln!(
         report,
         "wall_seconds={:.3}",
@@ -1096,6 +1509,82 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
     writeln!(report, "route_contacts={route_contacts}").unwrap();
     writeln!(report, "camp_scenes={camp_scenes}").unwrap();
     writeln!(report, "chapter_vows={chapter_vows}").unwrap();
+    writeln!(report, "side_chains_complete={side_chains_complete}").unwrap();
+    writeln!(report, "fox_resolved={}/3", run.fox_stage).unwrap();
+    writeln!(report, "qin_resolved={}/2", run.qin_stage).unwrap();
+    writeln!(
+        report,
+        "chapter_stories_resolved={chapter_stories_resolved}"
+    )
+    .unwrap();
+    writeln!(report, "narrative_receipts={}", run.narrative_log.len()).unwrap();
+    if let Some(v) = app
+        .world()
+        .get_resource::<love_rpg::game::battle::BattleAutomationView>()
+    {
+        writeln!(report, "final_battle=menu:{} index:{} skills_open:{} cursor:{} enemy_hp:{} heavy:{} momentum:{} spell_cost:{} pressure:{}",
+            v.menu_open, v.menu_index, v.skill_menu_open, v.skill_cursor, v.enemy_hp, v.enemy_heavy_intent, v.momentum, v.spell_cost, v.pressure).unwrap();
+    }
+    writeln!(
+        report,
+        "final_skills={}",
+        run.skills
+            .iter()
+            .map(|id| {
+                let def = love_rpg::game::roguelike::skill::skill(*id);
+                format!(
+                    "{}:{}",
+                    def.name,
+                    love_rpg::game::battle::skill_cost(*id, run)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+    .unwrap();
+
+    if let Some(d) = app
+        .world()
+        .get_resource::<love_rpg::game::roguelike::event::RunDialogue>()
+    {
+        use love_rpg::game::roguelike::event::DialogueSource;
+        let source = match d.source {
+            DialogueSource::Plain => "Plain".into(),
+            DialogueSource::Event(i) => format!("Event({i})"),
+            DialogueSource::Story { chapter, roll } => format!("Story({chapter},{roll})"),
+            DialogueSource::Puzzle { index } => format!("Puzzle({index})"),
+            DialogueSource::RouteCommission { target } => format!("Commission({})", target.label()),
+            DialogueSource::Rest => "Rest".into(),
+            DialogueSource::Market => "Market".into(),
+        };
+        writeln!(report, "final_dialogue=active:{} source:{} resolved:{} selected:{} idx:{}/{} options:{} error:{:?}",
+            d.active, source, d.resolved, d.selected, d.idx, d.lines.len(), d.options.len(), d.choice_error).unwrap();
+        writeln!(report, "final_dialogue_title={}", d.title).unwrap();
+        writeln!(
+            report,
+            "final_dialogue_line={}",
+            d.lines.get(d.idx).map(String::as_str).unwrap_or("")
+        )
+        .unwrap();
+    }
+    if let Some(s) = app
+        .world()
+        .get_resource::<love_rpg::game::roguelike::scene::RunSceneState>()
+    {
+        writeln!(report, "final_position={},{}", s.col, s.row).unwrap();
+        for marker in &s.markers {
+            writeln!(
+                report,
+                "final_marker={},{},{},cleared:{}",
+                marker.kind.label(),
+                marker.col,
+                marker.row,
+                marker.cleared
+            )
+            .unwrap();
+        }
+    }
+
     writeln!(report, "movement_inputs={movement_inputs}").unwrap();
     writeln!(report, "confirm_inputs={confirm_inputs}").unwrap();
     writeln!(report, "menu_inputs={menu_inputs}").unwrap();
@@ -1117,6 +1606,13 @@ fn run_full_audit(app: &mut App, max_frames: u32, out: &str) {
     std::fs::write(&path, &report).expect("write run audit report");
     print!("{report}");
     println!("[run-audit] report: {path}");
+    app.world_mut()
+        .spawn(Screenshot::image(image.clone()))
+        .observe(save_to_disk(format!("{out}/final-frame.png")));
+    for _ in 0..12 {
+        clear_intent(app);
+        app.update();
+    }
     if !passed {
         eprintln!("[run-audit] full-run invariants failed");
         std::process::exit(2);
@@ -2159,6 +2655,63 @@ fn clear_intent(app: &mut App) {
     app.world_mut().resource_mut::<Intent>().clear();
 }
 
+fn drive_skill_showcase(
+    mut commands: Commands,
+    proof: Res<CaptureSkillProof>,
+    app_state: Res<State<AppState>>,
+    mut frame: Local<u32>,
+    assets: Res<love_rpg::game::skill_vfx::SkillVfxAssets>,
+    lights: Res<love_rpg::game::lighting::LightingAssets>,
+    font: Res<love_rpg::game::core::GameFont>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut label: Query<(&mut Text2d, &mut TextColor), With<CaptureSkillLabel>>,
+) {
+    if !proof.0 || *app_state.get() != AppState::Battle {
+        return;
+    }
+
+    let current = *frame;
+    *frame += 1;
+    const FIRST: u32 = SETTLE + 5;
+    const CADENCE: u32 = 43;
+    if current < FIRST || !(current - FIRST).is_multiple_of(CADENCE) {
+        return;
+    }
+    let index = ((current - FIRST) / CADENCE) as usize;
+    let Some(id) = love_rpg::game::roguelike::skill::ALL_SKILLS
+        .get(index)
+        .copied()
+    else {
+        return;
+    };
+    let definition = love_rpg::game::roguelike::skill::skill(id);
+    love_rpg::game::skill_vfx::spawn_skill_vfx(
+        &mut commands,
+        &mut materials,
+        &assets,
+        &lights,
+        definition.vfx,
+        love_rpg::game::battle::HERO_POS + Vec3::new(18.0, 38.0, 2.0),
+        love_rpg::game::battle::ENEMY_POS + Vec3::new(0.0, 12.0, 2.1),
+    );
+
+    let title = format!("仙术演武  {:02}/20  「{}」", index + 1, definition.name());
+    if let Ok((mut text, mut color)) = label.single_mut() {
+        text.0 = title;
+        *color = TextColor(definition.element.color());
+    } else {
+        commands.spawn((
+            CaptureSkillLabel,
+            Text2d::new(title),
+            font.text_font(30.0),
+            TextColor(definition.element.color()),
+            TextLayout::justify(Justify::Center),
+            Transform::from_xyz(0.0, 190.0, 6.4),
+            DespawnOnExit(AppState::Battle),
+        ));
+    }
+}
+
 /// Write the scripted `Intent` for gameplay frame `f`.
 fn set_intent(app: &mut App, f: u32) {
     app.world_mut().resource_mut::<EncounterRate>().0 = if f < 620 { 0.0 } else { 1.0 };
@@ -2173,7 +2726,49 @@ fn set_intent(app: &mut App, f: u32) {
         return;
     }
 
-    if app.world().resource::<CaptureRouteMap>().0 || app.world().resource::<CaptureStoryProof>().0
+    if app.world().resource::<CaptureCostProof>().0 {
+        let view = app
+            .world()
+            .resource::<love_rpg::game::battle::BattleAutomationView>();
+        let (menu, cursor) = (view.menu_open, view.menu_index);
+        let mut intent = app.world_mut().resource_mut::<Intent>();
+        intent.clear();
+        if menu && cursor != 2 {
+            intent.down = true;
+        }
+        if menu && cursor == 2 && f == 12 {
+            intent.confirm = true;
+        }
+        return;
+    }
+
+    if app.world().resource::<CaptureNarrativeProof>().enabled {
+        let proof = app.world().resource::<CaptureNarrativeProof>();
+        let recover_funds = proof.recover_funds;
+        let journal = proof.journal;
+        let d = app
+            .world()
+            .resource::<love_rpg::game::roguelike::event::RunDialogue>();
+        let advance = d.active && (!d.resolved || d.idx + 1 < d.lines.len());
+        let mut intent = app.world_mut().resource_mut::<Intent>();
+        intent.clear();
+        if recover_funds && f == 90 {
+            intent.down = true;
+        }
+        if f >= 45 && f % 45 == 0 && !(recover_funds && f == 90) && advance {
+            intent.confirm = true;
+        }
+        if journal && f == 240 {
+            intent.confirm = true;
+        }
+        if journal && f == 270 {
+            intent.cancel = true;
+        }
+        return;
+    }
+
+    if (app.world().resource::<CaptureRouteMap>().0 && !app.world().resource::<CaptureRogue>().0)
+        || app.world().resource::<CaptureStoryProof>().0
     {
         clear_intent(app);
         return;
@@ -2197,20 +2792,104 @@ fn set_intent(app: &mut App, f: u32) {
         }
     };
 
-    // 百技谱取证:每 44 帧一轮——下移到「仙术」、开技谱、换式、施放。
-    if app.world().resource::<CaptureSkillProof>().0 {
-        if let Some(bf) = battle_frame {
-            let mut intent = app.world_mut().resource_mut::<Intent>();
-            intent.clear();
-            match bf % 44 {
-                6 | 12 => intent.down = true,
-                18 => intent.confirm = true,
-                26 => intent.down = true,
-                34 => intent.confirm = true,
-                _ => {}
+    if app.world().resource::<CaptureTacticsProof>().0 {
+        let view = app
+            .world()
+            .resource::<love_rpg::game::battle::BattleAutomationView>();
+        let menu_open = view.menu_open;
+        let current = view.menu_index;
+        let desired = if view.enemy_heavy_intent {
+            1
+        } else if view.momentum >= 3 {
+            3
+        } else {
+            0
+        };
+        let mut intent = app.world_mut().resource_mut::<Intent>();
+        intent.clear();
+        if menu_open {
+            if current != desired {
+                intent.down = true;
+            } else if f % 12 == 0 {
+                intent.confirm = true;
             }
+        }
+        return;
+    }
+
+    if app.world().resource::<CaptureStatusProof>().enabled {
+        use love_rpg::game::battle::BattleAutomationView;
+
+        let (menu_open, menu_index, skill_menu_open, skill_cursor, poison, burn, frozen, stunned) = {
+            let view = app.world().resource::<BattleAutomationView>();
+            (
+                view.menu_open,
+                view.menu_index,
+                view.skill_menu_open,
+                view.skill_cursor,
+                view.poison_stacks,
+                view.burn_turns,
+                view.frozen,
+                view.stunned,
+            )
+        };
+        let step = {
+            let mut proof = app.world_mut().resource_mut::<CaptureStatusProof>();
+            if proof.step == 0 && poison > 0 {
+                proof.step = 1;
+            }
+            if proof.step == 1 && burn > 0 {
+                proof.step = 2;
+            }
+            if proof.step == 2 && frozen {
+                proof.step = 3;
+            }
+            if proof.step == 3 && stunned {
+                proof.step = 4;
+            }
+            proof.step
+        };
+        let skill_total = app
+            .world()
+            .resource::<love_rpg::game::roguelike::RunState>()
+            .skills
+            .len()
+            + 1;
+        let mut intent = app.world_mut().resource_mut::<Intent>();
+        intent.clear();
+        if !menu_open || step >= 4 {
             return;
         }
+        if skill_menu_open {
+            if skill_cursor == step {
+                intent.confirm = true;
+            } else {
+                let down = (step + skill_total - skill_cursor) % skill_total;
+                let up = (skill_cursor + skill_total - step) % skill_total;
+                if down <= up {
+                    intent.down = true;
+                } else {
+                    intent.up = true;
+                }
+            }
+        } else if menu_index == 2 {
+            intent.confirm = true;
+        } else {
+            let down = (2 + 6 - menu_index) % 6;
+            let up = (menu_index + 6 - 2) % 6;
+            if down <= up {
+                intent.down = true;
+            } else {
+                intent.up = true;
+            }
+        }
+        return;
+    }
+
+    // 二十式取证由 `drive_skill_showcase` 直接调用真实 VFX 入口。
+    if app.world().resource::<CaptureSkillProof>().0 {
+        clear_intent(app);
+        return;
     }
 
     // Roguelike run: cadence-driven confirms walk the whole loop (title →
@@ -2220,28 +2899,61 @@ fn set_intent(app: &mut App, f: u32) {
         let ui_state = *app.world().resource::<State<AppState>>().get();
 
         if app.world().resource::<CaptureRunAudit>().0 && ui_state == AppState::Battle {
-            use love_rpg::game::battle::BattleAutomationView;
-            let (menu_open, current, heavy, spell_cost, momentum) = {
-                let view = app.world().resource::<BattleAutomationView>();
-                (
-                    view.menu_open,
-                    view.menu_index,
-                    view.enemy_heavy_intent,
-                    view.spell_cost,
-                    view.momentum,
-                )
+            use love_rpg::game::{
+                battle::BattleAutomationView,
+                roguelike::{
+                    RunState,
+                    skill::{self, SkillKind},
+                },
             };
-            let (hp, max_hp, mp, potions) = {
-                let stats = app.world().resource::<love_rpg::game::PlayerStats>();
-                (stats.hp, stats.max_hp, stats.mp, stats.potions)
-            };
-            let desired = if potions > 0 && hp * 100 <= max_hp * 55 {
+            let view = app.world().resource::<BattleAutomationView>();
+            let menu_open = view.menu_open;
+            let current = view.menu_index;
+            let heavy = view.enemy_heavy_intent;
+            let bracing = view.enemy_bracing;
+            let opportunity = view.riposte_ready || view.exposed;
+            let skill_menu = view.skill_menu_open;
+            let cursor = view.skill_cursor;
+            let momentum = view.momentum;
+            let fallback_cost = view.spell_cost;
+            let stats = app.world().resource::<love_rpg::game::PlayerStats>();
+            let (hp, max_hp, mp, potions) = (stats.hp, stats.max_hp, stats.mp, stats.potions);
+            let run = app.world().resource::<RunState>();
+            let chosen_skill = run
+                .skills
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| {
+                    let def = skill::skill(**id);
+                    mp >= love_rpg::game::battle::skill_cost(**id, run)
+                        && !matches!(def.kind, SkillKind::Ward | SkillKind::Mend)
+                })
+                .max_by_key(|(_, id)| {
+                    let def = skill::skill(**id);
+                    def.power
+                        + if bracing
+                            && matches!(
+                                def.kind,
+                                SkillKind::Bind | SkillKind::Flurry | SkillKind::Stun
+                            )
+                        {
+                            12
+                        } else {
+                            0
+                        }
+                })
+                .map(|(index, _)| index);
+            let has_skills = !run.skills.is_empty();
+            let burst_need = run.hex_burst_cost();
+            let desired = if potions > 0 && hp * 100 <= max_hp * 45 {
                 4
-            } else if heavy && hp * 100 <= max_hp * 85 {
+            } else if heavy && !opportunity {
                 1
-            } else if momentum >= 3 {
+            } else if momentum >= burst_need {
                 3
-            } else if mp >= spell_cost {
+            } else if opportunity {
+                0
+            } else if chosen_skill.is_some() || (!has_skills && mp >= fallback_cost) {
                 2
             } else {
                 0
@@ -2249,7 +2961,17 @@ fn set_intent(app: &mut App, f: u32) {
             let mut intent = app.world_mut().resource_mut::<Intent>();
             intent.clear();
             if menu_open {
-                if current == desired {
+                if skill_menu {
+                    if let Some(index) = chosen_skill {
+                        if cursor == index {
+                            intent.confirm = true;
+                        } else {
+                            intent.down = true;
+                        }
+                    } else {
+                        intent.cancel = true;
+                    }
+                } else if current == desired {
                     intent.confirm = true;
                 } else {
                     let down = (desired + 6 - current) % 6;
@@ -2267,6 +2989,39 @@ fn set_intent(app: &mut App, f: u32) {
         // Walkable node scene: steer the hero along the BFS flow field
         // toward the objective; confirms advance any overlay that opens.
         if ui_state == AppState::RunScene && battle_frame.is_none() {
+            // The audit proves transitions and bookkeeping, not reading speed.
+            // Still resolve every actual dialogue/choice through normal Intent.
+            if app.world().resource::<CaptureRunAudit>().0 {
+                use love_rpg::game::roguelike::event::{DialogueSource, RunDialogue};
+                let action = app
+                    .world()
+                    .get_resource::<RunDialogue>()
+                    .filter(|d| d.active)
+                    .map(|d| {
+                        let desired = match d.source {
+                            DialogueSource::Puzzle { .. } => d.puzzle_answer.unwrap_or(0),
+                            DialogueSource::Market => d.options.len().saturating_sub(1),
+                            _ => 0,
+                        };
+                        (
+                            !d.resolved && !d.options.is_empty() && d.idx + 1 >= d.lines.len(),
+                            d.selected,
+                            desired,
+                        )
+                    });
+                if let Some((choosing, selected, desired)) = action {
+                    let mut intent = app.world_mut().resource_mut::<Intent>();
+                    intent.clear();
+                    if !choosing || selected == desired {
+                        intent.confirm = true;
+                    } else if selected < desired {
+                        intent.down = true;
+                    } else {
+                        intent.up = true;
+                    }
+                    return;
+                }
+            }
             if app.world().resource::<CaptureInventory>().0 {
                 // Walk a little, then open the Esc inventory and hold it.
                 let mut intent = app.world_mut().resource_mut::<Intent>();
@@ -2285,16 +3040,57 @@ fn set_intent(app: &mut App, f: u32) {
                         .get_resource::<RunDialogue>()
                         .is_some_and(|dialogue| {
                             dialogue.active
-                                && matches!(
-                                    dialogue.source,
-                                    DialogueSource::RouteTask
-                                        | DialogueSource::RouteCommission { .. }
-                                )
+                                && matches!(dialogue.source, DialogueSource::RouteCommission { .. })
                                 && !dialogue.resolved
                                 && !dialogue.options.is_empty()
                                 && dialogue.idx + 1 >= dialogue.lines.len()
                         });
                 if route_tracking_choice {
+                    let mut intent = app.world_mut().resource_mut::<Intent>();
+                    intent.clear();
+                    intent.confirm = true;
+                    return;
+                }
+            }
+            {
+                use love_rpg::game::roguelike::{
+                    event::{DialogueSource, RunDialogue},
+                    scene::RunSceneState,
+                };
+                let choice = app.world().get_resource::<RunDialogue>().and_then(|d| {
+                    (d.active && !d.resolved && d.idx + 1 >= d.lines.len())
+                        .then(|| {
+                            if matches!(d.source, DialogueSource::Puzzle { .. }) {
+                                Some((d.selected, d.puzzle_answer.unwrap_or(0)))
+                            } else {
+                                None
+                            }
+                        })
+                        .flatten()
+                });
+                if let Some((selected, answer)) = choice {
+                    let mut intent = app.world_mut().resource_mut::<Intent>();
+                    intent.clear();
+                    if selected == answer {
+                        intent.confirm = true;
+                    } else {
+                        intent.down = true;
+                    }
+                    return;
+                }
+                let ready = app
+                    .world()
+                    .get_resource::<RunDialogue>()
+                    .is_some_and(|d| !d.active)
+                    && app
+                        .world()
+                        .get_resource::<RunSceneState>()
+                        .is_some_and(|s| {
+                            s.markers.iter().any(|m| {
+                                !m.cleared && (m.col - s.col).abs() + (m.row - s.row).abs() <= 1
+                            })
+                        });
+                if ready {
                     let mut intent = app.world_mut().resource_mut::<Intent>();
                     intent.clear();
                     intent.confirm = true;

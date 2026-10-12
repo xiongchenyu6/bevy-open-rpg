@@ -16,7 +16,7 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    /// One-glyph CJK marker rendered on the map (unifont-safe).
+    /// One-glyph CJK marker rendered on the map (CJK font).
     pub fn glyph(self) -> &'static str {
         match self {
             NodeKind::Fight => "战",

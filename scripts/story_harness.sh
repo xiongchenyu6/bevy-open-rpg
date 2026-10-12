@@ -4,10 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$ROOT/screenshots/story-harness}"
 
-mkdir -p "$OUT/southern-drum" "$OUT/finale-bell"
+mkdir -p "$OUT/opening" "$OUT/southern-drum" "$OUT/finale-bell"
 cd "$ROOT"
 
-echo "[story-harness] checking capacity, authored choices, and no-repeat draws"
+echo "[story-harness] checking capacity, authored choices, chronological draws, and retained history"
 cargo test --lib story_content_
 
 echo "[story-harness] building deterministic dialogue captures"
@@ -24,16 +24,18 @@ capture_story() {
   fi
 }
 
+capture_story "$OUT/opening" rogue-story-opening
 capture_story "$OUT/southern-drum" rogue-story-south
 capture_story "$OUT/finale-bell" rogue-story-final
 
 if command -v magick >/dev/null 2>&1; then
   magick montage \
+    "$OUT/opening/frame00000.png" \
     "$OUT/southern-drum/frame00000.png" \
     "$OUT/finale-bell/frame00000.png" \
-    -tile 2x1 -geometry 640x360+8+8 \
+    -tile 3x1 -geometry 640x360+8+8 \
     "$OUT/story-contact-sheet.png"
   echo "[story-harness] contact sheet: $OUT/story-contact-sheet.png"
 else
-  echo "[story-harness] ImageMagick missing; inspect the two frame00000.png files"
+  echo "[story-harness] ImageMagick missing; inspect the three frame00000.png files"
 fi

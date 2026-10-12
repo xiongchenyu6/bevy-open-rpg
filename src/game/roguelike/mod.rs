@@ -11,9 +11,12 @@
 use bevy::prelude::*;
 
 pub mod content;
+pub mod dialogue_ui;
 pub mod event;
 pub mod graph;
 pub mod hex;
+pub mod narrative;
+pub mod puzzle;
 pub mod scene;
 pub mod screens;
 pub mod skill;
@@ -454,7 +457,7 @@ pub const JOURNEY_BEATS: [&[JourneyBeat]; CHAPTER_COUNT] = [
         JourneyBeat {
             title: "仙汀问影",
             place: "水月洞天外汀",
-            objective: "循水声靠近洞天,确认月光晶尘中的灵儿踪迹。",
+            objective: "循水声靠近洞天,确认灵儿辨出的月光晶尘源头。",
             gate_line: "汀边水影未平,界门不会把你送进洞天深处。",
         },
         JourneyBeat {
@@ -766,7 +769,7 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
         },
         JourneyIntro {
             scene_line: "十里坡的竹叶压得很低,旧路上每一截泥痕都像被妖爪翻过。",
-            party_line: "赵灵儿：山气里有水声,再往前或许就能找到渡口。",
+            party_line: "赵灵儿：我已把村人的伤药交给婶婶。现在一起去查妖雾的源头。",
         },
         JourneyIntro {
             scene_line: "浅汀月光碎在水面,远处洞门一亮一暗,像有人隔水回望。",
@@ -784,7 +787,7 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
     &[
         JourneyIntro {
             scene_line: "竹篱药圃蒙着晨雾,被踏断的草叶下还残留一丝黑气。",
-            party_line: "赵灵儿：这些草药能救人,妖气也会顺着药香找来。",
+            party_line: "赵灵儿：赤鬼身上的黑气与洞天裂口相连。先补齐伤药,再从小港绕回阵心。",
         },
         JourneyIntro {
             scene_line: "小港风灯一盏盏偏向水面,渔船缆绳像被谁从水下扯紧。",
@@ -810,7 +813,7 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
         },
         JourneyIntro {
             scene_line: "赤水渡上残魂排成细线,每盏渡魂灯都映着不同的病容。",
-            party_line: "赵灵儿：送他们过水,他们会告诉我们哪条路还活着。",
+            party_line: "赵灵儿：先找回被困的生魂,别把尚能救回的人当成亡者。",
         },
         JourneyIntro {
             scene_line: "芦苇浅湾里河灯一明一灭,水下黑影顺着灯线缓缓游动。",
@@ -1155,6 +1158,8 @@ pub struct RunState {
     /// Chapter/story indices already viewed this run. Required story nodes draw
     /// from unseen entries first so one playthrough does not repeat a scene.
     pub seen_story_scenes: Vec<(usize, usize)>,
+    /// Resolved choices and exact receipts, also the one-time reward ledger.
+    pub narrative_log: Vec<narrative::NarrativeRecord>,
     /// Route stages whose main task contract has been explicitly signed.
     pub accepted_journey_tasks: Vec<(usize, usize)>,
     /// Route stages whose signed main task has been turned in at the gate.
@@ -1180,18 +1185,23 @@ pub struct RunState {
     pub outcome: Option<RunOutcome>,
     /// Totals for the ending screen.
     pub fights_won: u32,
+    pub battle_lessons_seen: Vec<crate::game::battle::BattleLesson>,
+    pub last_enemy_image: Option<&'static str>,
+    pub puzzle_mistakes: u32,
     /// One-shot revive from 檀木符 has been consumed.
     pub revive_used: bool,
     /// 白狐三遇链:0 未遇,1/2/3 已推进到第几遇。
     /// 妖纹(海克斯):战利里随机出现的有代价词条,可叠加成 build。
     pub hexes: Vec<hex::HexMark>,
-    /// 已习得的技能(百技谱下标),战斗「仙术」子菜单从这里列出。
+    /// 已习得的二十式仙术,战斗「仙术」子菜单从这里列出。
     pub skills: Vec<skill::SkillId>,
     pub fox_stage: u8,
     /// 白狐链善恶记号:+1 救过,-1 无视(初遇选择写入)。
     pub fox_kind: i8,
     /// 盲女琴师链:0 未遇,1 听过曲,2 已重逢。
     pub qin_stage: u8,
+    /// Paid patron (+1) or quiet listener (-1); shapes the reunion gift.
+    pub qin_kind: i8,
 }
 
 impl RunState {
@@ -1213,6 +1223,7 @@ impl RunState {
             card_shown: false,
             seen_events: Vec::new(),
             seen_story_scenes: Vec::new(),
+            narrative_log: Vec::new(),
             accepted_journey_tasks: Vec::new(),
             completed_journey_tasks: Vec::new(),
             chapter_seals: Vec::new(),
@@ -1225,12 +1236,16 @@ impl RunState {
             route_puzzles_solved: 0,
             outcome: None,
             fights_won: 0,
+            battle_lessons_seen: Vec::new(),
+            last_enemy_image: None,
+            puzzle_mistakes: 0,
             revive_used: false,
             hexes: Vec::new(),
             skills: Vec::new(),
             fox_stage: 0,
             fox_kind: 0,
             qin_stage: 0,
+            qin_kind: 0,
         }
     }
 
@@ -1747,9 +1762,9 @@ impl RunState {
             RunCampTactic::SwordGuard
                 if self.party_companions().contains(&Companion::SwordSister) =>
             {
-                "林月衡试招(攻击 +2,备剑守)"
+                "林月衡试招(首次攻击 +1,备剑守)"
             }
-            RunCampTactic::SwordGuard => "温酒论剑(攻击 +2,备剑守)",
+            RunCampTactic::SwordGuard => "温酒论剑(首次攻击 +1,备剑守)",
             RunCampTactic::LingerWard => "灵儿护念(情缘 +1,备灵护)",
             RunCampTactic::SpiritFocus => "南瑶凝灵(道心 +1,备凝灵)",
         }
@@ -1839,76 +1854,70 @@ impl RunState {
         zones[rng.range(0, zones.len() as i32 - 1) as usize]
     }
 
-    /// 「遇」节点的抽取入口:链式奇遇按进度优先触发,否则落回随机池。
-    /// 链事件跨章推进——初遇的选择决定后续与结局回响。
+    /// Authored side stories get an encounter at their chapter milestone.
+    /// Drawing opens a scene; only resolving its choice advances the chain.
     pub fn draw_chain_or_event(&mut self, rng: &mut Rng) -> usize {
         use content as c;
-        if self.fox_stage == 0 && rng.chance(0.6) {
-            self.fox_stage = 1;
+        if self.fox_stage == 0 && self.chapter == 0 {
             return c::EV_FOX1;
         }
-        if self.fox_stage == 1 && self.chapter >= 2 && rng.chance(0.6) {
-            self.fox_stage = 2;
+        if self.fox_stage == 1 && self.chapter >= 2 {
             return if self.fox_kind > 0 {
                 c::EV_FOX2_WARM
             } else {
                 c::EV_FOX2_COLD
             };
         }
-        if self.fox_stage == 2 && self.chapter >= 5 && rng.chance(0.7) {
-            self.fox_stage = 3;
+        if self.fox_stage == 2 && self.chapter >= 5 {
             return if self.fox_kind > 0 {
                 c::EV_FOX3_WARM
             } else {
                 c::EV_FOX3_COLD
             };
         }
-        if self.qin_stage == 0 && self.chapter >= 2 && rng.chance(0.5) {
-            self.qin_stage = 1;
+        if self.qin_stage == 0 && (2..=4).contains(&self.chapter) {
             return c::EV_QIN1;
         }
-        if self.qin_stage == 1 && self.chapter >= 6 && rng.chance(0.6) {
-            self.qin_stage = 2;
+        if self.qin_stage == 1 && self.chapter >= 6 {
             return c::EV_QIN2;
         }
         self.draw_event(rng)
     }
 
-    /// Draw a random event index the player has not seen this run; the pool
-    /// resets once exhausted (chain events live past `CHAIN_START` and never
-    /// enter this pool).
+    /// Draw only events belonging to this map. Exhaustion permits a remembered
+    /// encounter, whose reward ledger prevents a second payout.
     pub fn draw_event(&mut self, rng: &mut Rng) -> usize {
-        let unseen: Vec<usize> = (0..content::CHAIN_START)
+        let eligible: Vec<usize> = (0..content::CHAIN_START)
+            .filter(|i| narrative::event_eligible(*i, self.journey_map()))
+            .collect();
+        let unseen: Vec<usize> = eligible
+            .iter()
+            .copied()
             .filter(|i| !self.seen_events.contains(i))
             .collect();
         let pool = if unseen.is_empty() {
-            self.seen_events.clear();
-            (0..content::CHAIN_START).collect()
+            &eligible
         } else {
-            unseen
+            &unseen
         };
         let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
-        self.seen_events.push(index);
+        if !self.seen_events.contains(&index) {
+            self.seen_events.push(index);
+        }
         index
     }
 
-    /// Draw an unseen 「缘」 scene from the current chapter. The pool only
-    /// resets after every authored scene in that chapter has been viewed.
-    pub fn draw_story(&mut self, rng: &mut Rng) -> usize {
+    /// Main-story scenes follow authored chronology; terrain RNG must never
+    /// move a farewell or revelation ahead of its setup.
+    pub fn draw_story(&mut self, _rng: &mut Rng) -> usize {
         let chapter = self.chapter.min(CHAPTER_COUNT - 1);
         let count = content::story_count(chapter);
-        let unseen: Vec<usize> = (0..count)
-            .filter(|index| !self.seen_story_scenes.contains(&(chapter, *index)))
-            .collect();
-        let pool = if unseen.is_empty() {
-            self.seen_story_scenes
-                .retain(|(seen_chapter, _)| *seen_chapter != chapter);
-            (0..count).collect()
-        } else {
-            unseen
-        };
-        let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
-        self.seen_story_scenes.push((chapter, index));
+        let index = (0..count)
+            .find(|index| !self.seen_story_scenes.contains(&(chapter, *index)))
+            .unwrap_or(count - 1);
+        if !self.seen_story_scenes.contains(&(chapter, index)) {
+            self.seen_story_scenes.push((chapter, index));
+        }
         index
     }
 
@@ -2315,11 +2324,12 @@ pub struct RunBattleMods {
 pub fn battle_mods_for(run: &RunState, rank: FightRank) -> RunBattleMods {
     let def = run.chapter_def();
     match rank {
-        // Boss defs were tuned for the levelled legacy campaign; the run mode
-        // has no levels, so bosses fight at a flat discount instead.
+        // Chapter seals increase player stats; boss danger must grow alongside them.
+        // Keep the first boss approachable, then let warning-aware play matter.
+        // Late attack growth caps before missed guards become a guaranteed death spiral.
         FightRank::Boss => RunBattleMods {
-            hp_mul: 0.72,
-            atk_mul: 0.68,
+            hp_mul: 0.72 + run.chapter as f32 * 0.13,
+            atk_mul: (0.68 + run.chapter as f32 * 0.13).min(1.20),
             rank,
         },
         FightRank::Elite => RunBattleMods {
@@ -2425,7 +2435,9 @@ impl Plugin for RoguelikePlugin {
             .add_systems(OnEnter(AppState::Title), screens::spawn_title)
             .add_systems(
                 Update,
-                screens::title_input.run_if(in_state(AppState::Title)),
+                (screens::title_pointer_input, screens::title_input)
+                    .chain()
+                    .run_if(in_state(AppState::Title)),
             )
             // `NodeMap` is a zero-frame hop: it rolls the next stage's map
             // and markers into `RunSceneState`, then enters the scene.
@@ -2438,6 +2450,7 @@ impl Plugin for RoguelikePlugin {
             .add_systems(
                 Update,
                 (
+                    dialogue_ui::pointer_input,
                     event::run_dialogue_input,
                     scene::clear_chapter_art,
                     scene::open_journey_intro,
@@ -2448,10 +2461,11 @@ impl Plugin for RoguelikePlugin {
                     scene::animate_hero,
                     scene::sync_run_party_followers,
                     scene::camera_follow,
+                    scene::update_architecture_depth,
                     scene::animate_marker_glyph,
                     scene::animate_scene_float_text,
                     scene::update_run_hud,
-                    event::update_run_dialogue_ui,
+                    dialogue_ui::update,
                 )
                     .chain()
                     .run_if(in_state(AppState::RunScene)),
@@ -2636,11 +2650,35 @@ mod tests {
             assert!(repeated < count);
             assert_eq!(
                 run.current_story_memory_summary(),
-                format!("1/{count}"),
-                "{} should reset only after exhausting its pool",
+                format!("{count}/{count}"),
+                "{} must retain its story history after exhaustion",
                 CHAPTERS[chapter].title
             );
         }
+    }
+
+    #[test]
+    fn story_content_chronology_is_independent_of_seed_and_preserves_finale_setup() {
+        for seed in 1..=64 {
+            let mut rng = Rng(seed);
+            let mut run = RunState::new(&mut rng);
+            for chapter in 0..CHAPTER_COUNT {
+                run.chapter = chapter;
+                let count = content::story_count(chapter);
+                for expected in 0..count {
+                    assert_eq!(run.draw_story(&mut rng), expected);
+                }
+                assert_eq!(run.draw_story(&mut rng), count - 1);
+                assert_eq!(
+                    run.current_story_memory_summary(),
+                    format!("{count}/{count}")
+                );
+            }
+        }
+        let final_scene = content::pick_story(6, content::story_count(6) - 1);
+        assert!(final_scene.lines[0].contains("第三声"));
+        assert!(content::pick_story(6, 4).lines[0].contains("灵台"));
+        assert!(content::pick_story(6, 5).lines[0].contains("断镜"));
     }
 
     #[test]
@@ -2670,7 +2708,7 @@ mod tests {
     #[test]
     fn story_content_portraits_match_scene_speakers() {
         assert_eq!(
-            content::story_portrait(5, 2),
+            content::story_portrait(5, 1),
             content::PORTRAIT_SPIRIT_WITCH
         );
         assert_eq!(
@@ -2957,54 +2995,23 @@ mod tests {
         assert_eq!(run.route_boss_preparation_label(), "未备");
     }
 
-    /// 白狐链按章推进,善恶分歧走向不同事件;随机池永不吐出链下标。
     #[test]
-    fn fox_chain_progresses_and_branches_by_kindness() {
+    fn fox_chain_advances_only_after_resolved_choices() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
-
-        // 第一卷:反复抽直到白狐初遇触发(60% 概率,重试足够多次)。
-        let mut first = None;
-        for _ in 0..64 {
-            let idx = run.draw_chain_or_event(&mut rng);
-            if idx >= content::CHAIN_START {
-                first = Some(idx);
-                break;
-            }
-        }
-        assert_eq!(first, Some(content::EV_FOX1));
-        assert_eq!(run.fox_stage, 1);
-
-        // 救了白狐 → 善缘;第三卷江路应触发「白衣回礼」。
-        run.fox_kind = 1;
+        assert_eq!(run.draw_chain_or_event(&mut rng), content::EV_FOX1);
+        assert_eq!(run.fox_stage, 0);
+        run.resolve_chain(content::EV_FOX1, 0, true);
         run.chapter = 2;
-        let mut second = None;
-        for _ in 0..64 {
-            let idx = run.draw_chain_or_event(&mut rng);
-            if idx >= content::CHAIN_START {
-                second = Some(idx);
-                break;
-            }
-        }
-        assert_eq!(second, Some(content::EV_FOX2_WARM));
-
-        // 第六卷善缘收束于「狐仙赠丹」。
+        assert_eq!(run.draw_chain_or_event(&mut rng), content::EV_FOX2_WARM);
+        assert_eq!(run.fox_stage, 1);
+        run.resolve_chain(content::EV_FOX2_WARM, 0, true);
         run.chapter = 5;
-        let mut third = None;
-        for _ in 0..64 {
-            let idx = run.draw_chain_or_event(&mut rng);
-            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
-                third = Some(idx);
-                break;
-            }
-        }
-        assert_eq!(third, Some(content::EV_FOX3_WARM));
+        assert_eq!(run.draw_chain_or_event(&mut rng), content::EV_FOX3_WARM);
+        run.resolve_chain(content::EV_FOX3_WARM, 0, true);
         assert_eq!(run.fox_stage, 3);
-
-        // 链走完后,随机池不会再吐出链事件下标。
         for _ in 0..64 {
-            let idx = run.draw_event(&mut rng);
-            assert!(idx < content::CHAIN_START);
+            assert!(run.draw_event(&mut rng) < content::CHAIN_START);
         }
     }
 
@@ -3026,33 +3033,15 @@ mod tests {
         assert!(run.hex_hazard_immune());
     }
 
-    /// 无视白狐的一世,走向「白影避走」与「妖狐拦路」。
     #[test]
     fn fox_chain_cold_branch() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
-        run.fox_stage = 1;
-        run.fox_kind = -1;
+        run.resolve_chain(content::EV_FOX1, 1, true);
         run.chapter = 2;
-        let mut second = None;
-        for _ in 0..64 {
-            let idx = run.draw_chain_or_event(&mut rng);
-            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
-                second = Some(idx);
-                break;
-            }
-        }
-        assert_eq!(second, Some(content::EV_FOX2_COLD));
-
+        assert_eq!(run.draw_chain_or_event(&mut rng), content::EV_FOX2_COLD);
+        run.resolve_chain(content::EV_FOX2_COLD, 1, true);
         run.chapter = 5;
-        let mut third = None;
-        for _ in 0..64 {
-            let idx = run.draw_chain_or_event(&mut rng);
-            if idx >= content::CHAIN_START && idx != content::EV_QIN1 && idx != content::EV_QIN2 {
-                third = Some(idx);
-                break;
-            }
-        }
-        assert_eq!(third, Some(content::EV_FOX3_COLD));
+        assert_eq!(run.draw_chain_or_event(&mut rng), content::EV_FOX3_COLD);
     }
 }

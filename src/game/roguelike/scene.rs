@@ -10,7 +10,6 @@
 
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
-use bevy::ui::widget::NodeImageMode;
 
 use super::super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::super::battle::{EncounterZone, PendingEncounter};
@@ -20,12 +19,63 @@ use super::super::explore::{
     ExploreAssets, MapData, MapKind, TerrainMaterial, Tile, spawn_terrain_map,
 };
 use super::super::lighting::{self, LightingAssets};
-use super::super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
+use super::super::paperdoll::PaperdollAssets;
 use super::super::quest::Companion;
-use super::event::{self, RunDialogue};
+use super::event::RunDialogue;
 use super::graph::NodeKind;
 use super::{FightRank, RunState, battle_mods_for, encounter_kind_for};
+use super::{dialogue_ui, puzzle};
 use crate::game::state::AppState;
+use crate::game::ui as theme;
+
+#[derive(Component, Clone, Copy)]
+pub struct SceneArchitecture {
+    foot_row: i32,
+    top_row: i32,
+    left_col: i32,
+    right_col: i32,
+    walkover: bool,
+    shadow: bool,
+}
+
+pub fn update_architecture_depth(
+    scene: Option<Res<RunSceneState>>,
+    mut buildings: Query<(
+        &SceneArchitecture,
+        &mut Transform,
+        &mut Visibility,
+        &mut Sprite,
+    )>,
+) {
+    let Some(scene) = scene else { return };
+    for (building, mut transform, mut visibility, mut sprite) in &mut buildings {
+        let known = (building.top_row..=building.foot_row).any(|row| {
+            (building.left_col..=building.right_col).any(|col| run_fog_known(&scene, col, row))
+        });
+        *visibility = if known {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        transform.translation.z = if building.shadow {
+            1.0
+        } else if !building.walkover && scene.row < building.foot_row {
+            12.0
+        } else {
+            7.0
+        };
+        if !building.shadow {
+            let covers_hero = !building.walkover
+                && scene.row < building.foot_row
+                && scene.row >= building.top_row - 3
+                && (building.left_col..=building.right_col).contains(&scene.col);
+            let alpha = if covers_hero { 0.55 } else { 1.0 };
+            if sprite.color.alpha() != alpha {
+                sprite.color = sprite.color.with_alpha(alpha);
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Resources / components
@@ -37,6 +87,13 @@ pub struct SceneMarker {
     pub col: i32,
     pub row: i32,
     pub cleared: bool,
+}
+
+impl SceneMarker {
+    /// Visited guides stop attracting navigation but remain available to talk.
+    pub fn is_visitable(&self) -> bool {
+        self.kind == NodeKind::Guide || !self.cleared
+    }
 }
 
 /// The current map stage. Persists across battles (the scene rebuilds from it
@@ -160,9 +217,30 @@ pub struct HudMpFill;
 pub struct HudSubText;
 
 #[derive(Component)]
+pub struct HudVitalsText;
+
+#[derive(Component)]
+pub struct MapHudRoot;
+
+#[derive(Component, Clone, Copy)]
+pub(super) enum HudPanel {
+    Vitals,
+    Chapter,
+    Objective,
+    Controls,
+}
+#[derive(Component)]
+pub(super) struct HudFont {
+    base: f32,
+    hint: bool,
+}
+#[derive(Component)]
+pub(super) struct HudPortrait;
+
+#[derive(Component)]
 pub struct HudTaskText;
 
-/// The Esc inventory (行囊/纸娃娃) overlay is open; movement pauses.
+/// The Esc inventory (行囊/修行录) overlay is open; movement pauses.
 #[derive(Resource, Default)]
 pub struct InventoryOpen(pub bool);
 
@@ -251,6 +329,34 @@ fn route_commission_target(scene: &RunSceneState) -> Option<NodeKind> {
     })
 }
 
+fn route_commission_reward_preview(map: MapKind) -> &'static str {
+    match map {
+        MapKind::Village | MapKind::Bamboo | MapKind::Cave | MapKind::MoonEchoCorridor => {
+            "包扎伤处，回复气血上限的12%（不超过缺损气血）"
+        }
+        MapKind::RiverTown | MapKind::RiverReedBed => "渡船盘缠25文",
+        MapKind::PlagueVillage | MapKind::PlagueShrinePath => "应急药水1瓶",
+        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
+            "线索酬银35文"
+        }
+        MapKind::SouthernRoad | MapKind::ThunderDrumPath => "调息回复8点灵力（不超过缺损灵力）",
+        MapKind::FinalSanctum | MapKind::DreamWaterway => {
+            "回复气血上限的8%及6点灵力（不超过各自缺损）"
+        }
+    }
+}
+
+fn route_commission_reason(target: NodeKind) -> &'static str {
+    match target {
+        NodeKind::Puzzle => "破解路上的机关，让后来的人也能安全通过",
+        NodeKind::Story => "听完当地人的心事，并作出你的回应",
+        NodeKind::Event => "查明路上的异事，并作出你的选择",
+        NodeKind::Rest => "在营地安顿队伍，选好下一战的营策",
+        NodeKind::Market => "拜访集市了解补给，再向摊主告辞；不强求购买",
+        _ => "查明前路情况",
+    }
+}
+
 fn route_contact_dialogue(
     run: &RunState,
     map: MapKind,
@@ -270,11 +376,27 @@ fn route_contact_dialogue(
     ];
     if let Some(target) = target {
         lines.push(format!(
-            "【委托目标】顺路清理本程的「{}」标记；不挡界门,完成后自动回执。",
-            target.label()
+            "【委托目标】{}：{}。",
+            target.label(),
+            route_commission_reason(target)
         ));
     } else {
         lines.push("【委托目标】这一路能托付的事已经差不多了,只剩一句地方提醒。".to_string());
+    }
+    lines.push(format!(
+        "【约定酬谢】{}。办妥后发放；委托不挡主线界门。",
+        route_commission_reward_preview(map)
+    ));
+    lines.push("【路况照应】每份回执还会改善本卷路况，并助你准备章末首领战。".into());
+    if run.is_route_commission_completed() {
+        lines.push("【已回执】这份委托已经办妥，酬谢已交付，不会再次发放。".into());
+    } else if run.is_route_commission_active() {
+        lines.push(format!(
+            "【已接取】{}；办妥后自动回执。",
+            run.route_commission_state_label()
+        ));
+    } else {
+        lines.push("暂不接取也无妨；之后回到此处仍可领取。".into());
     }
     (title, lines, route_contact_asset(map))
 }
@@ -288,8 +410,10 @@ fn grant_route_commission_reward(
     match map {
         MapKind::Village | MapKind::Bamboo | MapKind::Cave | MapKind::MoonEchoCorridor => {
             let heal = (stats.max_hp * 12 / 100).max(1);
+            let before = stats.hp;
             stats.hp = (stats.hp + heal).min(stats.max_hp);
-            format!("【路人委托回执】{target} 已处理,对方替你包扎伤处,恢复 {heal} 点气血。")
+            let healed = stats.hp - before;
+            format!("【路人委托回执】{target} 已处理,对方替你包扎伤处,实际恢复 {healed} 点气血。")
         }
         MapKind::RiverTown | MapKind::RiverReedBed => {
             stats.gold += 25;
@@ -308,15 +432,23 @@ fn grant_route_commission_reward(
         }
         MapKind::SouthernRoad | MapKind::ThunderDrumPath => {
             let gain = 8;
+            let before = stats.mp;
             stats.mp = (stats.mp + gain).min(stats.max_mp);
-            format!("【路人委托回执】{target} 已处理,鼓使替你稳住灵息,灵力 +{gain}。")
+            let restored = stats.mp - before;
+            format!("【路人委托回执】{target} 已处理,鼓使替你稳住灵息,实际回复灵力 {restored}。")
         }
         MapKind::FinalSanctum | MapKind::DreamWaterway => {
             let heal = (stats.max_hp * 8 / 100).max(1);
             let mp = 6;
+            let before_hp = stats.hp;
+            let before_mp = stats.mp;
             stats.hp = (stats.hp + heal).min(stats.max_hp);
             stats.mp = (stats.mp + mp).min(stats.max_mp);
-            format!("【路人委托回执】{target} 已处理,旧梦微光护住心神,气血 +{heal},灵力 +{mp}。")
+            let healed = stats.hp - before_hp;
+            let restored = stats.mp - before_mp;
+            format!(
+                "【路人委托回执】{target} 已处理,旧梦微光护住心神,实际回复气血 {healed},灵力 {restored}。"
+            )
         }
     }
 }
@@ -348,6 +480,7 @@ fn push_route_commission_completion_feedback(
     }
 }
 
+/// Called only after an event/story/rest choice succeeds or a market visit ends.
 fn route_puzzle_enabled(map: MapKind) -> bool {
     matches!(
         map,
@@ -370,40 +503,6 @@ fn route_puzzle_asset(map: MapKind) -> &'static str {
         MapKind::DreamWaterway => "props/ai_spirit_lantern.png",
         _ => "props/ai_cave_crystal.png",
     }
-}
-
-fn route_puzzle_name(map: MapKind) -> &'static str {
-    match map {
-        MapKind::MoonEchoCorridor => "月洞晶石",
-        MapKind::RiverReedBed => "逆水河灯",
-        MapKind::PlagueShrinePath => "荒寺瘴铃",
-        MapKind::MansionMirrorGallery => "照影镜轴",
-        MapKind::ThunderDrumPath => "风云誓鼓",
-        MapKind::DreamWaterway => "旧梦魂灯",
-        _ => "路中机关",
-    }
-}
-
-fn route_puzzle_lines(run: &RunState, map: MapKind) -> Vec<String> {
-    let beat = run.journey_beat();
-    let name = route_puzzle_name(map);
-    let action = match map {
-        MapKind::MoonEchoCorridor => "晶石需要按月影最暗处依次点亮,灵阵才会认得来路。",
-        MapKind::RiverReedBed => "河灯逆流漂着,先扶正灯序,水面才会露出真正渡口。",
-        MapKind::PlagueShrinePath => "荒寺铃声被瘴火压住,要先稳住铃心再走石阶。",
-        MapKind::MansionMirrorGallery => "镜轴倒映出两条脚印,只有没有回声的一条该被划掉。",
-        MapKind::ThunderDrumPath => "风、云、誓三鼓必须同拍,雷纹才不会把路劈散。",
-        MapKind::DreamWaterway => "魂灯照出旧梦岔路,把不属于此世的影子请回水里。",
-        _ => "机关光纹正拦在路中,需要先稳住再继续。",
-    };
-    vec![
-        format!("【机关】{name} 横在「{}」的主路上。", beat.place),
-        action.to_string(),
-        format!(
-            "【主线推进】{} 的机关已破,界门会把这一步计入任务札。",
-            beat.title
-        ),
-    ]
 }
 
 fn grant_route_puzzle_reward(stats: &mut PlayerStats, run: &mut RunState, map: MapKind) -> String {
@@ -433,8 +532,12 @@ fn grant_route_puzzle_reward(stats: &mut PlayerStats, run: &mut RunState, map: M
         MapKind::DreamWaterway => {
             run.qingyuan += 1;
             let heal = (stats.max_hp * 10 / 100).max(1);
+            let before = stats.hp;
             stats.hp = (stats.hp + heal).min(stats.max_hp);
-            format!("【机关回响】旧梦灯暖了一瞬,情缘 +1,气血 +{heal}。")
+            format!(
+                "【机关回响】旧梦灯暖了一瞬,情缘 +1,气血 +{}。",
+                stats.hp - before
+            )
         }
         _ => "【机关回响】道路重新安静下来。".to_string(),
     }
@@ -557,6 +660,17 @@ pub fn update_run_fog(
     }
 }
 
+/// Taking the pending receipt makes repeated settlement harmless.
+pub(super) fn settle_route_commission(
+    dialogue: &mut RunDialogue,
+    stats: &mut PlayerStats,
+    run: &mut RunState,
+) {
+    if let Some((map, kind)) = dialogue.pending_commission.take() {
+        push_route_commission_completion_feedback(&mut dialogue.lines, stats, run, map, kind);
+    }
+}
+
 /// Multi-source BFS over walkable tiles; sources start at distance 0.
 fn distance_field(map: &MapData, sources: &[(i32, i32)]) -> Vec<Vec<u16>> {
     let mut dist = vec![vec![u16::MAX; MAP_W as usize]; MAP_H as usize];
@@ -630,349 +744,13 @@ pub fn seed_flow(scene: &mut RunSceneState) {
 // Stage generation (runs on the `NodeMap` hop state)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
-struct StageTerrainProfile {
-    wall_jitter: f32,
-    wall_smoothing: usize,
-    water_walks: i32,
-    water_steps: i32,
-    grass_walks: i32,
-    grass_steps: i32,
-}
-
-fn stage_terrain_profile(map: MapKind) -> StageTerrainProfile {
-    match map {
-        MapKind::Village => StageTerrainProfile {
-            wall_jitter: 0.04,
-            wall_smoothing: 1,
-            water_walks: 1,
-            water_steps: 8,
-            grass_walks: 4,
-            grass_steps: 12,
-        },
-        MapKind::Bamboo => StageTerrainProfile {
-            wall_jitter: 0.10,
-            wall_smoothing: 2,
-            water_walks: 1,
-            water_steps: 8,
-            grass_walks: 7,
-            grass_steps: 16,
-        },
-        MapKind::Cave | MapKind::MoonEchoCorridor => StageTerrainProfile {
-            wall_jitter: 0.08,
-            wall_smoothing: 1,
-            water_walks: 2,
-            water_steps: 12,
-            grass_walks: 3,
-            grass_steps: 10,
-        },
-        MapKind::RiverTown => StageTerrainProfile {
-            wall_jitter: 0.03,
-            wall_smoothing: 1,
-            water_walks: 2,
-            water_steps: 15,
-            grass_walks: 3,
-            grass_steps: 12,
-        },
-        MapKind::RiverReedBed => StageTerrainProfile {
-            wall_jitter: 0.07,
-            wall_smoothing: 1,
-            water_walks: 4,
-            water_steps: 18,
-            grass_walks: 7,
-            grass_steps: 16,
-        },
-        MapKind::PlagueVillage | MapKind::PlagueShrinePath => StageTerrainProfile {
-            wall_jitter: 0.07,
-            wall_smoothing: 1,
-            water_walks: 2,
-            water_steps: 14,
-            grass_walks: 5,
-            grass_steps: 13,
-        },
-        MapKind::Capital | MapKind::CapitalMansion | MapKind::MansionMirrorGallery => {
-            StageTerrainProfile {
-                wall_jitter: 0.0,
-                wall_smoothing: 0,
-                water_walks: 1,
-                water_steps: 8,
-                grass_walks: 2,
-                grass_steps: 9,
-            }
-        }
-        MapKind::SouthernRoad | MapKind::ThunderDrumPath => StageTerrainProfile {
-            wall_jitter: 0.08,
-            wall_smoothing: 1,
-            water_walks: 2,
-            water_steps: 12,
-            grass_walks: 7,
-            grass_steps: 16,
-        },
-        MapKind::FinalSanctum | MapKind::DreamWaterway => StageTerrainProfile {
-            wall_jitter: 0.09,
-            wall_smoothing: 1,
-            water_walks: 4,
-            water_steps: 17,
-            grass_walks: 3,
-            grass_steps: 11,
-        },
-    }
-}
-
-fn transform_stage_blueprint(
-    map: MapKind,
-    variant: usize,
-    flip_x: bool,
-    flip_y: bool,
-) -> Vec<Vec<Tile>> {
-    let source = MapData::build(map).tiles;
-    let (w, h) = (MAP_W as usize, MAP_H as usize);
-    let mut transformed = vec![vec![Tile::Wall; w]; h];
-    for (row, output_row) in transformed.iter_mut().enumerate() {
-        for (col, output) in output_row.iter_mut().enumerate() {
-            let source_col = if flip_x { w - 1 - col } else { col };
-            let source_row = if flip_y { h - 1 - row } else { row };
-            *output = match source[source_row][source_col] {
-                Tile::Npc | Tile::Portal => Tile::Path,
-                tile => tile,
-            };
-        }
-    }
-
-    // Repeated visits retain the landmark topology while changing the approach
-    // direction. Three shear phases keep the eleven-stage finale from cycling
-    // through only four exact transforms.
-    let shear_phase = (variant / 4) % 3;
-    if shear_phase != 0 {
-        for row in 1..h - 1 {
-            transformed[row].rotate_left((row + variant) % (shear_phase + 2));
-            transformed[row][0] = Tile::Wall;
-            transformed[row][w - 1] = Tile::Wall;
-        }
-    }
-    transformed
-}
-
-fn smooth_stage_walls(tiles: &mut [Vec<Tile>], rng: &mut Rng, profile: StageTerrainProfile) {
-    let (w, h) = (MAP_W as usize, MAP_H as usize);
-    let mut walls: Vec<Vec<bool>> = tiles
-        .iter()
-        .map(|row| row.iter().map(|tile| *tile == Tile::Wall).collect())
-        .collect();
-
-    if profile.wall_jitter > 0.0 {
-        let snapshot = walls.clone();
-        for row in 1..h - 1 {
-            for col in 1..w - 1 {
-                let adjacent = [
-                    snapshot[row - 1][col],
-                    snapshot[row + 1][col],
-                    snapshot[row][col - 1],
-                    snapshot[row][col + 1],
-                ]
-                .into_iter()
-                .filter(|wall| *wall)
-                .count();
-                if (1..=3).contains(&adjacent) && rng.chance(profile.wall_jitter) {
-                    walls[row][col] = !walls[row][col];
-                }
-            }
-        }
-    }
-
-    for _ in 0..profile.wall_smoothing {
-        let snapshot = walls.clone();
-        for row in 1..h - 1 {
-            for col in 1..w - 1 {
-                let mut neighbours = 0;
-                for dr in -1i32..=1 {
-                    for dc in -1i32..=1 {
-                        if snapshot[(row as i32 + dr) as usize][(col as i32 + dc) as usize] {
-                            neighbours += 1;
-                        }
-                    }
-                }
-                walls[row][col] = neighbours >= 5;
-            }
-        }
-    }
-
-    for row in 0..h {
-        for col in 0..w {
-            if walls[row][col] {
-                tiles[row][col] = Tile::Wall;
-            } else if tiles[row][col] == Tile::Wall {
-                tiles[row][col] = Tile::Path;
-            }
-        }
-    }
-}
-
-fn paint_stage_walks(tiles: &mut [Vec<Tile>], rng: &mut Rng, kind: Tile, walks: i32, steps: i32) {
-    for _ in 0..walks {
-        let mut start = None;
-        for _ in 0..80 {
-            let candidate = (rng.range(2, MAP_W - 3), rng.range(2, MAP_H - 3));
-            let tile = tiles[candidate.1 as usize][candidate.0 as usize];
-            if matches!(tile, Tile::Path | Tile::Grass) {
-                start = Some(candidate);
-                break;
-            }
-        }
-        let Some((mut col, mut row)) = start else {
-            continue;
-        };
-        for _ in 0..steps {
-            let tile = &mut tiles[row as usize][col as usize];
-            if matches!(*tile, Tile::Path | Tile::Grass) {
-                *tile = kind;
-            }
-            match rng.range(0, 3) {
-                0 => col = (col + 1).min(MAP_W - 2),
-                1 => col = (col - 1).max(1),
-                2 => row = (row + 1).min(MAP_H - 2),
-                _ => row = (row - 1).max(1),
-            }
-        }
-    }
-}
-
-fn keep_largest_walkable_region(tiles: &mut [Vec<Tile>]) -> usize {
-    let (w, h) = (MAP_W as usize, MAP_H as usize);
-    let mut visited = vec![vec![false; w]; h];
-    let mut largest = Vec::new();
-
-    for start_row in 0..h {
-        for start_col in 0..w {
-            if visited[start_row][start_col] || !tiles[start_row][start_col].walkable() {
-                continue;
-            }
-            let mut region = Vec::new();
-            let mut queue = std::collections::VecDeque::from([(start_col, start_row)]);
-            visited[start_row][start_col] = true;
-            while let Some((col, row)) = queue.pop_front() {
-                region.push((col, row));
-                for (dc, dr) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                    let (next_col, next_row) = (col as i32 + dc, row as i32 + dr);
-                    if next_col < 0 || next_row < 0 || next_col >= MAP_W || next_row >= MAP_H {
-                        continue;
-                    }
-                    let (next_col, next_row) = (next_col as usize, next_row as usize);
-                    if !visited[next_row][next_col] && tiles[next_row][next_col].walkable() {
-                        visited[next_row][next_col] = true;
-                        queue.push_back((next_col, next_row));
-                    }
-                }
-            }
-            if region.len() > largest.len() {
-                largest = region;
-            }
-        }
-    }
-
-    let mut retained = vec![vec![false; w]; h];
-    for &(col, row) in &largest {
-        retained[row][col] = true;
-    }
-    for row in 0..h {
-        for col in 0..w {
-            if tiles[row][col].walkable() && !retained[row][col] {
-                tiles[row][col] = Tile::Wall;
-            }
-        }
-    }
-    largest.len()
-}
-
-fn stage_exploration_span(tiles: &[Vec<Tile>]) -> u16 {
-    let map = MapData::generated(MapKind::Village, tiles.to_vec());
-    let start = (1..MAP_W - 1).find_map(|col| {
-        (1..MAP_H - 1)
-            .find(|row| map.at(col, *row).walkable())
-            .map(|row| (col, row))
-    });
-    let Some(start) = start else { return 0 };
-    distance_field(&map, &[start])
-        .into_iter()
-        .flatten()
-        .filter(|distance| *distance != u16::MAX)
-        .max()
-        .unwrap_or(0)
-}
-
-/// Build a route map from its authored biome blueprint, then soften and vary
-/// it. This keeps all 15 places topologically distinct instead of applying one
-/// cellular-automata layout to every chapter.
-fn generate_stage_tiles(map: MapKind, variant: usize, rng: &mut Rng) -> Vec<Vec<Tile>> {
-    let (w, h) = (MAP_W as usize, MAP_H as usize);
-    let profile = stage_terrain_profile(map);
-    let flip_x = variant & 1 != 0;
-    let flip_y = variant & 2 != 0;
-    let blueprint = transform_stage_blueprint(map, variant, flip_x, flip_y);
-    let mut fallback = blueprint.clone();
-
-    for _ in 0..20 {
-        let mut tiles = blueprint.clone();
-        smooth_stage_walls(&mut tiles, rng, profile);
-        paint_stage_walks(
-            &mut tiles,
-            rng,
-            Tile::Water,
-            profile.water_walks,
-            profile.water_steps,
-        );
-        paint_stage_walks(
-            &mut tiles,
-            rng,
-            Tile::Grass,
-            profile.grass_walks,
-            profile.grass_steps,
-        );
-
-        // Isolated 1-3 cell water/grass specks read as texture mistakes.
-        for kind in [Tile::Water, Tile::Grass] {
-            let mut seen = vec![vec![false; w]; h];
-            for r0 in 0..h {
-                for c0 in 0..w {
-                    if tiles[r0][c0] != kind || seen[r0][c0] {
-                        continue;
-                    }
-                    let mut blob = vec![(c0, r0)];
-                    let mut queue = std::collections::VecDeque::from([(c0, r0)]);
-                    seen[r0][c0] = true;
-                    while let Some((qc, qr)) = queue.pop_front() {
-                        for (dc, dr) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                            let (nc, nr) = (qc as i32 + dc, qr as i32 + dr);
-                            if nc < 0 || nr < 0 || nc >= w as i32 || nr >= h as i32 {
-                                continue;
-                            }
-                            let (nc, nr) = (nc as usize, nr as usize);
-                            if tiles[nr][nc] == kind && !seen[nr][nc] {
-                                seen[nr][nc] = true;
-                                blob.push((nc, nr));
-                                queue.push_back((nc, nr));
-                            }
-                        }
-                    }
-                    if blob.len() <= 3 {
-                        for (bc, br) in blob {
-                            tiles[br][bc] = Tile::Path;
-                        }
-                    }
-                }
-            }
-        }
-
-        let open = keep_largest_walkable_region(&mut tiles);
-        if open >= 150 && stage_exploration_span(&tiles) >= 24 {
-            return tiles;
-        }
-        fallback = tiles;
-    }
-
-    keep_largest_walkable_region(&mut fallback);
-    fallback
-}
+#[path = "scene_layout.rs"]
+mod layout;
+#[path = "scene_places.rs"]
+mod places;
+use layout::generate_stage_tiles;
+#[cfg(test)]
+use layout::stage_exploration_span;
 
 /// Roll a marker kind for a normal stage.
 fn roll_marker_kind(rng: &mut Rng, stage: usize) -> NodeKind {
@@ -1054,11 +832,12 @@ pub fn advance_stage(
     if toll > 0 {
         stats.hp = (stats.hp - toll).max(1);
     }
+    run.accept_journey_task();
     let map_kind = run.roll_map();
     let layout_variant = run.chapter * 16 + run.stage;
     let mut tiles = generate_stage_tiles(map_kind, layout_variant, &mut rng);
 
-    // Spawn on a walkable tile near the left edge.
+    // A recognizable road entrance is preferable to a random courtyard corner.
     let mut spawn = (1, MAP_H / 2);
     'spawn: for c in 1..MAP_W {
         let mut rows: Vec<i32> = (1..MAP_H - 1).collect();
@@ -1071,6 +850,9 @@ pub fn advance_stage(
                 break 'spawn;
             }
         }
+    }
+    if tiles[(MAP_H / 2) as usize][2].walkable() {
+        spawn = (2, MAP_H / 2);
     }
 
     let map = MapData::generated(map_kind, tiles.clone());
@@ -1092,11 +874,19 @@ pub fn advance_stage(
 
     // Marker candidates: reachable, away from both spawn and portal.
     let mut candidates: Vec<(i32, i32)> = Vec::new();
+    let architecture = places::landmarks(map_kind, layout_variant);
     for r in 0..MAP_H {
         for c in 0..MAP_W {
             let d = from_spawn[r as usize][c as usize];
             let dp = (c - portal.0).abs() + (r - portal.1).abs();
-            if d != u16::MAX && d >= 6 && dp >= 4 && tiles[r as usize][c as usize].walkable() {
+            if d != u16::MAX
+                && d >= 6
+                && dp >= 4
+                && tiles[r as usize][c as usize].walkable()
+                && !architecture
+                    .iter()
+                    .any(|building| building.overhang_contains(c, r))
+            {
                 candidates.push((c, r));
             }
         }
@@ -1140,6 +930,25 @@ pub fn advance_stage(
                 continue;
             }
             place_marker(&mut markers, &candidates, &mut rng, kind, 5);
+        }
+    }
+
+    // The first story must be visible before a newcomer has learned the map.
+    if run.chapter == 0 && run.stage == 0 {
+        if let Some(index) = markers.iter().position(|m| m.kind == NodeKind::Story) {
+            let nearby = (1..MAP_H - 1)
+                .flat_map(|r| (1..MAP_W - 1).map(move |c| (c, r)))
+                .find(|&(c, r)| {
+                    let distance = from_spawn[r as usize][c as usize];
+                    (2..=3).contains(&distance)
+                        && tiles[r as usize][c as usize].walkable()
+                        && !markers.iter().any(|m| (m.col, m.row) == (c, r))
+                        && (c, r) != portal
+                });
+            if let Some((col, row)) = nearby {
+                markers[index].col = col;
+                markers[index].row = row;
+            }
         }
     }
 
@@ -1238,6 +1047,13 @@ pub(crate) fn spawn_run_scene(
         AppState::RunScene,
     );
 
+    places::spawn(
+        &mut commands,
+        &asset_server,
+        &scene,
+        run.chapter * 16 + run.stage,
+    );
+
     // Soft fill lights so the whole map reads clearly.
     for (fx, fy) in [(0.22, 0.28), (0.78, 0.28), (0.22, 0.74), (0.78, 0.74)] {
         let p = tile_to_world((MAP_W as f32 * fx) as i32, (MAP_H as f32 * fy) as i32);
@@ -1270,6 +1086,17 @@ pub(crate) fn spawn_run_scene(
         AppState::RunScene,
     );
     commands.entity(hero).insert(SceneHero);
+    let shadow = theme::contact_shadow(
+        &mut commands,
+        &asset_server,
+        Vec3::new(p.x, p.y - 29.0, 8.5),
+        44.0,
+        AppState::RunScene,
+    );
+    commands.entity(shadow).insert(theme::ShadowAnchor {
+        actor: hero,
+        offset: Vec2::new(0.0, -29.0),
+    });
     lighting::spawn_light(
         &mut commands,
         &lights,
@@ -1281,7 +1108,7 @@ pub(crate) fn spawn_run_scene(
 
     // Markers.
     for (index, marker) in scene.markers.iter().enumerate() {
-        if marker.cleared {
+        if !marker.is_visitable() {
             continue;
         }
         spawn_marker_visual(
@@ -1346,149 +1173,173 @@ pub(crate) fn spawn_run_scene(
     // hero's local light keeps the playable area clear.
     spawn_run_fog(&mut commands, &scene);
 
-    // HUD: hero avatar + HP/MP bars (details live in the Esc inventory).
+    // Compact vitals, with one objective tracker; full receipts live in the inventory.
     commands
         .spawn((
-            Node {
+            theme::panel(Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(10.0),
-                left: Val::Px(12.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(10.0),
+                top: Val::Px(18.0),
+                left: Val::Px(18.0),
+                width: Val::Px(310.0),
+                padding: UiRect::all(Val::Px(14.0)),
+                column_gap: Val::Px(12.0),
                 align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(8.0)),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.6)),
+            }),
+            MapHudRoot,
+            HudPanel::Vitals,
             scope(),
         ))
         .with_children(|hud| {
             hud.spawn((
+                HudPortrait,
                 ImageNode::new(asset_server.load("npcs/ai_hero.png")),
                 Node {
-                    width: Val::Px(72.0),
-                    height: Val::Px(72.0),
+                    width: Val::Px(56.0),
+                    height: Val::Px(56.0),
                     flex_shrink: 0.0,
                     ..default()
                 },
             ));
             hud.spawn(Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(5.0),
+                flex_grow: 1.0,
+                row_gap: Val::Px(6.0),
                 ..default()
             })
             .with_children(|col| {
-                for (marker, back, front) in [
-                    (
-                        true,
-                        Color::srgba(0.25, 0.06, 0.06, 0.9),
-                        Color::srgb(0.85, 0.25, 0.2),
-                    ),
-                    (
-                        false,
-                        Color::srgba(0.06, 0.10, 0.25, 0.9),
-                        Color::srgb(0.3, 0.55, 0.95),
-                    ),
-                ] {
-                    col.spawn((
-                        Node {
-                            width: Val::Px(180.0),
-                            height: Val::Px(13.0),
-                            ..default()
-                        },
-                        BackgroundColor(back),
-                    ))
-                    .with_children(|bar| {
-                        let fill = (
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(front),
-                        );
-                        if marker {
-                            bar.spawn((HudHpFill, fill));
-                        } else {
-                            bar.spawn((HudMpFill, fill));
-                        }
+                col.spawn((
+                    HudVitalsText,
+                    Text::new(""),
+                    HudFont {
+                        base: 14.0,
+                        hint: false,
+                    },
+                    font.text_font(14.0),
+                    TextColor(theme::TEXT),
+                ));
+                col.spawn(theme::bar_track(Val::Percent(100.0), 8.0))
+                    .with_children(|b| {
+                        b.spawn((HudHpFill, theme::bar_fill(theme::HEALTH)));
                     });
-                }
+                col.spawn(theme::bar_track(Val::Percent(100.0), 6.0))
+                    .with_children(|b| {
+                        b.spawn((HudMpFill, theme::bar_fill(theme::SPIRIT)));
+                    });
                 col.spawn((
                     HudSubText,
-                    Text::new(journey_task_status_line(&run, &scene)),
-                    font.text_font(15.0),
-                    TextColor(Color::srgba(0.9, 0.92, 0.95, 0.9)),
+                    Text::new(""),
+                    HudFont {
+                        base: 13.0,
+                        hint: false,
+                    },
+                    font.text_font(13.0),
+                    TextColor(theme::MUTED),
                 ));
             });
         });
     let beat = run.journey_beat();
-    let task_status = journey_task_status_line(&run, &scene);
     commands
         .spawn((
-            Node {
+            theme::panel(Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(10.0),
-                left: Val::Percent(31.0),
-                right: Val::Percent(16.0),
+                top: Val::Px(18.0),
+                right: Val::Px(18.0),
+                max_width: Val::Percent(42.0),
+                padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(2.0),
-                align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                row_gap: Val::Px(5.0),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.07, 0.66)),
+            }),
+            MapHudRoot,
+            HudPanel::Chapter,
             scope(),
         ))
         .with_children(|banner| {
             banner.spawn((
                 Text::new(run.chapter_def().title),
-                font.text_font(18.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.55)),
+                HudFont {
+                    base: 19.0,
+                    hint: false,
+                },
+                font.text_font(19.0),
+                TextColor(theme::GOLD),
             ));
             banner.spawn((
                 Text::new(format!(
-                    "{} · {} · 第 {}/{} 程",
+                    "{} · {} · {}/{}",
                     beat.title,
                     beat.place,
                     run.stage + 1,
-                    run.stage_count(),
+                    run.stage_count()
                 )),
-                font.text_font(16.0),
-                TextColor(Color::srgb(0.86, 0.94, 1.0)),
-            ));
-            banner.spawn((
-                Text::new(format!("目标：{} · 场景：{}", beat.objective, map.name())),
+                HudFont {
+                    base: 14.0,
+                    hint: false,
+                },
                 font.text_font(14.0),
-                TextColor(Color::srgb(0.80, 0.90, 0.82)),
+                TextColor(theme::MUTED),
             ));
-            banner.spawn((
+        });
+    commands
+        .spawn((
+            theme::panel(Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(20.0),
+                left: Val::Px(18.0),
+                max_width: Val::Percent(48.0),
+                padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                ..default()
+            }),
+            MapHudRoot,
+            HudPanel::Objective,
+            scope(),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new(beat.objective),
+                HudFont {
+                    base: 17.0,
+                    hint: false,
+                },
+                font.text_font(17.0),
+                TextColor(theme::TEXT),
+            ));
+            p.spawn((
                 HudTaskText,
-                Text::new(format!("任务：{task_status}")),
+                Text::new(""),
+                HudFont {
+                    base: 14.0,
+                    hint: false,
+                },
                 font.text_font(14.0),
-                TextColor(Color::srgb(0.95, 0.82, 0.58)),
+                TextColor(theme::GOLD),
             ));
         });
     commands.spawn((
-        Text::new("方向键 移动 · 空格 任务札/签收 · 主线清完后踏入界门交付 · ESC 行囊"),
-        font.text_font(16.0),
-        TextColor(Color::srgba(0.9, 0.92, 0.95, 0.75)),
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(10.0),
-            right: Val::Px(14.0),
-            ..default()
+        Text::new("WASD / 方向键移动 · 空格 / 回车交互 · Esc 行囊"),
+        HudFont {
+            base: 14.0,
+            hint: true,
         },
+        font.text_font(14.0),
+        TextColor(theme::TEXT),
+        theme::panel(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(20.0),
+            right: Val::Px(18.0),
+            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+            ..default()
+        }),
+        MapHudRoot,
+        HudPanel::Controls,
         scope(),
     ));
 
     // Dialogue overlay (events/story/rest/market/chapter card resolve here).
-    event::spawn_run_dialogue_ui(
-        &mut commands,
-        &font,
-        asset_server.load("ui/panel_frame.png"),
-        scope(),
-    );
+    dialogue_ui::spawn(&mut commands, &font, scope());
 
     // First stage of a chapter: show the chapter card over a full-screen
     // chapter painting.
@@ -1496,7 +1347,10 @@ pub(crate) fn spawn_run_scene(
         run.card_shown = true;
         let chapter = run.chapter;
         let card = chapter.min(super::content::CHAPTER_CARDS.len() - 1);
-        dialogue.open_plain(run.chapter_def().title, super::content::CHAPTER_CARDS[card]);
+        dialogue.open_plain(
+            run.chapter_def().title,
+            &super::content::CHAPTER_CARDS[card][1..],
+        );
         // 静态过场画兜底(动画图集加载失败时仍有画面)。
         commands.spawn((
             ChapterArt,
@@ -1745,11 +1599,22 @@ fn spawn_marker_visual(
         return;
     }
 
-    let mist = Color::srgba(0.62, 0.58, 1.0, 0.42);
+    let mist = if marker.kind.optional() {
+        Color::srgba(0.35, 0.78, 0.75, 0.60)
+    } else {
+        Color::srgba(0.88, 0.70, 0.35, 0.65)
+    };
+    let symbol = match marker.kind {
+        NodeKind::Fight => "ui/icons/attack.png",
+        NodeKind::Elite => "ui/icons/combo.png",
+        NodeKind::Rest => "ui/icons/guard.png",
+        NodeKind::Market => "ui/icons/item.png",
+        _ => "ui/icons/spell.png",
+    };
     commands.spawn((
         SceneMarkerVisual(index),
         Sprite {
-            image: lights.orb.clone(),
+            image: asset_server.load(symbol),
             color: mist.with_alpha(0.85),
             custom_size: Some(Vec2::splat(58.0)),
             ..default()
@@ -1763,8 +1628,16 @@ fn spawn_marker_visual(
         SceneMarkerGlyph {
             base_y: op.y + 42.0,
         },
-        Text2d::new("?"),
-        font.text_font(26.0),
+        Text2d::new(format!(
+            "{} · {}",
+            if marker.kind.optional() {
+                "可选"
+            } else {
+                "目标"
+            },
+            marker.kind.label()
+        )),
+        font.text_font(15.0),
         TextColor(Color::srgb(0.90, 0.86, 1.0)),
         fogged(),
         Transform::from_xyz(op.x, op.y + 42.0, 11.0),
@@ -1804,119 +1677,71 @@ fn mandatory_marker_progress(scene: &RunSceneState) -> (usize, usize) {
 
 fn journey_task_condition(run: &RunState, scene: &RunSceneState) -> String {
     if run.is_journey_task_completed() {
-        return "已归档,在界门领取下一程路引。".to_string();
+        return "此地已完成，继续前往下一处。".into();
     }
-    let prefix = if run.is_journey_task_accepted() {
-        ""
-    } else {
-        "待签收, "
-    };
     let (cleared, total) = mandatory_marker_progress(scene);
-    if run.is_boss_stage() || scene.markers.iter().any(|m| m.kind == NodeKind::Boss) {
-        if cleared >= total && total > 0 {
-            format!("{prefix}魔门对峙已触发。")
-        } else {
-            format!("{prefix}走到魔门,迎战本卷首领。")
-        }
-    } else if cleared >= total {
-        format!("{prefix}主线标记已清,踏入界门进入下一程。")
-    } else {
-        format!("{prefix}探明主线标记 {cleared}/{total},再踏入界门。")
+    if run.is_boss_stage() {
+        return "靠近首领门，按空格迎战。".into();
     }
+    if cleared >= total {
+        return "此地目标已完成，走入青色界门继续。".into();
+    }
+    let mut kinds = Vec::new();
+    for marker in scene
+        .markers
+        .iter()
+        .filter(|m| !m.cleared && !m.kind.optional())
+    {
+        let name = marker.kind.label();
+        if !kinds.contains(&name) {
+            kinds.push(name);
+        }
+    }
+    format!("已完成 {cleared}/{total} · 尚待{}", kinds.join("、"))
+}
+
+fn nearby_marker(scene: &RunSceneState) -> Option<usize> {
+    scene
+        .markers
+        .iter()
+        .enumerate()
+        .filter(|(_, marker)| marker.is_visitable())
+        .filter_map(|(index, marker)| {
+            let distance = (scene.col - marker.col).abs() + (scene.row - marker.row).abs();
+            (distance <= 1).then_some((index, distance))
+        })
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(index, _)| index)
 }
 
 fn journey_task_status_line(run: &RunState, scene: &RunSceneState) -> String {
-    let mut line = format!(
-        "{} [{}] · {}",
-        run.journey_task_receipt(),
-        run.journey_task_state_label(),
-        journey_task_condition(run, scene)
-    );
-    if let Some(commission) = run.route_commission_hud_label() {
-        line.push_str(&format!(" · 路人委托 {commission}"));
-    }
-    if let Some(guidance) = run.route_guidance_hud_label() {
-        line.push_str(&format!(" · 路况 {guidance}"));
-    }
-    line
-}
-
-fn journey_task_contract_lines(
-    run: &RunState,
-    scene: &RunSceneState,
-    include_intro: bool,
-) -> Vec<String> {
-    let beat = run.journey_beat();
-    let intro = run.journey_intro();
-    let mut lines = vec![
-        format!(
-            "【主线契约】{} · {}",
-            run.journey_task_receipt(),
-            beat.title
-        ),
-        format!(
-            "【签收状态】{} · 第 {}/{} 程",
-            run.journey_task_state_label(),
-            run.stage + 1,
-            run.stage_count()
-        ),
-        format!("【地点】{}", beat.place),
-        format!("【队伍】{}", run.party_summary()),
-        format!("【目标】{}", beat.objective),
-        format!("【本程节奏】{}", run.journey_stage_pacing_summary()),
-        format!("【本卷时长】{}", run.chapter_pacing_summary()),
-        format!("【完成条件】{}", journey_task_condition(run, scene)),
-        format!("【任务板】{}", run.journey_task_archive_label()),
-        "【领取票据】确认领取后写入任务札,HUD 与行囊持续追踪。".to_string(),
-    ];
-    if include_intro {
-        lines.push(intro.scene_line.to_string());
-        lines.push(intro.party_line.to_string());
-    }
-    lines
-}
-
-fn journey_task_turn_in_lines(
-    run: &RunState,
-    scene: &RunSceneState,
-    newly_completed: bool,
-) -> Vec<String> {
-    let beat = run.journey_beat();
-    let (cleared, total) = mandatory_marker_progress(scene);
-    let state = if newly_completed {
-        "已归档"
-    } else {
-        "已归档(已登记)"
-    };
-    vec![
-        format!(
-            "【交付任务】{} · {}",
-            run.journey_task_receipt(),
-            beat.title
-        ),
-        format!("【状态】{state} · 主线标记 {cleared}/{total}"),
-        format!("【地点】{}", beat.place),
-        format!("【交付回执】{} 已写入任务札。", beat.objective),
-        format!(
-            "【任务板】{}。空格确认后领取下一程路引。",
-            run.journey_task_archive_label()
-        ),
-    ]
-}
-
-fn open_journey_task_contract(
-    run: &RunState,
-    scene: &RunSceneState,
-    dialogue: &mut RunDialogue,
-    include_intro: bool,
-) {
-    let title = format!("任务札 · {}", run.chapter_def().title);
-    let lines = journey_task_contract_lines(run, scene, include_intro);
-    if run.is_journey_task_accepted() {
-        dialogue.open_plain_owned(&title, lines);
-    } else {
-        dialogue.open_route_task(&title, lines);
-    }
+    let action = nearby_marker(scene)
+        .map(|index| format!("空格：{}", scene.markers[index].kind.label()))
+        .unwrap_or_else(|| {
+            let target = scene
+                .markers
+                .iter()
+                .filter(|m| !m.cleared && !m.kind.optional())
+                .min_by_key(|m| (m.col - scene.col).abs() + (m.row - scene.row).abs())
+                .map(|m| (m.col, m.row, m.kind.label()))
+                .or_else(|| scene.portals.first().map(|&(c, r)| (c, r, "界门")));
+            target
+                .map(|(c, r, name)| {
+                    let north_south = match (r - scene.row).signum() {
+                        -1 => "北",
+                        1 => "南",
+                        _ => "",
+                    };
+                    let east_west = match (c - scene.col).signum() {
+                        -1 => "西",
+                        1 => "东",
+                        _ => "",
+                    };
+                    format!("{name}在{east_west}{north_south}方 · 靠近后按空格交互")
+                })
+                .unwrap_or_else(|| "靠近地标后按空格交互".into())
+        });
+    format!("{}\n{action}", journey_task_condition(run, scene))
 }
 
 pub fn open_journey_intro(
@@ -1932,7 +1757,16 @@ pub fn open_journey_intro(
     }
 
     scene.intro_shown = true;
-    open_journey_task_contract(&run, &scene, &mut dialogue, true);
+    let beat = run.journey_beat();
+    let intro = run.journey_intro();
+    dialogue.open_plain_owned(
+        &beat.title,
+        vec![
+            intro.scene_line.into(),
+            intro.party_line.into(),
+            format!("此行：{}", beat.objective),
+        ],
+    );
 }
 
 pub fn run_scene_movement(
@@ -1940,6 +1774,7 @@ pub fn run_scene_movement(
     time: Res<Time>,
     font: Res<GameFont>,
     mut intent: ResMut<Intent>,
+    mut blocked_hint_cooldown: Local<f32>,
     mut stats: ResMut<PlayerStats>,
     scene: Option<ResMut<RunSceneState>>,
     map: Option<Res<RunSceneMap>>,
@@ -1953,14 +1788,35 @@ pub fn run_scene_movement(
     let (Some(mut scene), Some(map), Some(mut run)) = (scene, map, run) else {
         return;
     };
-    if dialogue.active || inventory.0 {
-        return; // an overlay (dialogue / inventory) owns the input
+    *blocked_hint_cooldown = (*blocked_hint_cooldown - time.delta_secs()).max(0.0);
+    if let Some(index) = dialogue.puzzle_cleared_after.take() {
+        if let Some(marker) = scene.markers.get_mut(index) {
+            if marker.kind == NodeKind::Puzzle && !marker.cleared {
+                marker.cleared = true;
+                for (entity, visual) in &visuals {
+                    if visual.0 == index {
+                        commands.entity(entity).despawn();
+                    }
+                }
+                let map_kind = scene.map;
+                dialogue
+                    .lines
+                    .push(grant_route_puzzle_reward(&mut stats, &mut run, map_kind));
+                dialogue.pending_commission = Some((map_kind, NodeKind::Puzzle));
+                settle_route_commission(&mut dialogue, &mut stats, &mut run);
+                recompute_flow(&mut scene, &map.0);
+            }
+        }
     }
-    if intent.confirm && intent.move_dir.is_none() {
-        open_journey_task_contract(&run, &scene, &mut dialogue, false);
-        intent.clear();
+    if dialogue.active || inventory.0 {
         return;
     }
+    let interact = intent.confirm;
+    let target = if interact {
+        nearby_marker(&scene)
+    } else {
+        None
+    };
     // 对峙对话刚落幕:魔门之战开场。
     if dialogue.boss_battle_after {
         dialogue.boss_battle_after = false;
@@ -1976,7 +1832,7 @@ pub fn run_scene_movement(
 
     scene.cooldown -= time.delta_secs();
     let mut moved = false;
-    if let Some(dir) = intent.move_dir {
+    if let Some(dir) = intent.move_dir.filter(|_| target.is_none()) {
         if scene.cooldown <= 0.0 {
             let (nc, nr) = (scene.col + dir.x, scene.row + dir.y);
             if map.0.at(nc, nr).walkable() {
@@ -1989,29 +1845,43 @@ pub fn run_scene_movement(
                 }
             } else {
                 scene.cooldown = 0.05;
+                if *blocked_hint_cooldown <= 0.0 {
+                    let point = tile_to_world(scene.col, scene.row);
+                    let hint = if map.0.at(nc, nr) == Tile::Water {
+                        "水路不通，请寻找渡桥"
+                    } else {
+                        "前方有障碍，请沿路绕行"
+                    };
+                    commands.spawn((
+                        SceneFloatText { age: 0.0 },
+                        Text2d::new(hint),
+                        font.text_font(17.0),
+                        TextColor(theme::GOLD),
+                        Transform::from_xyz(point.x, point.y + 36.0, 30.0),
+                        DespawnOnExit(AppState::RunScene),
+                    ));
+                    *blocked_hint_cooldown = 1.4;
+                }
             }
         }
     }
     intent.clear();
-    if !moved {
+    if !moved && !interact {
         return;
     }
 
-    // Stepped onto an uncleared marker: fire its payload.
-    if let Some(index) = scene
-        .markers
-        .iter()
-        .position(|m| !m.cleared && (m.col, m.row) == (scene.col, scene.row))
-    {
-        if !run.is_journey_task_accepted() {
-            open_journey_task_contract(&run, &scene, &mut dialogue, false);
-            return;
-        }
-        scene.markers[index].cleared = true;
+    if let Some(index) = target {
         let kind = scene.markers[index].kind;
-        for (entity, visual) in &visuals {
-            if visual.0 == index {
-                commands.entity(entity).despawn();
+        // Navigation records every first visit, including asking a guide for directions.
+        // Guide interaction/visuals remain available without attracting the flow again.
+        if kind != NodeKind::Puzzle {
+            scene.markers[index].cleared = true;
+        }
+        if !matches!(kind, NodeKind::Guide | NodeKind::Puzzle) {
+            for (entity, visual) in &visuals {
+                if visual.0 == index {
+                    commands.entity(entity).despawn();
+                }
             }
         }
         recompute_flow(&mut scene, &map.0);
@@ -2040,60 +1910,38 @@ pub fn run_scene_movement(
             NodeKind::Event => {
                 let index = run.draw_chain_or_event(&mut rng);
                 dialogue.open_event(index);
-                push_route_commission_completion_feedback(
-                    &mut dialogue.lines,
-                    &mut stats,
-                    &mut run,
-                    scene.map,
-                    kind,
-                );
+                dialogue.pending_commission = Some((scene.map, kind));
             }
             NodeKind::Story => {
                 let roll = run.draw_story(&mut rng);
                 dialogue.open_story(run.chapter, roll);
-                push_route_commission_completion_feedback(
-                    &mut dialogue.lines,
-                    &mut stats,
-                    &mut run,
-                    scene.map,
-                    kind,
-                );
+                dialogue.pending_commission = Some((scene.map, kind));
             }
             NodeKind::Rest => {
                 dialogue.open_rest(&run);
-                push_route_commission_completion_feedback(
-                    &mut dialogue.lines,
-                    &mut stats,
-                    &mut run,
-                    scene.map,
-                    kind,
-                );
+                dialogue.pending_commission = Some((scene.map, kind));
             }
             NodeKind::Market => {
                 dialogue.open_market();
-                push_route_commission_completion_feedback(
-                    &mut dialogue.lines,
-                    &mut stats,
-                    &mut run,
-                    scene.map,
-                    kind,
-                );
+                dialogue.pending_commission = Some((scene.map, kind));
             }
             NodeKind::Puzzle => {
-                let mut lines = route_puzzle_lines(&run, scene.map);
-                lines.push(grant_route_puzzle_reward(&mut stats, &mut run, scene.map));
-                push_route_commission_completion_feedback(
-                    &mut lines, &mut stats, &mut run, scene.map, kind,
-                );
-                lines.push(format!("【累计】机关破除 {}", run.route_puzzles_solved));
-                dialogue
-                    .open_plain_owned(&format!("机关 · {}", route_puzzle_name(scene.map)), lines);
+                puzzle::open(&mut dialogue, index, scene.map, &mut rng);
             }
             NodeKind::Guide => {
-                let target = route_commission_target(&scene);
+                let target = if run.is_route_commission_active() {
+                    run.active_route_commission
+                        .map(|commission| commission.target)
+                } else {
+                    route_commission_target(&scene)
+                };
                 let (title, lines, portrait) = route_contact_dialogue(&run, scene.map, target);
-                if let Some(target) = target {
-                    dialogue.open_route_commission(&title, lines, target, Some(portrait));
+                if !run.is_route_commission_active() && !run.is_route_commission_completed() {
+                    if let Some(target) = target {
+                        dialogue.open_route_commission(&title, lines, target, Some(portrait));
+                    } else {
+                        dialogue.open_plain_owned_with_portrait(&title, lines, Some(portrait));
+                    }
                 } else {
                     dialogue.open_plain_owned_with_portrait(&title, lines, Some(portrait));
                 }
@@ -2110,7 +1958,7 @@ pub fn run_scene_movement(
                     commands.insert_resource(battle_mods_for(&run, FightRank::Elite));
                     next.set(AppState::Battle);
                 } else if roll < 0.35 {
-                    let line = super::event::grant_random_relic(&mut stats, &mut run, &mut rng);
+                    let line = super::narrative::grant_random_relic(&mut stats, &mut run, &mut rng);
                     dialogue.open_plain("宝箱", &["箱盖开处灵光扑面——", &line]);
                 } else if roll < 0.60 {
                     stats.potions += 1;
@@ -2137,7 +1985,8 @@ pub fn run_scene_movement(
     }
 
     // 瘴气毒格:踩上即中毒掉血(不致死),下次记得绕路。
-    if !run.hex_hazard_immune()
+    if moved
+        && !run.hex_hazard_immune()
         && scene
             .hazards
             .iter()
@@ -2158,7 +2007,9 @@ pub fn run_scene_movement(
 
     // Grass rustle: classic random encounters keep every walk risky.
     let grass_base = if run.hex_grass_halved() { 0.04 } else { 0.08 };
-    if map.0.at(scene.col, scene.row) == Tile::Grass
+    if moved
+        && !(run.chapter == 0 && run.stage == 0)
+        && map.0.at(scene.col, scene.row) == Tile::Grass
         && rng.chance(run.grass_encounter_chance(grass_base))
     {
         run.current_fight = Some(FightRank::Normal);
@@ -2171,29 +2022,22 @@ pub fn run_scene_movement(
         return;
     }
 
-    // Stepped onto the portal: advance once the map is cleared (visible
-    // loot — chests and springs — never blocks the gate).
-    if map.0.at(scene.col, scene.row) == Tile::Portal {
-        if !run.is_journey_task_accepted() {
-            open_journey_task_contract(&run, &scene, &mut dialogue, false);
-            return;
-        }
+    // Leaving is a movement decision, with no extra administrative dialogue.
+    if moved && map.0.at(scene.col, scene.row) == Tile::Portal {
         if scene.markers.iter().all(|m| m.cleared || m.kind.optional()) {
-            let title = format!("任务归档 · {}", run.journey_task_receipt());
-            let newly_completed = run.complete_journey_task();
-            let lines = journey_task_turn_in_lines(&run, &scene, newly_completed);
-            dialogue.open_route_task_turn_in(&title, lines);
+            run.complete_journey_task();
+            run.stage += 1;
+            next.set(AppState::NodeMap);
         } else {
-            let left = scene
-                .markers
-                .iter()
-                .filter(|m| !m.cleared && !m.kind.optional())
-                .count();
-            let beat = run.journey_beat();
-            let gate_line = format!("{}：{}", beat.title, beat.gate_line);
-            let task_line = format!("【任务札】{}", journey_task_condition(&run, &scene));
-            let marker_line = format!("图上还有 {left} 处主线标记未探明。");
-            dialogue.open_plain("路引", &[&gate_line, &task_line, &marker_line]);
+            let position = tile_to_world(scene.col, scene.row);
+            commands.spawn((
+                SceneFloatText { age: 0.0 },
+                Text2d::new("仍有金色目标未完成"),
+                font.text_font(18.0),
+                TextColor(theme::GOLD),
+                Transform::from_xyz(position.x, position.y + 34.0, 30.0),
+                DespawnOnExit(AppState::RunScene),
+            ));
         }
     }
 }
@@ -2319,6 +2163,18 @@ pub fn sync_run_party_followers(
         commands
             .entity(follower)
             .insert(RunPartyFollower { companion });
+        let position = run_follower_position(&scene, slot, moving, phase);
+        let shadow = theme::contact_shadow(
+            &mut commands,
+            &asset_server,
+            Vec3::new(position.x, position.y - 22.0, 8.4),
+            34.0,
+            AppState::RunScene,
+        );
+        commands.entity(shadow).insert(theme::ShadowAnchor {
+            actor: follower,
+            offset: Vec2::new(0.0, -22.0),
+        });
     }
 }
 
@@ -2350,37 +2206,142 @@ pub fn animate_marker_glyph(
     }
 }
 
-pub fn update_run_hud(
+pub(super) fn update_run_hud(
     stats: Res<PlayerStats>,
+    cameras: Query<&Camera, With<Camera2d>>,
+    scale: Res<UiScale>,
+    mut fonts: Query<(&HudFont, &mut TextFont)>,
+    inventory: Res<InventoryOpen>,
+    dialogue: Res<RunDialogue>,
+    mut roots: Query<&mut Visibility, With<MapHudRoot>>,
     run: Option<Res<RunState>>,
     scene: Option<Res<RunSceneState>>,
     mut fills: ParamSet<(
         Query<&mut Node, With<HudHpFill>>,
         Query<&mut Node, With<HudMpFill>>,
+        Query<(&HudPanel, &mut Node)>,
+        Query<&mut Node, With<HudPortrait>>,
     )>,
-    mut sub: Query<&mut Text, With<HudSubText>>,
-    mut task_banner: Query<&mut Text, (With<HudTaskText>, Without<HudSubText>)>,
+    mut labels: ParamSet<(
+        Query<&mut Text, With<HudSubText>>,
+        Query<&mut Text, With<HudTaskText>>,
+        Query<&mut Text, With<HudVitalsText>>,
+    )>,
 ) {
+    let portrait_units = cameras.iter().find_map(|camera| {
+        let size = camera.physical_viewport_size()?;
+        (size.y > size.x)
+            .then(|| 1.0 / (scale.0 * camera.target_scaling_factor().unwrap_or(1.0)).max(0.1))
+    });
+    for (style, mut font) in &mut fonts {
+        font.font_size = portrait_units
+            .map_or(style.base, |units| {
+                style.base.max(if style.hint { 12.0 } else { 15.0 }) * units
+            })
+            .into();
+    }
+    for (panel, mut node) in &mut fills.p2() {
+        if let Some(units) = portrait_units {
+            let pad = if matches!(panel, HudPanel::Controls) {
+                8.0
+            } else {
+                10.0
+            };
+            node.padding = UiRect::all(Val::Px(pad * units));
+            node.column_gap = Val::Px(8.0 * units);
+            match panel {
+                HudPanel::Vitals => {
+                    node.width = Val::Percent(46.0);
+                    node.max_width = Val::Auto;
+                    node.left = Val::Px(14.0 * units);
+                    node.top = Val::Px(14.0 * units);
+                }
+                HudPanel::Chapter => {
+                    node.width = Val::Percent(36.0);
+                    node.max_width = Val::Percent(36.0);
+                    node.right = Val::Px(14.0 * units);
+                    node.top = Val::Px(14.0 * units);
+                }
+                HudPanel::Objective => {
+                    node.width = Val::Percent(44.0);
+                    node.max_width = Val::Percent(44.0);
+                    node.left = Val::Px(14.0 * units);
+                    node.bottom = Val::Px(14.0 * units);
+                }
+                HudPanel::Controls => {
+                    node.width = Val::Percent(44.0);
+                    node.max_width = Val::Percent(44.0);
+                    node.right = Val::Px(14.0 * units);
+                    node.bottom = Val::Px(14.0 * units);
+                }
+            }
+        } else {
+            // Restore the original layouts after rotating or resizing back to landscape.
+            match panel {
+                HudPanel::Vitals => {
+                    node.width = Val::Px(310.0);
+                    node.max_width = Val::Auto;
+                    node.left = Val::Px(18.0);
+                    node.top = Val::Px(18.0);
+                    node.padding = UiRect::all(Val::Px(14.0));
+                    node.column_gap = Val::Px(12.0);
+                }
+                HudPanel::Chapter => {
+                    node.width = Val::Auto;
+                    node.max_width = Val::Percent(42.0);
+                    node.right = Val::Px(18.0);
+                    node.top = Val::Px(18.0);
+                    node.padding = UiRect::axes(Val::Px(18.0), Val::Px(12.0));
+                }
+                HudPanel::Objective => {
+                    node.width = Val::Auto;
+                    node.max_width = Val::Percent(48.0);
+                    node.left = Val::Px(18.0);
+                    node.bottom = Val::Px(20.0);
+                    node.padding = UiRect::axes(Val::Px(18.0), Val::Px(12.0));
+                }
+                HudPanel::Controls => {
+                    node.width = Val::Auto;
+                    node.max_width = Val::Auto;
+                    node.right = Val::Px(18.0);
+                    node.bottom = Val::Px(20.0);
+                    node.padding = UiRect::axes(Val::Px(14.0), Val::Px(8.0));
+                }
+            }
+        }
+    }
+    if let Ok(mut node) = fills.p3().single_mut() {
+        let size = portrait_units.map_or(56.0, |units| 40.0 * units);
+        node.width = Val::Px(size);
+        node.height = Val::Px(size);
+    }
+    for mut visibility in &mut roots {
+        *visibility = if inventory.0 || dialogue.active {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+
     if let Ok(mut node) = fills.p0().single_mut() {
-        node.width = Val::Percent((stats.hp.max(0) as f32 / stats.max_hp.max(1) as f32) * 100.0);
+        node.width = Val::Percent(
+            (stats.hp.max(0) as f32 / stats.max_hp.max(1) as f32 * 100.0).clamp(0.0, 100.0),
+        );
     }
     if let Ok(mut node) = fills.p1().single_mut() {
-        node.width = Val::Percent((stats.mp.max(0) as f32 / stats.max_mp.max(1) as f32) * 100.0);
+        node.width = Val::Percent(
+            (stats.mp.max(0) as f32 / stats.max_mp.max(1) as f32 * 100.0).clamp(0.0, 100.0),
+        );
     }
-    let task_status = match (run.as_deref(), scene.as_deref()) {
-        (Some(run), Some(scene)) => Some(journey_task_status_line(run, scene)),
-        _ => None,
-    };
-    if let Ok(mut text) = sub.single_mut() {
-        let task = task_status
-            .as_ref()
-            .map(|status| format!("\n{status}"))
-            .unwrap_or_default();
-        text.0 = format!("药水 ×{} · {} 文{task}", stats.potions, stats.gold);
+    if let Ok(mut text) = labels.p0().single_mut() {
+        text.0 = format!("药水 {} · 钱财 {} 文", stats.potions, stats.gold);
     }
-    if let Some(task_status) = task_status {
-        if let Ok(mut text) = task_banner.single_mut() {
-            text.0 = format!("任务：{task_status}");
+    if let Ok(mut text) = labels.p2().single_mut() {
+        text.0 = format!("气血 {} · 灵力 {}", stats.hp.max(0), stats.mp.max(0));
+    }
+    if let (Some(run), Some(scene)) = (run.as_deref(), scene.as_deref()) {
+        if let Ok(mut text) = labels.p1().single_mut() {
+            text.0 = journey_task_status_line(&run, scene);
         }
     }
 }
@@ -2422,25 +2383,29 @@ pub fn zoom_camera_out(mut cameras: Query<(&mut Projection, &mut Transform), Wit
 
 pub fn camera_follow(
     scene: Option<Res<RunSceneState>>,
-    mut cameras: Query<&mut Transform, With<Camera2d>>,
+    mut cameras: Query<(&Camera, &mut Transform), With<Camera2d>>,
 ) {
     let Some(scene) = scene else { return };
     if scene.col < 0 {
         return;
     }
     let target = tile_to_world(scene.col, scene.row);
-    // Clamp for a 16:9 view of VIEW_HEIGHT: half-extents 497x280 vs the
-    // map's 600x320; the wall border covers wider aspect ratios.
-    let cx = target.x.clamp(-103.0, 103.0);
-    let cy = target.y.clamp(-40.0, 40.0);
-    for mut transform in &mut cameras {
+    // Use the real viewport so tall windows keep the hero in view.
+    for (camera, mut transform) in &mut cameras {
+        let aspect = camera
+            .logical_viewport_size()
+            .map_or(16.0 / 9.0, |size| size.x / size.y.max(1.0));
+        let range_x = (MAP_W as f32 * TILE * 0.5 - VIEW_HEIGHT * aspect * 0.5).max(0.0);
+        let range_y = (MAP_H as f32 * TILE * 0.5 - VIEW_HEIGHT * 0.5).max(0.0);
+        let cx = target.x.clamp(-range_x, range_x);
+        let cy = target.y.clamp(-range_y, range_y);
         transform.translation.x += (cx - transform.translation.x) * 0.12;
         transform.translation.y += (cy - transform.translation.y) * 0.12;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Esc inventory (行囊 · 纸娃娃)
+// Esc inventory (行囊 · 修行录)
 // ---------------------------------------------------------------------------
 
 pub fn inventory_toggle(
@@ -2449,8 +2414,7 @@ pub fn inventory_toggle(
     mut inventory: ResMut<InventoryOpen>,
     dialogue: Res<RunDialogue>,
     font: Res<GameFont>,
-    asset_server: Res<AssetServer>,
-    dolls: Res<PaperdollAssets>,
+    anims: Res<AnimationAssets>,
     stats: Res<PlayerStats>,
     run: Option<Res<RunState>>,
     scene: Option<Res<RunSceneState>>,
@@ -2472,7 +2436,7 @@ pub fn inventory_toggle(
     }
     inventory.0 = true;
 
-    // World-space dim + the hero paperdoll, anchored to the camera view.
+    // World-space dim + the same animated hero used in play, anchored to the camera view.
     let cam = cameras
         .iter()
         .next()
@@ -2481,18 +2445,18 @@ pub fn inventory_toggle(
     commands.spawn((
         InventoryUi,
         Sprite::from_color(
-            Color::srgba(0.01, 0.02, 0.05, 0.82),
+            Color::srgba(0.01, 0.02, 0.05, 0.96),
             Vec2::new(2400.0, 1400.0),
         ),
         Transform::from_xyz(cam.x, cam.y, 40.0),
         DespawnOnExit(AppState::RunScene),
     ));
-    let doll = paperdoll::spawn_paperdoll(
+    let doll = animation::spawn_animated_sprite(
         &mut commands,
-        &dolls,
-        PaperdollStyle::Hero,
+        &anims,
+        AnimationClip::HeroIdle,
         Vec3::new(cam.x - 235.0, cam.y - 10.0, 50.0),
-        250.0,
+        Vec2::splat(280.0),
         AppState::RunScene,
     );
     commands.entity(doll).insert(InventoryUi);
@@ -2513,8 +2477,10 @@ pub fn inventory_toggle(
     commands
         .spawn((
             InventoryUi,
+            crate::game::ui_scroll::ScrollPanel,
+            ScrollPosition::default(),
             DespawnOnExit(AppState::RunScene),
-            Node {
+            theme::panel(Node {
                 position_type: PositionType::Absolute,
                 right: Val::Percent(6.0),
                 top: Val::Percent(8.0),
@@ -2522,155 +2488,269 @@ pub fn inventory_toggle(
                 width: Val::Percent(46.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(10.0),
-                padding: UiRect::new(Val::Px(30.0), Val::Px(30.0), Val::Px(56.0), Val::Px(24.0)),
-                overflow: Overflow::clip_y(),
+                padding: UiRect::new(Val::Px(30.0), Val::Px(30.0), Val::Px(24.0), Val::Px(24.0)),
+                overflow: Overflow::scroll_y(),
                 ..default()
-            },
-            ImageNode {
-                image: asset_server.load("ui/panel_frame.png"),
-                image_mode: NodeImageMode::Sliced(event::panel_slicer()),
-                ..default()
-            },
+            }),
             GlobalZIndex(80),
         ))
-        .with_children(|panel| {
-            panel.spawn((
-                Text::new("行囊 · 纸娃娃"),
-                font.text_font(28.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.55)),
-            ));
-            panel.spawn((
-                Text::new(format!(
-                    "{}\n任务札：{}",
-                    run.journey_summary(),
-                    task_status
-                )),
-                font.text_font(16.0),
-                TextColor(Color::srgb(0.86, 0.94, 1.0)),
-            ));
-            panel.spawn((
-                Text::new(format!(
-                    "气血 {}/{}    灵力 {}/{}
+        .with_children(|viewport| {
+            viewport
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                })
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("行囊 · 修行录"),
+                        font.text_font(28.0),
+                        TextColor(Color::srgb(0.95, 0.85, 0.55)),
+                    ));
+                    panel.spawn((
+                        Text::new(format!(
+                            "{} · {}\n{}",
+                            run.chapter_def().title,
+                            run.journey_beat().place,
+                            run.journey_beat().objective
+                        )),
+                        font.text_font(16.0),
+                        TextColor(theme::TEXT),
+                    ));
+                    panel.spawn((
+                        Text::new(format!(
+                            "气血 {}/{}    灵力 {}/{}
 攻击 {}    防御 {}
 药水 ×{}    钱财 {} 文
 道心 {}    情缘 {}",
-                    stats.hp,
-                    stats.max_hp,
-                    stats.mp,
-                    stats.max_mp,
-                    stats.atk,
-                    stats.def,
-                    stats.potions,
-                    stats.gold,
-                    run.daoxin,
-                    run.qingyuan,
-                )),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.9, 0.92, 0.95)),
-            ));
-            panel.spawn((
-                Text::new(run.milestone_summary()),
-                font.text_font(16.0),
-                TextColor(Color::srgb(0.85, 0.78, 0.95)),
-            ));
-            panel.spawn((
-                Text::new(format!("法宝({}):", run.relics.len())),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.95, 0.85, 0.55)),
-            ));
-            if run.relics.is_empty() {
-                panel.spawn((
-                    Text::new("(尚未寻得法宝)"),
-                    font.text_font(17.0),
-                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
-                ));
-            } else {
-                // 按品级从高到低排,每件按品级着色(白/绿/蓝/紫/金)。
-                let mut sorted = run.relics.clone();
-                sorted.sort_by_key(|r| std::cmp::Reverse(r.grade()));
-                for r in sorted {
-                    panel.spawn((
-                        Text::new(format!(
-                            "〔{}〕【{}】{}",
-                            r.grade().name(),
-                            r.name(),
-                            r.desc()
+                            stats.hp,
+                            stats.max_hp,
+                            stats.mp,
+                            stats.max_mp,
+                            stats.atk,
+                            stats.def,
+                            stats.potions,
+                            stats.gold,
+                            run.daoxin,
+                            run.qingyuan,
                         )),
-                        font.text_font(17.0),
-                        TextColor(r.grade().color()),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.9, 0.92, 0.95)),
                     ));
-                }
-            }
-            panel.spawn((
-                Text::new(format!("百技谱({}式):", run.skills.len())),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.62, 0.85, 1.0)),
-            ));
-            if run.skills.is_empty() {
-                panel.spawn((
-                    Text::new("(尚未习得仙术)"),
-                    font.text_font(16.0),
-                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
-                ));
-            } else {
-                let mut sorted = run.skills.clone();
-                sorted.sort_by_key(|id| std::cmp::Reverse(super::skill::skill(*id).grade));
-                for id in sorted {
-                    let def = super::skill::skill(id);
                     panel.spawn((
-                        Text::new(format!(
-                            "〔{}〕「{}」灵{} · {}",
-                            def.grade.name(),
-                            def.name(),
-                            def.cost,
-                            def.desc()
-                        )),
+                        Text::new(run.milestone_summary()),
                         font.text_font(16.0),
-                        TextColor(def.grade.color()),
+                        TextColor(Color::srgb(0.85, 0.78, 0.95)),
                     ));
-                }
-            }
-            panel.spawn((
-                Text::new(format!("妖纹({}):", run.hexes.len())),
-                font.text_font(20.0),
-                TextColor(Color::srgb(0.90, 0.62, 1.0)),
-            ));
-            if run.hexes.is_empty() {
-                panel.spawn((
-                    Text::new("(尚未染上妖纹)"),
-                    font.text_font(16.0),
-                    TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
-                ));
-            } else {
-                let mut sorted = run.hexes.clone();
-                sorted.sort_by_key(|h| std::cmp::Reverse(h.grade()));
-                for h in sorted {
+                    panel.spawn((
+                        Text::new(format!("法宝({}):", run.relics.len())),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.95, 0.85, 0.55)),
+                    ));
+                    if run.relics.is_empty() {
+                        panel.spawn((
+                            Text::new("(尚未寻得法宝)"),
+                            font.text_font(17.0),
+                            TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                        ));
+                    } else {
+                        // 按品级从高到低排,每件按品级着色(白/绿/蓝/紫/金)。
+                        let mut sorted = run.relics.clone();
+                        sorted.sort_by_key(|r| std::cmp::Reverse(r.grade()));
+                        for r in sorted {
+                            panel.spawn((
+                                Text::new(format!(
+                                    "〔{}〕【{}】{}",
+                                    r.grade().name(),
+                                    r.name(),
+                                    r.desc()
+                                )),
+                                font.text_font(17.0),
+                                TextColor(r.grade().color()),
+                            ));
+                        }
+                    }
                     panel.spawn((
                         Text::new(format!(
-                            "〔{}〕【{}】{}",
-                            h.grade().name(),
-                            h.name(),
-                            h.desc()
+                            "仙术秘卷({}/{}):",
+                            run.skills.len(),
+                            super::skill::SKILL_COUNT
                         )),
-                        font.text_font(16.0),
-                        TextColor(h.grade().color()),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.62, 0.85, 1.0)),
                     ));
-                }
-            }
-            panel.spawn((
-                Text::new(
-                    "
-ESC 关闭",
-                ),
-                font.text_font(15.0),
-                TextColor(Color::srgba(0.8, 0.85, 0.9, 0.7)),
-            ));
+                    if run.skills.is_empty() {
+                        panel.spawn((
+                            Text::new("(尚未习得仙术)"),
+                            font.text_font(16.0),
+                            TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                        ));
+                    } else {
+                        let mut sorted = run.skills.clone();
+                        sorted.sort_by_key(|id| std::cmp::Reverse(super::skill::skill(*id).grade));
+                        for id in sorted {
+                            let def = super::skill::skill(id);
+                            panel.spawn((
+                                Text::new(format!(
+                                    "〔{}〕「{}」灵{} · {}",
+                                    def.grade.name(),
+                                    def.name(),
+                                    crate::game::battle::skill_cost(id, &run),
+                                    def.desc()
+                                )),
+                                font.text_font(16.0),
+                                TextColor(def.grade.color()),
+                            ));
+                        }
+                    }
+                    panel.spawn((
+                        Text::new(format!("妖纹({}):", run.hexes.len())),
+                        font.text_font(20.0),
+                        TextColor(Color::srgb(0.90, 0.62, 1.0)),
+                    ));
+                    if run.hexes.is_empty() {
+                        panel.spawn((
+                            Text::new("(尚未染上妖纹)"),
+                            font.text_font(16.0),
+                            TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
+                        ));
+                    } else {
+                        let mut sorted = run.hexes.clone();
+                        sorted.sort_by_key(|h| std::cmp::Reverse(h.grade()));
+                        for h in sorted {
+                            panel.spawn((
+                                Text::new(format!(
+                                    "〔{}〕【{}】{}",
+                                    h.grade().name(),
+                                    h.name(),
+                                    h.desc()
+                                )),
+                                font.text_font(16.0),
+                                TextColor(h.grade().color()),
+                            ));
+                        }
+                    }
+                    panel.spawn((
+                        Text::new(run.narrative_summary()),
+                        font.text_font(15.0),
+                        TextColor(theme::TEXT),
+                    ));
+                    panel.spawn((
+                        Text::new("旅程记录"),
+                        font.text_font(20.0),
+                        TextColor(theme::GOLD),
+                    ));
+                    panel.spawn((
+                        Text::new(format!(
+                            "{}\n任务札：{}",
+                            run.journey_summary().replace("实测用时", "此世历时"),
+                            task_status
+                        )),
+                        font.text_font(15.0),
+                        TextColor(theme::MUTED),
+                    ));
+                });
         });
+    commands.spawn((
+        InventoryUi,
+        DespawnOnExit(AppState::RunScene),
+        Text::new("滚轮或翻页键翻阅 · 退出键关闭"),
+        font.text_font(14.0),
+        TextColor(theme::MUTED),
+        theme::panel(Node {
+            position_type: PositionType::Absolute,
+            right: Val::Percent(6.0),
+            bottom: Val::Percent(3.0),
+            padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+            ..default()
+        }),
+        GlobalZIndex(81),
+    ));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commission_waits_for_resolution_and_settles_only_once() {
+        let mut run = RunState::new(&mut Rng::default());
+        let mut stats = PlayerStats::default();
+        let before = stats.gold;
+        assert!(run.accept_route_commission(NodeKind::Event));
+        let mut dialogue = RunDialogue::default();
+        dialogue.open_event(0);
+        dialogue.pending_commission = Some((MapKind::RiverTown, NodeKind::Event));
+        assert_eq!(stats.gold, before);
+        assert!(!run.is_route_commission_completed());
+        settle_route_commission(&mut dialogue, &mut stats, &mut run);
+        assert_eq!(stats.gold, before + 25);
+        assert_eq!(run.route_contacts_helped, 1);
+        assert!(run.is_route_commission_completed());
+        assert!(dialogue.pending_commission.is_none());
+        assert!(dialogue.lines.iter().any(|s| s.contains("路况照应")));
+        let line_count = dialogue.lines.len();
+        settle_route_commission(&mut dialogue, &mut stats, &mut run);
+        // Repeated callbacks and even a replayed pending receipt cannot grant again.
+        dialogue.pending_commission = Some((MapKind::RiverTown, NodeKind::Event));
+        settle_route_commission(&mut dialogue, &mut stats, &mut run);
+        assert_eq!(stats.gold, before + 25);
+        assert_eq!(run.route_contacts_helped, 1);
+        assert_eq!(dialogue.lines.len(), line_count);
+    }
+
+    #[test]
+    fn wrong_target_does_not_pay_or_complete_accepted_commission() {
+        let mut run = RunState::new(&mut Rng::default());
+        assert!(run.accept_route_commission(NodeKind::Story));
+        let mut stats = PlayerStats::default();
+        let before = stats.gold;
+        let mut dialogue = RunDialogue::default();
+        dialogue.pending_commission = Some((MapKind::Capital, NodeKind::Market));
+        settle_route_commission(&mut dialogue, &mut stats, &mut run);
+        assert_eq!(stats.gold, before);
+        assert!(run.is_route_commission_active());
+        assert_eq!(run.route_contacts_helped, 0);
+        dialogue.pending_commission = Some((MapKind::Capital, NodeKind::Story));
+        settle_route_commission(&mut dialogue, &mut stats, &mut run);
+        assert_eq!(stats.gold, before + 35);
+    }
+
+    #[test]
+    fn commission_recovery_receipts_report_actual_capped_gain() {
+        let mut stats = PlayerStats::default();
+        stats.hp = stats.max_hp - 1;
+        let line = grant_route_commission_reward(&mut stats, MapKind::Bamboo, NodeKind::Puzzle);
+        assert_eq!(stats.hp, stats.max_hp);
+        assert!(line.contains("实际恢复 1 点气血"));
+        stats.mp = stats.max_mp - 2;
+        let line =
+            grant_route_commission_reward(&mut stats, MapKind::SouthernRoad, NodeKind::Event);
+        assert_eq!(stats.mp, stats.max_mp);
+        assert!(line.contains("实际回复灵力 2"));
+        let line =
+            grant_route_commission_reward(&mut stats, MapKind::FinalSanctum, NodeKind::Story);
+        assert!(line.contains("气血 0,灵力 0"));
+    }
+
+    #[test]
+    fn guide_explains_work_payment_and_existing_contract_status() {
+        let mut run = RunState::new(&mut Rng::default());
+        let (_, offered, _) =
+            route_contact_dialogue(&run, MapKind::RiverTown, Some(NodeKind::Market));
+        assert!(offered.iter().any(|line| line.contains("不强求购买")));
+        assert!(offered.iter().any(|line| line.contains("25文")));
+        assert!(offered.iter().any(|line| line.contains("之后回到此处")));
+        run.accept_route_commission(NodeKind::Market);
+        let (_, accepted, _) =
+            route_contact_dialogue(&run, MapKind::RiverTown, Some(NodeKind::Market));
+        assert!(accepted.iter().any(|line| line.contains("已接取")));
+        run.complete_route_commission(NodeKind::Market);
+        let (_, completed, _) = route_contact_dialogue(&run, MapKind::RiverTown, None);
+        assert!(completed.iter().any(|line| line.contains("不会再次发放")));
+    }
 
     const ALL_ROUTE_MAPS: [MapKind; 15] = [
         MapKind::Village,
@@ -2695,7 +2775,7 @@ mod tests {
             .iter()
             .flatten()
             .map(|tile| match tile {
-                Tile::Wall => 1,
+                Tile::Wall | Tile::Structure => 1,
                 Tile::Water => 2,
                 _ => 0,
             })
@@ -2717,6 +2797,54 @@ mod tests {
             intro_shown: false,
             cooldown: 0.0,
         }
+    }
+
+    #[test]
+    fn visited_guide_remains_talkable_without_trapping_flow_or_portal_navigation() {
+        let mut map = MapData::build(MapKind::Village);
+        map.tiles = vec![vec![Tile::Wall; MAP_W as usize]; MAP_H as usize];
+        // A real walkable corridor makes the BFS distances and downhill direction exact.
+        for col in 1..=9 {
+            map.tiles[2][col] = Tile::Path;
+        }
+        let mut scene = test_scene(vec![
+            SceneMarker {
+                kind: NodeKind::Guide,
+                col: 2,
+                row: 2,
+                cleared: false,
+            },
+            SceneMarker {
+                kind: NodeKind::Story,
+                col: 6,
+                row: 2,
+                cleared: false,
+            },
+        ]);
+        scene.portals = vec![(9, 2)];
+        recompute_flow(&mut scene, &map);
+        assert_eq!(scene.flow[2][2], 0);
+        assert_eq!(scene.flow[2][6], 0);
+
+        scene.markers[0].cleared = true;
+        recompute_flow(&mut scene, &map);
+        assert!(scene.markers[0].is_visitable());
+        assert_eq!(scene.flow, distance_field(&map, &[(6, 2)]));
+        assert_eq!(scene.flow[2][2], 4);
+        assert!(scene.flow[2][3] < scene.flow[2][2]);
+
+        scene.markers[1].cleared = true;
+        recompute_flow(&mut scene, &map);
+        assert!(!scene.markers[1].is_visitable());
+        assert!(scene.markers[0].is_visitable());
+        assert_eq!(scene.flow, distance_field(&map, &[(9, 2)]));
+        assert_eq!(scene.flow[2][9], 0);
+        assert_eq!(scene.flow[2][2], 7);
+        // Returning to the guide preserves portal steering after another conversation.
+        scene.markers[0].cleared = true;
+        recompute_flow(&mut scene, &map);
+        assert_eq!(scene.flow[2][2], 7);
+        assert!(scene.flow[2][3] < scene.flow[2][2]);
     }
 
     #[test]
@@ -2923,9 +3051,9 @@ mod tests {
 
         assert_eq!(mandatory_marker_progress(&scene), (1, 3));
         assert!(journey_task_condition(&run, &scene).contains("1/3"));
-        assert!(journey_task_condition(&run, &scene).contains("待签收"));
-        assert!(journey_task_status_line(&run, &scene).contains("主线签 卷1-01"));
-        assert!(journey_task_status_line(&run, &scene).contains("[待签收]"));
+        assert!(journey_task_condition(&run, &scene).contains("遭遇战"));
+        assert!(journey_task_status_line(&run, &scene).contains("空格"));
+        assert!(!journey_task_status_line(&run, &scene).contains("签收"));
     }
 
     #[test]
@@ -2946,7 +3074,7 @@ mod tests {
                 cleared: true,
             },
         ]);
-        assert!(journey_task_condition(&run, &ready).contains("踏入界门"));
+        assert!(journey_task_condition(&run, &ready).contains("界门"));
 
         run.stage = run.stage_count() - 1;
         let boss = test_scene(vec![SceneMarker {
@@ -2955,66 +3083,7 @@ mod tests {
             row: 1,
             cleared: false,
         }]);
-        assert!(journey_task_condition(&run, &boss).contains("迎战本卷首领"));
-    }
-
-    #[test]
-    fn journey_task_contract_surfaces_explicit_pickup_details() {
-        let mut rng = Rng::default();
-        let mut run = RunState::new(&mut rng);
-        let scene = test_scene(vec![SceneMarker {
-            kind: NodeKind::Fight,
-            col: 1,
-            row: 1,
-            cleared: false,
-        }]);
-
-        let lines = journey_task_contract_lines(&run, &scene, true);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("【主线契约】主线签 卷1-01"))
-        );
-        assert!(lines.iter().any(|line| line.contains("【签收状态】待签收")));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("【任务板】主线归档 0/41"))
-        );
-        assert!(lines.iter().any(|line| line.contains("【本程节奏】本程约")));
-        assert!(lines.iter().any(|line| line.contains("必做：剧情x1")));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("【本卷时长】本卷约65分"))
-        );
-        assert!(lines.iter().any(|line| line.contains("全旅程目标 10小时")));
-        assert!(lines.iter().any(|line| line.contains("【领取票据】")));
-
-        run.accept_journey_task();
-        let tracked = journey_task_contract_lines(&run, &scene, false);
-        assert!(
-            tracked
-                .iter()
-                .any(|line| line.contains("【签收状态】已追踪"))
-        );
-        assert!(journey_task_status_line(&run, &scene).contains("[已追踪]"));
-        assert!(!journey_task_condition(&run, &scene).contains("待签收"));
-
-        assert!(run.complete_journey_task());
-        let turn_in = journey_task_turn_in_lines(&run, &scene, true);
-        assert!(
-            turn_in
-                .iter()
-                .any(|line| line.contains("【交付任务】主线签 卷1-01"))
-        );
-        assert!(turn_in.iter().any(|line| line.contains("【状态】已归档")));
-        assert!(
-            turn_in
-                .iter()
-                .any(|line| line.contains("【任务板】主线归档 1/41"))
-        );
-        assert!(journey_task_condition(&run, &scene).contains("已归档"));
+        assert!(journey_task_condition(&run, &boss).contains("迎战"));
     }
 
     #[test]
@@ -3024,7 +3093,7 @@ mod tests {
         run.stage = 2;
         let mut stats = PlayerStats::default();
 
-        let lines = route_puzzle_lines(&run, MapKind::MoonEchoCorridor);
+        let lines = puzzle::riddle(MapKind::MoonEchoCorridor).clues;
         let reward = grant_route_puzzle_reward(&mut stats, &mut run, MapKind::MoonEchoCorridor);
 
         assert!(!NodeKind::Puzzle.optional());
@@ -3034,7 +3103,7 @@ mod tests {
             route_puzzle_asset(MapKind::MoonEchoCorridor),
             "props/ai_cave_crystal.png"
         );
-        assert!(lines.iter().any(|line| line.contains("月洞晶石")));
+        assert!(lines.iter().any(|line| line.contains("晶石")));
         assert_eq!(run.route_puzzles_solved, 1);
         assert!(stats.max_mp > PlayerStats::default().max_mp);
         assert!(reward.contains("灵力上限"));
@@ -3121,5 +3190,101 @@ mod tests {
             run_fog_entity_visibility(&scene, 5, 5),
             Visibility::Inherited
         ));
+    }
+}
+
+#[cfg(test)]
+#[path = "scene_input_tests.rs"]
+mod input_tests;
+
+#[cfg(test)]
+mod architecture_visibility_tests {
+    use super::*;
+
+    #[test]
+    fn known_building_edge_reveals_architecture_and_preserves_correct_depth() {
+        let mut app = App::new();
+        let mut revealed = vec![vec![false; MAP_W as usize]; MAP_H as usize];
+        revealed[7][5] = true; // Inn edge visible at spawn; its centre is not.
+        app.insert_resource(RunSceneState {
+            map: MapKind::Village,
+            tiles: Vec::new(),
+            revealed,
+            col: 2,
+            row: 8,
+            facing_left: false,
+            markers: Vec::new(),
+            portals: Vec::new(),
+            flow: Vec::new(),
+            hazards: Vec::new(),
+            intro_shown: true,
+            cooldown: 0.0,
+        })
+        .add_systems(Update, update_architecture_depth);
+        let building = SceneArchitecture {
+            foot_row: 7,
+            top_row: 5,
+            left_col: 5,
+            right_col: 9,
+            walkover: false,
+            shadow: false,
+        };
+        let body = app
+            .world_mut()
+            .spawn((
+                building,
+                Transform::default(),
+                Visibility::Hidden,
+                Sprite::default(),
+            ))
+            .id();
+        let shadow = app
+            .world_mut()
+            .spawn((
+                SceneArchitecture {
+                    shadow: true,
+                    ..building
+                },
+                Transform::default(),
+                Visibility::Hidden,
+                Sprite::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(body).unwrap(),
+            Visibility::Inherited
+        );
+        assert!(app.world().get::<Transform>(body).unwrap().translation.z < 10.0);
+        assert_eq!(app.world().get::<Sprite>(body).unwrap().color.alpha(), 1.0);
+        app.world_mut().resource_mut::<RunSceneState>().row = 4;
+        app.world_mut().resource_mut::<RunSceneState>().col = 7;
+        app.update();
+        assert!(app.world().get::<Transform>(body).unwrap().translation.z > 10.0);
+        assert!(app.world().get::<Transform>(shadow).unwrap().translation.z < 7.0);
+        assert!(app.world().get::<Sprite>(body).unwrap().color.alpha() < 1.0);
+        {
+            let mut scene = app.world_mut().resource_mut::<RunSceneState>();
+            scene.col = MAP_W - 2;
+            scene.row = MAP_H - 2;
+        }
+        app.update();
+        assert_eq!(app.world().get::<Sprite>(body).unwrap().color.alpha(), 1.0);
+        assert_eq!(
+            *app.world().get::<Visibility>(body).unwrap(),
+            Visibility::Inherited
+        );
+        app.world_mut().resource_mut::<RunSceneState>().revealed[7][5] = false;
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(body).unwrap(),
+            Visibility::Hidden
+        );
+        app.world_mut().resource_mut::<RunSceneState>().revealed[7][9] = true;
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(body).unwrap(),
+            Visibility::Inherited
+        );
     }
 }

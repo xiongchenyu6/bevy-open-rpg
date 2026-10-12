@@ -20,8 +20,8 @@ pub fn tile_to_world(col: i32, row: i32) -> Vec2 {
 // Shared font handle
 // ---------------------------------------------------------------------------
 
-/// Loaded once at startup. Unifont covers CJK glyphs (the embedded default font
-/// is Latin-only), so all in-game Chinese text uses this handle.
+/// Loaded once at startup. Noto Sans CJK supplies smooth Chinese glyphs;
+/// all in-game text shares this handle.
 #[derive(Resource)]
 pub struct GameFont(pub Handle<Font>);
 

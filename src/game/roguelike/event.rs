@@ -5,14 +5,14 @@
 //! resource-driven UI box, so the map stays visible behind the text.
 
 use bevy::prelude::*;
-use bevy::ui::widget::NodeImageMode;
 
-use super::super::core::{GameFont, Intent, PlayerStats, Rng};
+use super::super::core::{Intent, PlayerStats, Rng};
 use super::super::quest::Companion;
 use super::content::{self, Effect, Outcome};
 use super::graph::NodeKind;
-use super::{ALL_RELICS, RunCampTactic, RunChapterVow, RunState};
-use crate::game::state::AppState;
+use super::narrative::{self, NarrativeKind, NarrativeRecord};
+use super::{RunCampTactic, RunChapterVow, RunState};
+use crate::game::explore::MapKind;
 
 // ---------------------------------------------------------------------------
 // Overlay state
@@ -24,15 +24,17 @@ pub enum DialogueSource {
     Plain,
     /// Index into [`content::EVENTS`].
     Event(usize),
-    /// Story scene of the current chapter (roll picks from the pool).
+    /// Story scene in the current chapter’s authored sequence.
     Story {
         chapter: usize,
         roll: usize,
     },
     Rest,
     Market,
-    /// Explicit route-task contract shown at the start of each run map.
-    RouteTask,
+    /// A route mechanism with an authored decision.
+    Puzzle {
+        index: usize,
+    },
     /// Optional local errand offered by a visible Guide marker.
     RouteCommission {
         target: NodeKind,
@@ -55,8 +57,13 @@ pub struct RunDialogue {
     pub portrait: Option<&'static str>,
     /// 对峙对话结束后立即开打(章末魔门的先礼后兵)。
     pub boss_battle_after: bool,
-    /// 任务交付对话关闭后推进下一程。
-    pub advance_stage_after: bool,
+    /// The local errand completes after this overlay is actually resolved.
+    pub pending_commission: Option<(MapKind, NodeKind)>,
+    pub choice_error: Option<String>,
+    pub puzzle_answer: Option<usize>,
+    pub puzzle_hint: Option<&'static str>,
+    pub puzzle_solved_line: Option<&'static str>,
+    pub puzzle_cleared_after: Option<usize>,
 }
 
 impl RunDialogue {
@@ -99,30 +106,6 @@ impl RunDialogue {
         };
     }
 
-    pub fn open_route_task(&mut self, title: &str, lines: Vec<String>) {
-        *self = Self {
-            active: true,
-            title: title.to_string(),
-            lines,
-            options: vec!["领取并追踪".to_string(), "先看地图".to_string()],
-            source: DialogueSource::RouteTask,
-            resolved: false,
-            ..default()
-        };
-    }
-
-    pub fn open_route_task_turn_in(&mut self, title: &str, lines: Vec<String>) {
-        *self = Self {
-            active: true,
-            title: title.to_string(),
-            lines,
-            source: DialogueSource::Plain,
-            resolved: true,
-            advance_stage_after: true,
-            ..default()
-        };
-    }
-
     pub fn open_route_commission(
         &mut self,
         title: &str,
@@ -161,7 +144,7 @@ impl RunDialogue {
         lines.push(scene.prompt.to_string());
         *self = Self {
             active: true,
-            title: "剧情 · 缘".to_string(),
+            title: format!("剧情 · {}", scene.title),
             lines,
             options: scene.options.iter().map(|o| o.label.to_string()).collect(),
             source: DialogueSource::Story { chapter, roll },
@@ -187,8 +170,10 @@ impl RunDialogue {
             Some(content::PORTRAIT_SPIRIT_WITCH)
         } else if run.party_companions().contains(&Companion::SwordSister) {
             Some(content::PORTRAIT_SWORD_SISTER)
-        } else {
+        } else if run.party_companions().contains(&Companion::Linger) {
             Some(content::PORTRAIT_LINGER)
+        } else {
+            None
         };
         *self = Self {
             active: true,
@@ -221,8 +206,66 @@ impl RunDialogue {
         };
     }
 
+    pub fn choice_preview(&self, run: Option<&RunState>) -> String {
+        if let Some(error) = &self.choice_error {
+            return error.clone();
+        }
+        if let DialogueSource::Puzzle { index } = self.source {
+            return super::puzzle::choice_preview(index, self.selected);
+        }
+        let kind = match self.source {
+            DialogueSource::Event(index) => Some(NarrativeKind::Event(index)),
+            DialogueSource::Story { chapter, roll } => Some(NarrativeKind::Story(chapter, roll)),
+            _ => None,
+        };
+        if kind.is_some_and(|k| run.is_some_and(|r| r.has_narrative_receipt(k))) {
+            return "此事已结：可回顾，无消耗，不会重复发放回礼。".into();
+        }
+        match self.source {
+            DialogueSource::Event(index) => {
+                let option = &content::EVENTS[index].options[self.selected];
+                let mut outcome = option.success;
+                if index == content::EV_QIN2 && self.selected == 0 {
+                    outcome.effect = if run.is_some_and(|r| r.qin_kind > 0) {
+                        Effect::Bundle(&[
+                            Effect::LearnSkill(super::skill::SkillId::SoulLantern),
+                            Effect::GainMaxMp(6),
+                        ])
+                    } else {
+                        Effect::Bundle(&[
+                            Effect::LearnSkill(super::skill::SkillId::MoonHalo),
+                            Effect::RestoreMpPct(25),
+                        ])
+                    };
+                }
+                let mut text = narrative::choice_preview(
+                    option.cost,
+                    &outcome,
+                    option.chance,
+                    option.failure.as_ref(),
+                );
+                if index == content::EV_FOX2_COLD && self.selected == 0 {
+                    text.push_str("\n后续：修复与阿狸的关系，终遇转为善缘。");
+                }
+                if index == content::EV_QIN1 {
+                    text.push_str(if self.selected == 0 {
+                        "\n后续：琴师记下你的资助，重逢时传授引魂之术。"
+                    } else {
+                        "\n后续：琴师记下你的倾听，重逢时传授护身之术。"
+                    });
+                }
+                text
+            }
+            DialogueSource::Story { chapter, roll } => {
+                let option = &content::pick_story(chapter, roll).options[self.selected];
+                narrative::choice_preview(option.cost, &option.outcome, 1.0, None)
+            }
+            _ => String::new(),
+        }
+    }
+
     /// The overlay is waiting on an option pick (all lines shown, unresolved).
-    fn in_choice(&self) -> bool {
+    pub(super) fn in_choice(&self) -> bool {
         !self.resolved && self.idx + 1 >= self.lines.len() && !self.options.is_empty()
     }
 }
@@ -233,117 +276,6 @@ impl RunDialogue {
 
 /// Apply an outcome's mechanical effect. Returns an extra feedback line for
 /// effects whose result is rolled at runtime (e.g. which relic dropped).
-pub fn apply_outcome(
-    outcome: &Outcome,
-    stats: &mut PlayerStats,
-    run: &mut RunState,
-    rng: &mut Rng,
-) -> Option<String> {
-    run.daoxin += outcome.daoxin;
-    run.qingyuan += outcome.qingyuan;
-    apply_effect(outcome.effect, stats, run, rng)
-}
-
-pub fn apply_effect(
-    effect: Effect,
-    stats: &mut PlayerStats,
-    run: &mut RunState,
-    rng: &mut Rng,
-) -> Option<String> {
-    match effect {
-        Effect::None => None,
-        Effect::HealPct(pct) => {
-            let amount = (stats.max_hp * pct / 100).max(1);
-            stats.hp = (stats.hp + amount).min(stats.max_hp);
-            None
-        }
-        Effect::DamagePct(pct) => {
-            let amount = (stats.max_hp * pct / 100).max(1);
-            stats.hp = (stats.hp - amount).max(1);
-            None
-        }
-        Effect::GainPotions(n) => {
-            stats.potions += n;
-            None
-        }
-        Effect::LosePotions(n) => {
-            stats.potions = stats.potions.saturating_sub(n);
-            None
-        }
-        Effect::GainGold(n) => {
-            stats.gold += n;
-            None
-        }
-        Effect::LoseGold(n) => {
-            stats.gold = stats.gold.saturating_sub(n);
-            None
-        }
-        Effect::GainAtk(n) => {
-            stats.atk += n;
-            None
-        }
-        Effect::GainDef(n) => {
-            stats.def += n;
-            None
-        }
-        Effect::GainMaxHp(n) => {
-            stats.max_hp += n;
-            stats.hp += n;
-            None
-        }
-        Effect::GainMaxMp(n) => {
-            stats.max_mp += n;
-            stats.mp += n;
-            None
-        }
-        Effect::RandomRelic => Some(grant_random_relic(stats, run, rng)),
-    }
-}
-
-/// Grant a random unowned relic (falls back to gold when the collection is
-/// complete). Returns the feedback line.
-pub fn grant_random_relic(stats: &mut PlayerStats, run: &mut RunState, rng: &mut Rng) -> String {
-    let unowned: Vec<_> = ALL_RELICS
-        .iter()
-        .copied()
-        .filter(|r| !run.has_relic(*r))
-        .collect();
-    if unowned.is_empty() {
-        stats.gold += 50;
-        return "法宝已集齐,化作 50 文钱财。".to_string();
-    }
-    let relic = unowned[rng.range(0, unowned.len() as i32 - 1) as usize];
-    grant_relic(relic, stats, run)
-}
-
-/// Add a relic and apply its pick-up effects. Returns the feedback line.
-pub fn grant_relic(relic: super::Relic, stats: &mut PlayerStats, run: &mut RunState) -> String {
-    use super::Relic;
-    run.relics.push(relic);
-    match relic {
-        Relic::PeachHairpin => {
-            run.qingyuan += 2;
-            stats.max_hp += 15;
-            stats.hp += 15;
-        }
-        Relic::HeavenScroll => {
-            run.daoxin += 2;
-            stats.max_mp += 10;
-            stats.mp += 10;
-        }
-        Relic::StarSand => {
-            stats.max_mp += 12;
-            stats.mp += 12;
-        }
-        Relic::GinsengRoot => {
-            stats.max_hp += 20;
-            stats.hp += 20;
-        }
-        _ => {}
-    }
-    format!("获得法宝【{}】:{}", relic.name(), relic.desc())
-}
-
 // ---------------------------------------------------------------------------
 // Input: advance lines / pick options
 // ---------------------------------------------------------------------------
@@ -354,7 +286,6 @@ pub fn run_dialogue_input(
     mut stats: ResMut<PlayerStats>,
     run: Option<ResMut<RunState>>,
     mut rng: ResMut<Rng>,
-    mut next: ResMut<NextState<AppState>>,
 ) {
     if !dialogue.active {
         return;
@@ -367,9 +298,11 @@ pub fn run_dialogue_input(
     if dialogue.in_choice() {
         if intent.up && dialogue.selected > 0 {
             dialogue.selected -= 1;
+            dialogue.choice_error = None;
         }
         if intent.down && dialogue.selected + 1 < dialogue.options.len() {
             dialogue.selected += 1;
+            dialogue.choice_error = None;
         }
         if intent.confirm {
             let pick = dialogue.selected;
@@ -384,33 +317,75 @@ pub fn run_dialogue_input(
         if dialogue.idx + 1 < dialogue.lines.len() {
             dialogue.idx += 1;
         } else {
-            let advance_stage = dialogue.advance_stage_after;
-            dialogue.advance_stage_after = false;
             dialogue.active = false;
-            if advance_stage {
-                run.stage += 1;
-                next.set(AppState::NodeMap);
-            }
         }
     }
     intent.clear();
 }
 
-fn resolve_choice(
+pub(crate) fn resolve_choice(
     dialogue: &mut RunDialogue,
     pick: usize,
     stats: &mut PlayerStats,
     run: &mut RunState,
     rng: &mut Rng,
 ) {
+    if matches!(dialogue.source, DialogueSource::Puzzle { .. }) {
+        super::puzzle::resolve_choice(dialogue, pick, stats, run, rng);
+        return;
+    }
+    let kind_and_cost = match dialogue.source {
+        DialogueSource::Event(index) => Some((
+            NarrativeKind::Event(index),
+            content::EVENTS[index].options[pick].cost,
+        )),
+        DialogueSource::Story { chapter, roll } => Some((
+            NarrativeKind::Story(chapter, roll),
+            content::pick_story(chapter, roll).options[pick].cost,
+        )),
+        _ => None,
+    };
+    let mut paid_receipt = String::new();
+    if let Some((kind, cost)) = kind_and_cost {
+        if run.has_narrative_receipt(kind) {
+            dialogue
+                .lines
+                .push("【缘事回顾】此事已结，不再扣除代价或发放回礼。".into());
+            dialogue.resolved = true;
+            dialogue.options.clear();
+            dialogue.idx += 1;
+            super::scene::settle_route_commission(dialogue, stats, run);
+            return;
+        }
+        match cost.pay(stats) {
+            Ok(receipt) => paid_receipt = receipt,
+            Err(reason) => {
+                dialogue.choice_error = Some(reason);
+                return;
+            }
+        }
+    }
+    dialogue.choice_error = None;
+    let mut event_succeeded = true;
     let outcome: Outcome = match dialogue.source {
         DialogueSource::Event(index) => {
-            // 白狐初遇:救或不救,写进这一世的因果。
-            if index == content::EV_FOX1 {
-                run.fox_kind = if pick == 0 { 1 } else { -1 };
-            }
             let option = &content::EVENTS[index].options[pick];
-            if rng.chance(option.chance) {
+            event_succeeded = rng.chance(option.chance);
+            if index == content::EV_QIN2 && pick == 0 {
+                let mut gift = option.success;
+                gift.effect = if run.qin_kind > 0 {
+                    Effect::Bundle(&[
+                        Effect::LearnSkill(super::skill::SkillId::SoulLantern),
+                        Effect::GainMaxMp(6),
+                    ])
+                } else {
+                    Effect::Bundle(&[
+                        Effect::LearnSkill(super::skill::SkillId::MoonHalo),
+                        Effect::RestoreMpPct(25),
+                    ])
+                };
+                gift
+            } else if event_succeeded {
                 option.success
             } else {
                 option.failure.unwrap_or(option.success)
@@ -434,34 +409,51 @@ fn resolve_choice(
             let first_visit = run.record_camp_scene();
             run.set_camp_tactic(tactic);
             let mult = run.rest_multiplier();
+            let before = (stats.hp, stats.mp, stats.atk, run.daoxin, run.qingyuan);
             let mut result_line = match tactic {
                 RunCampTactic::Breath => {
                     let amount = stats.max_hp * 50 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
                     let mana = (stats.max_mp * 30 / 100).max(1);
                     stats.mp = (stats.mp + mana).min(stats.max_mp);
-                    format!("一夜吐纳,气血回复了 {amount} 点,灵力回稳 {mana} 点。")
+                    "一夜吐纳，你轮流替同伴守夜，天亮时又能继续赶路。".into()
                 }
                 RunCampTactic::SwordGuard => {
-                    stats.atk += 2;
+                    if first_visit {
+                        stats.atk += 1;
+                    }
                     let amount = stats.max_hp * 10 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
-                    "以火光为敌手拆招至深夜,剑势又利了几分。(攻击 +2)".to_string()
+                    format!(
+                        "以火光为敌手拆招至深夜，剑守已备。(攻击 +{})",
+                        if first_visit { 1 } else { 0 }
+                    )
                 }
                 RunCampTactic::LingerWard => {
-                    run.qingyuan += 1;
+                    if first_visit {
+                        run.qingyuan += 1;
+                    }
                     let amount = stats.max_hp * 30 * mult / 100;
                     stats.hp = (stats.hp + amount).min(stats.max_hp);
-                    "灵儿讲起小时候偷摘桃子被追着跑的糗事,火堆边的夜忽然就不冷了。(情缘 +1)"
-                        .to_string()
+                    "灵儿讲起小时候偷摘桃子被追着跑的糗事,火堆边的夜忽然就不冷了。".to_string()
                 }
                 RunCampTactic::SpiritFocus => {
-                    run.daoxin += 1;
+                    if first_visit {
+                        run.daoxin += 1;
+                    }
                     let mana = (stats.max_mp * 60 / 100).max(1);
                     stats.mp = (stats.mp + mana).min(stats.max_mp);
-                    "南瑶以铜铃压住杂乱灵纹,队伍心口都清明了一线。(道心 +1)".to_string()
+                    "南瑶以铜铃压住杂乱灵纹,队伍心口都清明了一线。".to_string()
                 }
             };
+            result_line.push_str(&format!(
+                "\n【实得照应】气血 {:+} · 灵力 {:+} · 攻击 {:+} · 道心 {:+} · 情缘 {:+}",
+                stats.hp - before.0,
+                stats.mp - before.1,
+                stats.atk - before.2,
+                run.daoxin - before.3,
+                run.qingyuan - before.4
+            ));
             if first_visit {
                 result_line.push_str(&format!(
                     "\n【营火照应】本世已记下 {} 处营地。",
@@ -476,6 +468,7 @@ fn resolve_choice(
                 tactic.battle_line()
             ));
             dialogue.lines.push(result_line);
+            super::scene::settle_route_commission(dialogue, stats, run);
             dialogue.resolved = true;
             dialogue.options.clear();
             dialogue.idx += 1;
@@ -519,6 +512,7 @@ fn resolve_choice(
                     dialogue
                         .lines
                         .push("摊主们拱手相送:「剑客慢走,前路顺风。」".to_string());
+                    super::scene::settle_route_commission(dialogue, stats, run);
                     dialogue.resolved = true;
                     dialogue.options.clear();
                     dialogue.idx += 1;
@@ -528,29 +522,6 @@ fn resolve_choice(
             // Stay in choice mode: append feedback and keep the options up.
             dialogue.lines.push(line);
             dialogue.idx = dialogue.lines.len() - 1;
-            return;
-        }
-        DialogueSource::RouteTask => {
-            if pick == 0 {
-                let receipt = run.journey_task_receipt();
-                let already = !run.accept_journey_task();
-                let state = if already {
-                    "已经在任务札中"
-                } else {
-                    "已写入任务札"
-                };
-                dialogue.lines.push(format!(
-                    "【主线已接取】{receipt} {state}。HUD 与行囊会持续追踪完成条件。"
-                ));
-            } else {
-                dialogue.lines.push(format!(
-                    "【暂未签收】{} 仍待确认；靠近主线标记或界门前会再次展开任务契约。",
-                    run.journey_task_receipt()
-                ));
-            }
-            dialogue.resolved = true;
-            dialogue.options.clear();
-            dialogue.idx += 1;
             return;
         }
         DialogueSource::RouteCommission { target } => {
@@ -577,80 +548,70 @@ fn resolve_choice(
             dialogue.idx += 1;
             return;
         }
-        DialogueSource::Plain => return,
+        DialogueSource::Plain | DialogueSource::Puzzle { .. } => return,
     };
 
-    // Append outcome lines and any rolled-effect feedback, then fall into
-    // plain line-advancing mode.
+    // Narrative prose and mechanical receipts are separate; receipts come
+    // from actual mutations, never from manually maintained text promises.
     for line in outcome.lines {
-        dialogue.lines.push(line.to_string());
+        if !line.is_empty() {
+            dialogue.lines.push(line.to_string());
+        }
     }
-    if let Some(extra) = apply_outcome(&outcome, stats, run, rng) {
-        dialogue.lines.push(extra);
+    if matches!(dialogue.source, DialogueSource::Event(content::EV_QIN2)) && pick == 0 {
+        dialogue.lines.push(
+            if run.qin_kind > 0 {
+                "苏弦递来写着指法的曲谱：你资助的盘缠让她带难民走到这里，如今她将引魂之术教给你。"
+            } else {
+                "苏弦将护身的指法记在纸上：你那晚安静听完的曲子，正是凝成月轮的灵诀。"
+            }
+            .into(),
+        );
     }
+    if !paid_receipt.is_empty() {
+        dialogue.lines.push(paid_receipt.clone());
+    }
+    let reward_receipt = narrative::apply_outcome(&outcome, stats, run, rng).unwrap_or_default();
+    dialogue.lines.push(reward_receipt.clone());
+    if let Some((kind, _)) = kind_and_cost {
+        let title = match kind {
+            NarrativeKind::Event(index) => content::EVENTS[index].title,
+            NarrativeKind::Story(chapter, roll) => content::pick_story(chapter, roll).title,
+        };
+        run.narrative_log.push(NarrativeRecord {
+            kind,
+            chapter: run.chapter,
+            title: title.into(),
+            choice: dialogue.options[pick].clone(),
+            receipt: [paid_receipt, reward_receipt]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        });
+        if let NarrativeKind::Event(index) = kind {
+            run.resolve_chain(index, pick, event_succeeded);
+            if index == content::EV_FOX2_COLD && run.fox_kind == 2 {
+                dialogue
+                    .lines
+                    .push("【缘事续记】阿狸接受了补救；下一次相逢会以善缘相待。".into());
+            }
+        }
+    }
+    super::scene::settle_route_commission(dialogue, stats, run);
     dialogue.resolved = true;
     dialogue.options.clear();
     dialogue.idx += 1;
 }
 
 #[cfg(test)]
+#[path = "narrative_tests.rs"]
+mod narrative_tests;
+
+#[cfg(test)]
 mod tests {
     use super::super::super::core::{PlayerStats, Rng};
     use super::*;
-
-    #[test]
-    fn route_task_choice_accepts_current_journey_receipt() {
-        let mut rng = Rng::default();
-        let mut run = RunState::new(&mut rng);
-        let mut stats = PlayerStats::default();
-        let mut dialogue = RunDialogue::default();
-
-        dialogue.open_route_task("任务札", vec!["【主线契约】主线签 卷1-01".to_string()]);
-        assert!(!run.is_journey_task_accepted());
-
-        resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
-
-        assert!(run.is_journey_task_accepted());
-        assert!(dialogue.resolved);
-        assert!(dialogue.options.is_empty());
-        assert!(
-            dialogue
-                .lines
-                .iter()
-                .any(|line| line.contains("【主线已接取】主线签 卷1-01"))
-        );
-    }
-
-    #[test]
-    fn route_task_cancel_leaves_receipt_unsigned() {
-        let mut rng = Rng::default();
-        let mut run = RunState::new(&mut rng);
-        let mut stats = PlayerStats::default();
-        let mut dialogue = RunDialogue::default();
-
-        dialogue.open_route_task("任务札", vec!["【主线契约】主线签 卷1-01".to_string()]);
-        resolve_choice(&mut dialogue, 1, &mut stats, &mut run, &mut rng);
-
-        assert!(!run.is_journey_task_accepted());
-        assert!(
-            dialogue
-                .lines
-                .iter()
-                .any(|line| line.contains("【暂未签收】主线签 卷1-01"))
-        );
-    }
-
-    #[test]
-    fn route_task_turn_in_dialogue_marks_deferred_stage_advance() {
-        let mut dialogue = RunDialogue::default();
-
-        dialogue.open_route_task_turn_in("任务归档", vec!["【交付任务】主线签 卷1-01".to_string()]);
-
-        assert!(dialogue.active);
-        assert!(dialogue.resolved);
-        assert!(dialogue.options.is_empty());
-        assert!(dialogue.advance_stage_after);
-    }
 
     #[test]
     fn route_commission_choice_tracks_local_errand_target() {
@@ -755,181 +716,5 @@ mod tests {
         assert_eq!(run.active_camp_tactic, Some(RunCampTactic::SpiritFocus));
         assert_eq!(run.daoxin, 1);
         assert!(stats.mp > 1);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// UI
-// ---------------------------------------------------------------------------
-
-#[derive(Component)]
-pub struct RunDialogueRoot;
-
-#[derive(Component)]
-pub struct RunDialogueTitle;
-
-#[derive(Component)]
-pub struct RunDialogueLine;
-
-#[derive(Component)]
-pub struct RunDialogueOptions;
-
-#[derive(Component)]
-pub struct RunDialoguePortrait;
-
-/// Nine-slice profile for the gold-trimmed ink panel (`ui/panel_frame.png`,
-/// 768×512): corners stay crisp, the near-black centre stretches.
-pub fn panel_slicer() -> TextureSlicer {
-    TextureSlicer {
-        border: BorderRect::axes(110.0, 58.0),
-        center_scale_mode: SliceScaleMode::Stretch,
-        sides_scale_mode: SliceScaleMode::Stretch,
-        max_corner_scale: 0.6,
-    }
-}
-
-/// Spawn the (hidden) overlay box — a portrait card on the left, text column
-/// on the right. Called from the node-map scene setup so it carries the same
-/// `DespawnOnExit` scope.
-pub fn spawn_run_dialogue_ui(
-    commands: &mut Commands,
-    font: &GameFont,
-    panel: Handle<Image>,
-    scope: impl Bundle,
-) {
-    commands
-        .spawn((
-            RunDialogueRoot,
-            scope,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(8.0),
-                right: Val::Percent(8.0),
-                bottom: Val::Px(28.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(16.0),
-                align_items: AlignItems::FlexStart,
-                padding: UiRect::new(Val::Px(32.0), Val::Px(32.0), Val::Px(46.0), Val::Px(20.0)),
-                ..default()
-            },
-            ImageNode {
-                image: panel,
-                image_mode: NodeImageMode::Sliced(panel_slicer()),
-                ..default()
-            },
-            Visibility::Hidden,
-            GlobalZIndex(50),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                RunDialoguePortrait,
-                ImageNode::default(),
-                Node {
-                    width: Val::Px(132.0),
-                    height: Val::Px(176.0),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
-                Visibility::Hidden,
-            ));
-            parent
-                .spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(6.0),
-                    flex_grow: 1.0,
-                    ..default()
-                })
-                .with_children(|column| {
-                    column.spawn((
-                        RunDialogueTitle,
-                        Text::new(""),
-                        font.text_font(20.0),
-                        TextColor(Color::srgb(0.95, 0.83, 0.52)),
-                    ));
-                    column.spawn((
-                        RunDialogueLine,
-                        Text::new(""),
-                        font.text_font(22.0),
-                        TextColor(Color::srgb(0.94, 0.94, 0.90)),
-                    ));
-                    column.spawn((
-                        RunDialogueOptions,
-                        Text::new(""),
-                        font.text_font(20.0),
-                        TextColor(Color::srgb(0.75, 0.88, 1.0)),
-                    ));
-                });
-        });
-}
-
-pub fn update_run_dialogue_ui(
-    dialogue: Res<RunDialogue>,
-    asset_server: Res<AssetServer>,
-    mut root: Query<&mut Visibility, (With<RunDialogueRoot>, Without<RunDialoguePortrait>)>,
-    mut portrait: Query<
-        (&mut ImageNode, &mut Visibility),
-        (With<RunDialoguePortrait>, Without<RunDialogueRoot>),
-    >,
-    mut texts: ParamSet<(
-        Query<&mut Text, With<RunDialogueTitle>>,
-        Query<&mut Text, With<RunDialogueLine>>,
-        Query<&mut Text, With<RunDialogueOptions>>,
-    )>,
-) {
-    let Ok(mut visibility) = root.single_mut() else {
-        return;
-    };
-    *visibility = if dialogue.active {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    };
-    if !dialogue.active {
-        return;
-    }
-
-    if let Ok((mut image, mut portrait_visibility)) = portrait.single_mut() {
-        match dialogue.portrait {
-            Some(path) => {
-                if dialogue.is_changed() {
-                    image.image = asset_server.load(path);
-                }
-                *portrait_visibility = Visibility::Inherited;
-            }
-            None => {
-                *portrait_visibility = Visibility::Hidden;
-            }
-        }
-    }
-
-    if let Ok(mut text) = texts.p0().single_mut() {
-        text.0 = dialogue.title.clone();
-    }
-    if let Ok(mut text) = texts.p1().single_mut() {
-        text.0 = dialogue
-            .lines
-            .get(dialogue.idx)
-            .cloned()
-            .unwrap_or_default();
-    }
-    if let Ok(mut text) = texts.p2().single_mut() {
-        text.0 = if dialogue.in_choice() {
-            dialogue
-                .options
-                .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    if i == dialogue.selected {
-                        format!("▶ {label}")
-                    } else {
-                        format!("　 {label}")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            "(空格继续)".to_string()
-        };
     }
 }

@@ -706,69 +706,45 @@ impl Default for CurrentMap {
 
 #[derive(Resource)]
 pub struct ExploreAssets {
-    grass: Handle<Image>,
+    ground_earth: Handle<Image>,
+    ground_grass: Handle<Image>,
+    ground_stone: Handle<Image>,
+    ground_rock: Handle<Image>,
     forest: Handle<Image>,
     water: Handle<Image>,
-    bamboo_path: Handle<Image>,
     bamboo_thicket: Handle<Image>,
-    cave_floor: Handle<Image>,
     moon_cave_wall: Handle<Image>,
-    mystic_grass: Handle<Image>,
-    shrine_floor: Handle<Image>,
-    stone_road: Handle<Image>,
-    village_moss_path: Handle<Image>,
     reed_wall: Handle<Image>,
-    reed_floor: Handle<Image>,
     plague_wall: Handle<Image>,
-    plague_floor: Handle<Image>,
     capital_wall: Handle<Image>,
-    capital_floor: Handle<Image>,
     mansion_wall: Handle<Image>,
-    mansion_floor: Handle<Image>,
     mirror_wall: Handle<Image>,
-    mirror_floor: Handle<Image>,
     south_wall: Handle<Image>,
-    south_floor: Handle<Image>,
     thunder_wall: Handle<Image>,
-    thunder_floor: Handle<Image>,
     abyss_wall: Handle<Image>,
-    abyss_floor: Handle<Image>,
     dream_wall: Handle<Image>,
-    dream_floor: Handle<Image>,
 }
 
 impl ExploreAssets {
     fn load(assets: &AssetServer) -> Self {
         Self {
-            grass: assets.load("tiles/grass.png"),
+            ground_earth: assets.load("tiles/ground-earth.png"),
+            ground_grass: assets.load("tiles/ground-grass.png"),
+            ground_stone: assets.load("tiles/ground-stone.png"),
+            ground_rock: assets.load("tiles/ground-rock.png"),
             forest: assets.load("tiles/forest_floor.png"),
-            water: assets.load("tiles/water_edge.png"),
-            bamboo_path: assets.load("tiles/ai_bamboo_path.png"),
+            water: assets.load("tiles/water_surface.png"),
             bamboo_thicket: assets.load("tiles/ai_bamboo_thicket.png"),
-            cave_floor: assets.load("tiles/ai_cave_floor.png"),
             moon_cave_wall: assets.load("tiles/ai_moon_cave_wall.png"),
-            mystic_grass: assets.load("tiles/ai_mystic_grass.png"),
-            shrine_floor: assets.load("tiles/ai_shrine_floor.png"),
-            stone_road: assets.load("tiles/stone_road.png"),
-            village_moss_path: assets.load("tiles/ai_village_moss_path.png"),
             reed_wall: assets.load("tiles/ai_reed_wall.png"),
-            reed_floor: assets.load("tiles/ai_reed_floor.png"),
             plague_wall: assets.load("tiles/ai_plague_wall.png"),
-            plague_floor: assets.load("tiles/ai_plague_floor.png"),
             capital_wall: assets.load("tiles/ai_capital_wall.png"),
-            capital_floor: assets.load("tiles/ai_capital_floor.png"),
             mansion_wall: assets.load("tiles/ai_mansion_wall.png"),
-            mansion_floor: assets.load("tiles/ai_mansion_floor.png"),
             mirror_wall: assets.load("tiles/ai_mirror_wall.png"),
-            mirror_floor: assets.load("tiles/ai_mirror_floor.png"),
             south_wall: assets.load("tiles/ai_south_wall.png"),
-            south_floor: assets.load("tiles/ai_south_floor.png"),
             thunder_wall: assets.load("tiles/ai_thunder_wall.png"),
-            thunder_floor: assets.load("tiles/ai_thunder_floor.png"),
             abyss_wall: assets.load("tiles/ai_abyss_wall.png"),
-            abyss_floor: assets.load("tiles/ai_abyss_floor.png"),
             dream_wall: assets.load("tiles/ai_dream_wall.png"),
-            dream_floor: assets.load("tiles/ai_dream_floor.png"),
         }
     }
 }
@@ -818,6 +794,10 @@ pub enum Tile {
     Path,
     Grass,
     Wall,
+    /// Architectural collision footprint; ground continues beneath its prop.
+    Structure,
+    /// Traversable bridge deck whose background is the river beneath it.
+    Bridge,
     Water,
     Npc,
     Portal,
@@ -825,7 +805,7 @@ pub enum Tile {
 
 impl Tile {
     pub(crate) fn walkable(self) -> bool {
-        matches!(self, Tile::Path | Tile::Grass | Tile::Portal)
+        matches!(self, Tile::Path | Tile::Grass | Tile::Portal | Tile::Bridge)
     }
 }
 
@@ -7792,22 +7772,21 @@ fn spawn_explore(
     // --- HUD (top-left stats) ---
     commands
         .spawn((
-            Node {
+            super::ui::panel(Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(12.0),
                 left: Val::Px(12.0),
                 padding: UiRect::all(Val::Px(10.0)),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            }),
             DespawnOnExit(AppState::Explore),
         ))
         .with_children(|p| {
             p.spawn((
                 HudText,
                 Text::new(""),
-                font.text_font(18.0),
-                TextColor(Color::WHITE),
+                font.text_font(15.0),
+                TextColor(super::ui::TEXT),
             ));
         });
 
@@ -8552,7 +8531,7 @@ pub(crate) fn tile_sprite(
             MapKind::MoonEchoCorridor => {
                 (assets.moon_cave_wall.clone(), Color::srgb(0.30, 0.38, 0.62))
             }
-            MapKind::RiverTown => (assets.shrine_floor.clone(), Color::srgb(0.42, 0.45, 0.38)),
+            MapKind::RiverTown => (assets.capital_wall.clone(), Color::srgb(0.72, 0.74, 0.68)),
             MapKind::RiverReedBed => (assets.reed_wall.clone(), Color::srgb(0.88, 0.95, 0.90)),
             MapKind::PlagueVillage => (assets.plague_wall.clone(), Color::srgb(0.92, 0.88, 0.92)),
             MapKind::PlagueShrinePath => {
@@ -8568,58 +8547,61 @@ pub(crate) fn tile_sprite(
             MapKind::FinalSanctum => (assets.abyss_wall.clone(), Color::srgb(0.94, 0.90, 1.0)),
             MapKind::DreamWaterway => (assets.dream_wall.clone(), Color::srgb(0.88, 0.96, 1.0)),
         },
-        Tile::Water => (assets.water.clone(), Color::srgb(0.50, 0.78, 1.0)),
+        Tile::Water | Tile::Bridge => (
+            assets.water.clone(),
+            match kind {
+                MapKind::Cave | MapKind::MoonEchoCorridor => Color::srgb(0.44, 0.60, 0.90),
+                MapKind::PlagueVillage | MapKind::PlagueShrinePath => Color::srgb(0.46, 0.64, 0.50),
+                MapKind::FinalSanctum | MapKind::DreamWaterway => Color::srgb(0.46, 0.56, 0.84),
+                _ => Color::srgb(0.58, 0.82, 0.86),
+            },
+        ),
         Tile::Grass => match kind {
-            MapKind::Village => (assets.grass.clone(), Color::srgb(0.72, 0.95, 0.62)),
-            MapKind::MoonEchoCorridor => {
-                (assets.mystic_grass.clone(), Color::srgb(0.48, 0.66, 0.90))
+            MapKind::Village => (assets.ground_grass.clone(), Color::srgb(0.72, 0.95, 0.62)),
+            MapKind::Cave | MapKind::MoonEchoCorridor => {
+                (assets.ground_rock.clone(), Color::srgb(0.30, 0.54, 0.66))
             }
-            MapKind::RiverTown => (assets.mystic_grass.clone(), Color::srgb(0.66, 0.82, 0.58)),
-            MapKind::RiverReedBed => (assets.mystic_grass.clone(), Color::srgb(0.70, 0.84, 0.48)),
-            MapKind::PlagueVillage => (assets.mystic_grass.clone(), Color::srgb(0.54, 0.66, 0.42)),
+            MapKind::RiverTown => (assets.ground_grass.clone(), Color::srgb(0.66, 0.82, 0.58)),
+            MapKind::RiverReedBed => (assets.ground_grass.clone(), Color::srgb(0.70, 0.84, 0.48)),
+            MapKind::PlagueVillage => (assets.ground_grass.clone(), Color::srgb(0.54, 0.66, 0.42)),
             MapKind::PlagueShrinePath => {
-                (assets.mystic_grass.clone(), Color::srgb(0.42, 0.60, 0.36))
+                (assets.ground_grass.clone(), Color::srgb(0.42, 0.60, 0.36))
             }
-            MapKind::Capital => (assets.shrine_floor.clone(), Color::srgb(0.64, 0.62, 0.76)),
-            MapKind::CapitalMansion => (assets.shrine_floor.clone(), Color::srgb(0.56, 0.58, 0.82)),
+            MapKind::Capital => (assets.ground_grass.clone(), Color::srgb(0.64, 0.62, 0.76)),
+            MapKind::CapitalMansion => (assets.ground_grass.clone(), Color::srgb(0.56, 0.58, 0.82)),
             MapKind::MansionMirrorGallery => {
-                (assets.shrine_floor.clone(), Color::srgb(0.48, 0.58, 0.88))
+                (assets.ground_grass.clone(), Color::srgb(0.48, 0.58, 0.88))
             }
-            MapKind::SouthernRoad => (assets.mystic_grass.clone(), Color::srgb(0.66, 0.88, 0.50)),
+            MapKind::SouthernRoad => (assets.ground_grass.clone(), Color::srgb(0.66, 0.88, 0.50)),
             MapKind::ThunderDrumPath => {
-                (assets.mystic_grass.clone(), Color::srgb(0.56, 0.76, 0.58))
+                (assets.ground_grass.clone(), Color::srgb(0.56, 0.76, 0.58))
             }
-            MapKind::FinalSanctum => (assets.mystic_grass.clone(), Color::srgb(0.54, 0.62, 0.86)),
-            MapKind::DreamWaterway => (assets.mystic_grass.clone(), Color::srgb(0.50, 0.62, 0.86)),
-            _ => (assets.mystic_grass.clone(), Color::srgb(0.72, 0.88, 0.82)),
+            MapKind::FinalSanctum => (assets.ground_grass.clone(), Color::srgb(0.54, 0.62, 0.86)),
+            MapKind::DreamWaterway => (assets.ground_grass.clone(), Color::srgb(0.50, 0.62, 0.86)),
+            _ => (assets.ground_grass.clone(), Color::srgb(0.72, 0.88, 0.82)),
         },
-        Tile::Npc | Tile::Path | Tile::Portal => match kind {
-            MapKind::Village => (
-                assets.village_moss_path.clone(),
-                Color::srgb(0.88, 0.82, 0.66),
-            ),
-            MapKind::Bamboo => (assets.bamboo_path.clone(), Color::srgb(0.94, 0.84, 0.62)),
-            MapKind::Cave => (assets.cave_floor.clone(), Color::srgb(0.68, 0.74, 0.82)),
-            MapKind::MoonEchoCorridor => (assets.cave_floor.clone(), Color::srgb(0.62, 0.74, 0.94)),
-            MapKind::RiverTown => (assets.stone_road.clone(), Color::srgb(0.78, 0.76, 0.66)),
-            MapKind::RiverReedBed => (assets.reed_floor.clone(), Color::srgb(0.96, 0.94, 0.88)),
-            MapKind::PlagueVillage => (assets.plague_floor.clone(), Color::srgb(0.95, 0.92, 0.88)),
+        Tile::Structure | Tile::Npc | Tile::Path | Tile::Portal => match kind {
+            MapKind::Village => (assets.ground_earth.clone(), Color::srgb(0.88, 0.82, 0.66)),
+            MapKind::Bamboo => (assets.ground_earth.clone(), Color::srgb(0.94, 0.84, 0.62)),
+            MapKind::Cave => (assets.ground_rock.clone(), Color::srgb(0.68, 0.74, 0.82)),
+            MapKind::MoonEchoCorridor => {
+                (assets.ground_rock.clone(), Color::srgb(0.62, 0.74, 0.94))
+            }
+            MapKind::RiverTown => (assets.ground_stone.clone(), Color::srgb(0.78, 0.76, 0.66)),
+            MapKind::RiverReedBed => (assets.ground_earth.clone(), Color::srgb(0.96, 0.94, 0.88)),
+            MapKind::PlagueVillage => (assets.ground_earth.clone(), Color::srgb(0.95, 0.92, 0.88)),
             MapKind::PlagueShrinePath => {
-                (assets.plague_floor.clone(), Color::srgb(0.86, 0.84, 0.90))
+                (assets.ground_earth.clone(), Color::srgb(0.86, 0.84, 0.90))
             }
-            MapKind::Capital => (assets.capital_floor.clone(), Color::srgb(0.96, 0.96, 0.98)),
-            MapKind::CapitalMansion => {
-                (assets.mansion_floor.clone(), Color::srgb(0.96, 0.92, 0.90))
-            }
+            MapKind::Capital => (assets.ground_stone.clone(), Color::srgb(0.96, 0.96, 0.98)),
+            MapKind::CapitalMansion => (assets.ground_stone.clone(), Color::srgb(0.96, 0.92, 0.90)),
             MapKind::MansionMirrorGallery => {
-                (assets.mirror_floor.clone(), Color::srgb(0.94, 0.97, 1.0))
+                (assets.ground_stone.clone(), Color::srgb(0.94, 0.97, 1.0))
             }
-            MapKind::SouthernRoad => (assets.south_floor.clone(), Color::srgb(0.98, 0.94, 0.90)),
-            MapKind::ThunderDrumPath => {
-                (assets.thunder_floor.clone(), Color::srgb(0.92, 0.94, 1.0))
-            }
-            MapKind::FinalSanctum => (assets.abyss_floor.clone(), Color::srgb(0.94, 0.92, 1.0)),
-            MapKind::DreamWaterway => (assets.dream_floor.clone(), Color::srgb(0.94, 0.98, 1.0)),
+            MapKind::SouthernRoad => (assets.ground_earth.clone(), Color::srgb(0.98, 0.94, 0.90)),
+            MapKind::ThunderDrumPath => (assets.ground_earth.clone(), Color::srgb(0.92, 0.94, 1.0)),
+            MapKind::FinalSanctum => (assets.ground_rock.clone(), Color::srgb(0.94, 0.92, 1.0)),
+            MapKind::DreamWaterway => (assets.ground_rock.clone(), Color::srgb(0.94, 0.98, 1.0)),
         },
     };
 
@@ -8646,6 +8628,8 @@ fn terrain_id(tile: Tile) -> u8 {
         Tile::Grass => 1,
         Tile::Wall => 2,
         Tile::Water => 3,
+        Tile::Structure => 4,
+        Tile::Bridge => 5,
         Tile::Npc | Tile::Path | Tile::Portal => 0,
     }
 }
@@ -8684,7 +8668,8 @@ fn terrain_id_image(map: &MapData) -> Image {
 
 /// Renders the entire logical map as one continuous material. Terrain IDs stay
 /// tile-based for gameplay, while the shader samples textures in world space
-/// and feathers neighboring terrain types across their shared boundary.
+/// with a single material at each point and narrow bank/contact shading.
+/// Collision boundaries stay readable without superimposing neighboring paintings.
 pub(crate) fn spawn_terrain_map(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -8739,7 +8724,7 @@ pub(crate) fn spawn_terrain_map(
             grass_tint: terrain_tint(grass.color, 1.0),
             wall_tint,
             water_tint: terrain_tint(water.color, 1.0),
-            map: Vec4::new(MAP_W as f32, MAP_H as f32, TILE, 0.22),
+            map: Vec4::new(MAP_W as f32, MAP_H as f32, TILE, 0.10),
             sample: Vec4::new(
                 TERRAIN_SOURCE_SIZE,
                 TERRAIN_SOURCE_INSET,
@@ -10437,78 +10422,17 @@ fn update_hud(
             .as_ref()
             .map(|map| map.name)
             .unwrap_or_else(|| current.0.def().name);
-        let key_items = compact_hud_text(&quest.key_items_summary(), 36);
-        let chapter_seals = compact_hud_text(&quest.chapter_seal_summary(), 42);
-        let gear = compact_hud_text(&quest.shop_gear_summary(), 42);
-        let side_quests = compact_hud_text(&quest.side_quest_summary(), 42);
-        let main_task = compact_hud_text(&quest.main_task_summary(), 56);
-        let local_task = map
-            .as_ref()
-            .map(|map| compact_hud_text(&side_board_summary(map.kind, &quest), 56))
-            .unwrap_or_else(|| "任务板 无".to_string());
-        let area_task = map
-            .as_ref()
-            .map(|map| compact_hud_text(&active_area_side_task_summary(map.kind, &quest), 42))
-            .unwrap_or_else(|| "当前委托区 无".to_string());
-        let npc_errands = compact_hud_text(&quest.npc_errand_summary(), 42);
-        let bonds = compact_hud_text(
-            &format!(
-                "{} {} {}",
-                quest.bond_summary(),
-                quest.companion_story_summary(),
-                quest.companion_revisit_summary()
-            ),
-            42,
-        );
-        let camp = quest.camp_summary();
-        let route_marks = compact_hud_text(&quest.route_memory_summary(), 42);
-        let route_branch = compact_hud_text(&quest.route_branch_summary(), 42);
-        let route_report = compact_hud_text(&quest.route_report_summary(), 42);
-        let route_care = map
-            .as_ref()
-            .and_then(|map| route_pressure_summary(map.kind, &quest))
-            .map(|summary| compact_hud_text(&summary, 42))
-            .unwrap_or_else(|| "路线照应 无".to_string());
-        let shrine = compact_hud_text(&quest.shrine_travel_summary(), 42);
-        let care = compact_hud_text(&quest.travel_care_summary(), 42);
-        let supplies = compact_hud_text(
-            &format!(
-                "{} {}",
-                quest.field_supply_summary(),
-                quest.commission_trace_summary()
-            ),
-            42,
-        );
         text.0 = format!(
-            "{}\n{}\n队伍 {}\n{}  Lv.{}\n气血 {}/{}\n灵力 {}/{}\n药水 x{}  钱 {}文\n装备 {}\n道具 {}\n{}\n任务簿 {}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{} · {}\n{}\n气血 {}/{}   灵力 {}/{}\n药水 {} · 钱财 {} 文",
             map_name,
             quest.chapter_title(),
             quest.party_summary(),
-            stats.name,
-            stats.level,
             stats.hp.max(0),
             stats.max_hp,
             stats.mp.max(0),
             stats.max_mp,
             stats.potions,
-            stats.gold,
-            gear,
-            key_items,
-            chapter_seals,
-            main_task,
-            local_task,
-            area_task,
-            side_quests,
-            npc_errands,
-            bonds,
-            camp,
-            route_marks,
-            route_branch,
-            route_report,
-            route_care,
-            shrine,
-            care,
-            supplies,
+            stats.gold
         );
     }
 }
@@ -10967,6 +10891,44 @@ mod tests {
         assert_eq!(terrain_id(Tile::Grass), 1);
         assert_eq!(terrain_id(Tile::Wall), 2);
         assert_eq!(terrain_id(Tile::Water), 3);
+        assert_eq!(terrain_id(Tile::Structure), 4);
+        assert!(!Tile::Structure.walkable());
+        assert_eq!(terrain_id(Tile::Bridge), 5);
+        assert!(Tile::Bridge.walkable());
+    }
+
+    #[test]
+    fn terrain_id_texture_preserves_every_gameplay_wall_and_water_cell() {
+        let mut tiles = vec![vec![Tile::Path; MAP_W as usize]; MAP_H as usize];
+        for row in 0..MAP_H as usize {
+            for col in 0..MAP_W as usize {
+                tiles[row][col] = match (row * 7 + col) % 6 {
+                    0 => Tile::Path,
+                    1 => Tile::Grass,
+                    2 => Tile::Wall,
+                    3 => Tile::Water,
+                    4 => Tile::Structure,
+                    _ => Tile::Bridge,
+                };
+            }
+        }
+        let map = MapData::generated(MapKind::RiverTown, tiles);
+        let image = terrain_id_image(&map);
+        let data = image
+            .data
+            .as_ref()
+            .expect("terrain IDs must be CPU-uploaded");
+        assert_eq!(data.len(), MAP_W as usize * MAP_H as usize * 4);
+        for row in 0..MAP_H {
+            for col in 0..MAP_W {
+                let offset = (row * MAP_W + col) as usize * 4;
+                let id = data[offset];
+                assert_eq!(matches!(id, 2 | 3 | 4), !map.at(col, row).walkable());
+                assert_eq!(id == 5, matches!(map.at(col, row), Tile::Bridge));
+                assert_eq!(id == 3, matches!(map.at(col, row), Tile::Water));
+                assert_eq!(data[offset + 3], 255);
+            }
+        }
     }
 
     #[test]
@@ -13841,7 +13803,7 @@ mod tests {
             result
                 .lines
                 .iter()
-                .any(|line| line.contains("【Boss】月魄妖"))
+                .any(|line| line.contains("【首领】月魄妖"))
         );
         assert!(matches!(
             result.after,

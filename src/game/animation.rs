@@ -18,34 +18,50 @@ pub struct AnimationAssets {
 }
 
 impl AnimationAssets {
+    /// Dummy visual handles for CPU-only gameplay integration tests.
+    #[cfg(test)]
+    pub(crate) fn simulation() -> Self {
+        let clip = AtlasClipAsset {
+            image: Handle::default(),
+            layout: Handle::default(),
+        };
+        Self {
+            hero_idle: clip.clone(),
+            hero_walk: clip.clone(),
+            hero_attack: clip.clone(),
+            monster: clip.clone(),
+            skill_vfx: clip,
+        }
+    }
+
     pub fn load(assets: &AssetServer, layouts: &mut Assets<TextureAtlasLayout>) -> Self {
         Self {
             hero_idle: AtlasClipAsset {
-                image: assets.load("actors/rig-swordmaster-idle-sheet.png"),
+                image: assets.load("actors/hero-motion.png"),
                 layout: layouts.add(TextureAtlasLayout::from_grid(
-                    UVec2::splat(126),
-                    6,
+                    UVec2::splat(256),
                     4,
+                    6,
                     None,
                     None,
                 )),
             },
             hero_walk: AtlasClipAsset {
-                image: assets.load("actors/rig-swordmaster-walk-sheet.png"),
+                image: assets.load("actors/hero-motion.png"),
                 layout: layouts.add(TextureAtlasLayout::from_grid(
-                    UVec2::splat(126),
+                    UVec2::splat(256),
+                    4,
                     6,
-                    2,
                     None,
                     None,
                 )),
             },
             hero_attack: AtlasClipAsset {
-                image: assets.load("actors/rig-swordmaster-attack-sheet.png"),
+                image: assets.load("actors/hero-motion.png"),
                 layout: layouts.add(TextureAtlasLayout::from_grid(
-                    UVec2::splat(126),
+                    UVec2::splat(256),
+                    4,
                     6,
-                    3,
                     None,
                     None,
                 )),
@@ -110,32 +126,27 @@ pub enum AnimationClip {
 impl AnimationClip {
     fn first_frame(self) -> usize {
         match self {
-            Self::HeroIdle
-            | Self::HeroWalk
-            | Self::HeroAttack
-            | Self::MonsterIdle
-            | Self::SkillImpact => 0,
-            Self::MonsterAttack => 16,
+            Self::HeroIdle | Self::MonsterIdle | Self::SkillImpact => 0,
+            Self::HeroWalk => 8,
+            Self::HeroAttack | Self::MonsterAttack => 16,
         }
     }
 
     fn frame_count(self) -> usize {
         match self {
-            Self::HeroIdle => 19,
-            Self::HeroWalk => 11,
-            Self::HeroAttack => 13,
-            Self::MonsterIdle | Self::MonsterAttack => 8,
+            Self::HeroIdle
+            | Self::HeroWalk
+            | Self::HeroAttack
+            | Self::MonsterIdle
+            | Self::MonsterAttack => 8,
             Self::SkillImpact => 4,
         }
     }
 
     fn fps(self) -> f32 {
         match self {
-            Self::HeroIdle => 8.0,
-            Self::HeroWalk => 12.0,
-            Self::HeroAttack => 18.0,
-            Self::MonsterIdle => 6.0,
-            Self::MonsterAttack => 12.0,
+            Self::HeroIdle | Self::MonsterIdle => 6.0,
+            Self::HeroWalk | Self::HeroAttack | Self::MonsterAttack => 12.0,
             Self::SkillImpact => 14.0,
         }
     }
@@ -232,6 +243,10 @@ pub fn set_clip(
     animation.clip = clip;
     animation.frame = 0;
     animation.elapsed = 0.0;
+    animation.repeat = !matches!(
+        clip,
+        AnimationClip::HeroAttack | AnimationClip::MonsterAttack
+    );
     sprite.image = asset.image.clone();
     sprite.texture_atlas = Some(TextureAtlas {
         layout: asset.layout.clone(),

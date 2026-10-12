@@ -1,18 +1,21 @@
 use bevy::prelude::*;
-use bevy::ui::widget::NodeImageMode;
+mod enemy_animation;
+#[cfg(test)]
+mod sim_tests;
+mod tactics;
+mod ui;
+use tactics::{EnemyStyle, StrikeKind, Tactics};
 
 use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::core::{GameFont, Intent, PlayerStats, Rng};
-use super::cutout::{
-    COMPANION_BATTLE_SIZE, CutoutPart, brighten_color, companion_cutout_path, cutout_part_motion,
-    cutout_part_specs, cutout_source_px_for_path,
-};
+use super::cutout::{COMPANION_BATTLE_SIZE, companion_cutout_path};
 use super::lighting::{self, LightingAssets};
 use super::quest::{
     BondBonus, BondScene, BossKind, CampBonus, CampScene, Chapter, Companion, CompanionScene,
     QuestLog, ShrineBlessing, SideQuest,
 };
 use super::roguelike::{FightRank, RunBattleMods, RunCampTactic, RunOutcome, RunState};
+use super::skill_vfx::{self, SkillVfxAssets, StatusBurstKind, StatusVfxState};
 use super::state::AppState;
 
 const MENU: [&str; 6] = ["攻击", "御守", "仙术", "合击", "物品", "逃跑"];
@@ -59,12 +62,6 @@ struct EnemyDef {
 
 #[derive(Clone, Copy)]
 struct BattleBackdrop {
-    base: Color,
-    horizon: Color,
-    far_texture: &'static str,
-    far_tint: Color,
-    floor_texture: &'static str,
-    floor_tint: Color,
     light: Color,
 }
 
@@ -269,8 +266,20 @@ enum PlayerAction {
 
 /// 敌人下一手的预告(杀戮尖塔式意图):回合开始就亮出来,
 /// 玩家据此决定是抢输出还是御守卸力。
+/// One-time contextual battle reminders, preserved throughout the run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BattleLesson {
+    Charge,
+    Heavy,
+    Counter,
+    Break,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnemyIntent {
+    Charge,
+    Brace,
+    Special,
     /// 普通攻击。
     Strike,
     /// 蓄力重击(约 1.8×)——御守的最佳时机。
@@ -284,20 +293,14 @@ enum EnemyIntent {
 impl EnemyIntent {
     fn describe(self) -> &'static str {
         match self {
+            EnemyIntent::Charge => "蓄力 · 下手强袭；现在施压可打断",
+            EnemyIntent::Brace => "架甲反击 · 普攻减半；仙术可穿透",
+            EnemyIntent::Special => "秘法将至 · 御守反击 / 破势打断",
             EnemyIntent::Strike => "意图:张爪欲击",
-            EnemyIntent::Heavy => "意图:妖气翻涌,蓄力重击!",
-            EnemyIntent::Gather => "意图:凝气回息(防备上升)",
+            EnemyIntent::Heavy => "重击将至 · 御守反击或击破架势",
+            EnemyIntent::Gather => "凝气回息 · 恢复气血，这回合不攻击",
             EnemyIntent::Drain => "意图:虚影缠绕,欲摄灵力",
         }
-    }
-}
-
-fn roll_intent(rng: &mut Rng) -> EnemyIntent {
-    match rng.range(0, 100) {
-        n if n < 45 => EnemyIntent::Strike,
-        n if n < 70 => EnemyIntent::Heavy,
-        n if n < 85 => EnemyIntent::Gather,
-        _ => EnemyIntent::Drain,
     }
 }
 
@@ -322,6 +325,10 @@ struct BattleState {
     phase: Phase,
     timer: f32,
     enemy_turns: u32,
+    tactics: Tactics,
+    executing_intent: EnemyIntent,
+    enemy_attacked: bool,
+    phase_duration: f32,
     menu_index: usize,
     player_action: Option<PlayerAction>,
     intent: EnemyIntent,
@@ -329,19 +336,19 @@ struct BattleState {
     momentum: u32,
     /// Boss 半血后的真身阶段:变身宣言 + 专属强化机制。
     boss_phase2: bool,
+    /// Finite shared pool for Gather, phase regeneration, and signature healing.
+    boss_heal_remaining: i32,
     /// 终章水影的分歧:true = 以情乱心(情缘压道心的一世)。
     eclipse_heart: bool,
     /// 雷引纹:本战的玩家首次攻击已经打出。
     hex_first_hit_used: bool,
-    /// 百技谱子菜单:打开状态与光标(页由光标推出)。
+    /// 二十式仙术秘卷子菜单:打开状态与光标(页由光标推出)。
     skill_menu: bool,
     skill_cursor: usize,
     /// 「护」形态结成的护罩,先于气血抵伤。
     player_shield: i32,
-    /// 「蚀」形态挂在敌人身上的流失:(每回合伤害, 剩余回合)。
-    enemy_dot: (i32, u32),
-    /// 「震」形态命中:敌人下一回合动弹不得。
-    enemy_stunned: bool,
+    /// 中毒/灼烧/冰冻/震慑的统一状态结算。
+    statuses: EnemyStatuses,
     message: String,
     blessing: Option<ShrineBlessing>,
     camp_bonus: Option<CampBonus>,
@@ -355,31 +362,30 @@ struct BattleState {
 pub struct BattleAutomationView {
     pub menu_open: bool,
     pub menu_index: usize,
+    pub skill_menu_open: bool,
+    pub skill_cursor: usize,
     pub enemy_hp: i32,
     pub enemy_max_hp: i32,
     pub enemy_heavy_intent: bool,
+    pub enemy_charging: bool,
+    pub enemy_bracing: bool,
+    pub pressure: u8,
+    pub pressure_limit: u8,
+    pub riposte_ready: bool,
+    pub exposed: bool,
+    pub breaks: u32,
+    pub counters: u32,
     pub spell_cost: i32,
     pub momentum: u32,
+    pub poison_stacks: u8,
+    pub burn_turns: u8,
+    pub frozen: bool,
+    pub stunned: bool,
 }
 
 // ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
-
-#[derive(Component)]
-struct EnemyHpBar;
-
-#[derive(Component)]
-struct MessageText;
-
-#[derive(Component)]
-struct EnemyInfoText;
-
-#[derive(Component)]
-struct PlayerInfoText;
-
-#[derive(Component)]
-struct MenuItem(usize);
 
 #[derive(Component)]
 struct BattleHero;
@@ -405,14 +411,6 @@ struct BattleEnemy;
 struct BattleEnemyMotion {
     origin: Vec3,
     age: f32,
-}
-
-#[derive(Component)]
-struct BattleEnemyPart {
-    part: CutoutPart,
-    base_offset: Vec2,
-    base_size: Vec2,
-    phase: f32,
 }
 
 #[derive(Component)]
@@ -505,10 +503,32 @@ struct EnemyAttackResult {
     strong: bool,
 }
 
-const HP_BAR_W: f32 = 220.0;
-const HP_BAR_LEFT: f32 = -110.0;
-const ENEMY_POS: Vec3 = Vec3::new(0.0, 120.0, 1.0);
-const HERO_POS: Vec3 = Vec3::new(-360.0, -70.0, 1.0);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TimedDamageStatus {
+    damage: i32,
+    turns: u8,
+    stacks: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EnemyStatuses {
+    poison: TimedDamageStatus,
+    burn: TimedDamageStatus,
+    frozen: bool,
+    stunned: bool,
+    freeze_immunity: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EnemyTurnResult {
+    attack: Option<EnemyAttackResult>,
+    poison_damage: i32,
+    burn_damage: i32,
+    control: Option<StatusBurstKind>,
+}
+
+pub const ENEMY_POS: Vec3 = Vec3::new(300.0, 72.0, 1.0);
+pub const HERO_POS: Vec3 = Vec3::new(-400.0, 52.0, 1.0);
 const LINGER_POS: Vec3 = Vec3::new(HERO_POS.x + 130.0, HERO_POS.y + 8.0, 0.9);
 const SWORD_SISTER_POS: Vec3 = Vec3::new(HERO_POS.x + 245.0, HERO_POS.y - 6.0, 0.92);
 const SPIRIT_WITCH_POS: Vec3 = Vec3::new(HERO_POS.x + 340.0, HERO_POS.y + 16.0, 0.88);
@@ -519,7 +539,7 @@ fn spawn_battle_companion_sprite(
     companion: Companion,
     position: Vec3,
 ) -> Entity {
-    commands
+    let actor = commands
         .spawn((
             Sprite {
                 image: asset_server.load(companion_cutout_path(companion)),
@@ -529,7 +549,19 @@ fn spawn_battle_companion_sprite(
             Transform::from_translation(position),
             DespawnOnExit(AppState::Battle),
         ))
-        .id()
+        .id();
+    let shadow = super::ui::contact_shadow(
+        commands,
+        asset_server,
+        Vec3::new(position.x, position.y - 66.0, 0.65),
+        82.0,
+        AppState::Battle,
+    );
+    commands.entity(shadow).insert(super::ui::ShadowAnchor {
+        actor,
+        offset: Vec2::new(0.0, -66.0),
+    });
+    actor
 }
 
 pub struct BattlePlugin;
@@ -541,12 +573,16 @@ impl Plugin for BattlePlugin {
             .add_systems(
                 Update,
                 (
+                    ui::menu_pointer_input,
                     battle_input,
                     battle_tick,
+                    sync_status_vfx_state,
+                    update_tactical_feedback,
                     update_battle_animations,
                     update_battle_effects,
                     update_floating_combat_text,
-                    update_battle_ui,
+                    battle_lessons,
+                    ui::update,
                     sync_battle_automation_view,
                 )
                     .chain()
@@ -561,6 +597,7 @@ impl Plugin for BattlePlugin {
 
 fn spawn_battle(
     mut commands: Commands,
+    mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     font: Res<GameFont>,
     asset_server: Res<AssetServer>,
     lights: Res<LightingAssets>,
@@ -568,10 +605,12 @@ fn spawn_battle(
     mut quest: ResMut<QuestLog>,
     mut rng: ResMut<Rng>,
     mut stats: ResMut<PlayerStats>,
+    mut vfx_status: ResMut<StatusVfxState>,
     encounter: Option<Res<PendingEncounter>>,
     mut run: Option<ResMut<RunState>>,
     mods: Option<Res<RunBattleMods>>,
 ) {
+    *vfx_status = StatusVfxState::default();
     let zone = encounter
         .as_ref()
         .map(|encounter| encounter.zone)
@@ -580,41 +619,26 @@ fn spawn_battle(
         .as_ref()
         .map(|encounter| encounter.kind)
         .unwrap_or(EncounterKind::Random);
-    let def = choose_enemy(zone, kind, &mut rng);
-    let mut enemy = EnemyInstance {
-        name: def.name.into(),
-        hp: def.max_hp,
-        max_hp: def.max_hp,
-        atk: def.atk,
-        def: def.def,
-        exp: def.exp,
+    let teaching_opening = matches!(kind, EncounterKind::Random)
+        && run.as_ref().is_some_and(|r| {
+            r.fights_won == 0 && !r.battle_lessons_seen.contains(&BattleLesson::Charge)
+        });
+    let def = if teaching_opening {
+        &ENEMIES[0]
+    } else {
+        choose_enemy_without_repeat(
+            zone,
+            kind,
+            run.as_ref().and_then(|r| r.last_enemy_image),
+            &mut rng,
+        )
     };
-
-    // Roguelike run: scale enemies by chapter/elite/boss multipliers, and
-    // give elites a random affix so repeat fights feel different.
-    if let Some(mods) = mods.as_ref() {
-        enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
-        enemy.hp = enemy.max_hp;
-        enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
-        if mods.rank == FightRank::Elite {
-            let affix = match rng.range(0, 2) {
-                0 => {
-                    enemy.atk = (enemy.atk as f32 * 1.25).round() as i32;
-                    "狂暴"
-                }
-                1 => {
-                    enemy.def += 3;
-                    "坚鳞"
-                }
-                _ => {
-                    enemy.max_hp = (enemy.max_hp as f32 * 1.25).round() as i32;
-                    enemy.hp = enemy.max_hp;
-                    "嗜血"
-                }
-            };
-            enemy.name = format!("精英 · {affix} · {}", enemy.name);
+    if matches!(kind, EncounterKind::Random) {
+        if let Some(run) = run.as_mut() {
+            run.last_enemy_image = Some(def.image);
         }
     }
+    let mut enemy = scaled_enemy(def, mods.as_deref(), &mut rng);
 
     let blessing = quest.take_shrine_blessing();
     let camp_bonus = quest.take_camp_bonus();
@@ -698,6 +722,11 @@ fn spawn_battle(
     }
     let run_ref = run.as_deref();
 
+    let boss_heal_budget = if matches!(kind, EncounterKind::Boss(_)) {
+        enemy.max_hp / 4
+    } else {
+        0
+    };
     commands.insert_resource(BattleState {
         message,
         enemy,
@@ -705,18 +734,26 @@ fn spawn_battle(
         phase: Phase::Menu,
         timer: 0.0,
         enemy_turns: 0,
+        tactics: Tactics::new(enemy_style(def), matches!(kind, EncounterKind::Boss(_))),
+        executing_intent: EnemyIntent::Strike,
+        enemy_attacked: false,
+        phase_duration: 0.8,
         menu_index: 0,
         player_action: None,
-        intent: roll_intent(&mut rng),
+        intent: if teaching_opening {
+            EnemyIntent::Charge
+        } else {
+            initial_intent(def, kind)
+        },
         guarding: false,
         boss_phase2: false,
+        boss_heal_remaining: boss_heal_budget,
         eclipse_heart: false,
         hex_first_hit_used: false,
         skill_menu: false,
         skill_cursor: 0,
         player_shield: 0,
-        enemy_dot: (0, 0),
-        enemy_stunned: false,
+        statuses: EnemyStatuses::default(),
         momentum: 0,
         blessing,
         camp_bonus,
@@ -726,8 +763,7 @@ fn spawn_battle(
 
     spawn_battle_backdrop(&mut commands, &asset_server, &lights, zone);
 
-    // Enemy visual stack: generated creature art is the readable body, while the
-    // shared monster sheet only supplies a translucent action silhouette.
+    // A single painted body keeps edges intact during breathing and recoil.
     lighting::spawn_light(
         &mut commands,
         &lights,
@@ -736,31 +772,31 @@ fn spawn_battle(
         Color::srgba(def.light[0], def.light[1], def.light[2], def.light[3]),
         AppState::Battle,
     );
-    // (此前这里还叠了一层共享怪物 sheet 的半透明剪影——它和生成立绘
-    // 形状不符,看起来像敌人背后藏了只「恐龙」,已移除。)
-    commands.spawn((
-        BattleEnemy,
-        BattleEnemyMotion {
-            origin: ENEMY_POS,
-            age: rng.range(0, 100) as f32 * 0.07,
-        },
-        Transform::from_translation(ENEMY_POS),
-        DespawnOnExit(AppState::Battle),
-    ));
-    spawn_battle_enemy_cutout(&mut commands, &asset_server, def);
-
-    // Enemy HP bar (back + front)
-    commands.spawn((
-        Sprite::from_color(Color::srgb(0.25, 0.25, 0.25), Vec2::new(HP_BAR_W, 14.0)),
-        Transform::from_xyz(0.0, 275.0, 1.0),
-        DespawnOnExit(AppState::Battle),
-    ));
-    commands.spawn((
-        EnemyHpBar,
-        Sprite::from_color(Color::srgb(0.85, 0.25, 0.25), Vec2::new(HP_BAR_W, 14.0)),
-        Transform::from_xyz(0.0, 275.0, 1.1),
-        DespawnOnExit(AppState::Battle),
-    ));
+    let authored_sprite = enemy_animation::sprite_for(def, &asset_server, &mut atlas_layouts);
+    let animated = authored_sprite.is_some();
+    let mut sprite = authored_sprite.unwrap_or_else(|| Sprite {
+        image: asset_server.load(enemy_primary_image(def)),
+        custom_size: Some(Vec2::splat(enemy_primary_size(def))),
+        ..default()
+    });
+    sprite.color = enemy_primary_color(Phase::Menu, 0.0);
+    let enemy_entity = commands
+        .spawn((
+            BattleEnemy,
+            sprite,
+            BattleEnemyMotion {
+                origin: ENEMY_POS,
+                age: rng.range(0, 100) as f32 * 0.07,
+            },
+            Transform::from_translation(ENEMY_POS),
+            DespawnOnExit(AppState::Battle),
+        ))
+        .id();
+    if animated {
+        commands
+            .entity(enemy_entity)
+            .insert(enemy_animation::EnemyAtlas);
+    }
 
     // Player sprite
     lighting::spawn_light(
@@ -780,6 +816,24 @@ fn spawn_battle(
         AppState::Battle,
     );
     commands.entity(hero).insert(BattleHero);
+    let shadow = super::ui::contact_shadow(
+        &mut commands,
+        &asset_server,
+        Vec3::new(HERO_POS.x, HERO_POS.y - 92.0, 0.65),
+        104.0,
+        AppState::Battle,
+    );
+    commands.entity(shadow).insert(super::ui::ShadowAnchor {
+        actor: hero,
+        offset: Vec2::new(0.0, -92.0),
+    });
+    super::ui::contact_shadow(
+        &mut commands,
+        &asset_server,
+        Vec3::new(ENEMY_POS.x, ENEMY_POS.y - def.size * 0.40, 0.65),
+        def.size * 0.58,
+        AppState::Battle,
+    );
 
     if battle_companion_visible(&quest, run_ref, Companion::Linger) {
         lighting::spawn_light(
@@ -847,95 +901,7 @@ fn spawn_battle(
         });
     }
 
-    // Enemy info text (top center)
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(24.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            DespawnOnExit(AppState::Battle),
-        ))
-        .with_children(|p| {
-            p.spawn((
-                EnemyInfoText,
-                Text::new(""),
-                font.text_font(22.0),
-                TextColor(Color::srgb(1.0, 0.85, 0.6)),
-            ));
-        });
-
-    // Bottom command panel
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(0.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                height: Val::Px(240.0),
-                padding: UiRect::new(Val::Px(34.0), Val::Px(34.0), Val::Px(46.0), Val::Px(16.0)),
-                column_gap: Val::Px(20.0),
-                ..default()
-            },
-            ImageNode {
-                image: asset_server.load("ui/panel_frame.png"),
-                image_mode: NodeImageMode::Sliced(super::roguelike::event::panel_slicer()),
-                ..default()
-            },
-            DespawnOnExit(AppState::Battle),
-        ))
-        .with_children(|panel| {
-            // Left: message + player info
-            panel
-                .spawn(Node {
-                    width: Val::Percent(64.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(14.0),
-                    ..default()
-                })
-                .with_children(|left| {
-                    left.spawn((
-                        MessageText,
-                        Text::new(""),
-                        font.text_font(22.0),
-                        TextColor(Color::WHITE),
-                    ));
-                    left.spawn((
-                        PlayerInfoText,
-                        Text::new(""),
-                        font.text_font(20.0),
-                        TextColor(Color::srgb(0.7, 0.9, 1.0)),
-                    ));
-                });
-
-            // Right: command menu
-            panel
-                .spawn((
-                    Node {
-                        width: Val::Percent(34.0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(5.0),
-                        padding: UiRect::all(Val::Px(10.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.10, 0.10, 0.20, 0.55)),
-                ))
-                .with_children(|menu| {
-                    for (i, _) in MENU.iter().enumerate() {
-                        menu.spawn((
-                            MenuItem(i),
-                            Text::new(""),
-                            font.text_font(22.0),
-                            TextColor(Color::WHITE),
-                        ));
-                    }
-                });
-        });
+    ui::spawn(&mut commands, &font, &asset_server);
 }
 
 fn apply_run_chapter_vow_to_boss(
@@ -1238,7 +1204,13 @@ fn choose_enemy(zone: EncounterZone, kind: EncounterKind, rng: &mut Rng) -> &'st
         EncounterKind::Random => {}
     }
 
-    let pool = match zone {
+    let pool = encounter_pool(zone);
+    let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
+    &ENEMIES[index]
+}
+
+fn encounter_pool(zone: EncounterZone) -> &'static [usize] {
+    match zone {
         EncounterZone::Village => &VILLAGE_ENCOUNTERS[..],
         EncounterZone::Bamboo => &BAMBOO_ENCOUNTERS[..],
         EncounterZone::Cave => &CAVE_ENCOUNTERS[..],
@@ -1247,9 +1219,30 @@ fn choose_enemy(zone: EncounterZone, kind: EncounterKind, rng: &mut Rng) -> &'st
         EncounterZone::Capital => &CAPITAL_ENCOUNTERS[..],
         EncounterZone::SouthernRoad => &SOUTHERN_ROAD_ENCOUNTERS[..],
         EncounterZone::FinalSanctum => &FINAL_SANCTUM_ENCOUNTERS[..],
+    }
+}
+
+fn choose_enemy_without_repeat(
+    zone: EncounterZone,
+    kind: EncounterKind,
+    previous: Option<&str>,
+    rng: &mut Rng,
+) -> &'static EnemyDef {
+    if !matches!(kind, EncounterKind::Random) {
+        return choose_enemy(zone, kind, rng);
+    }
+    let pool = encounter_pool(zone);
+    let candidates: Vec<usize> = pool
+        .iter()
+        .copied()
+        .filter(|index| Some(ENEMIES[*index].image) != previous)
+        .collect();
+    let eligible = if candidates.is_empty() {
+        pool
+    } else {
+        &candidates
     };
-    let index = pool[rng.range(0, pool.len() as i32 - 1) as usize];
-    &ENEMIES[index]
+    &ENEMIES[eligible[rng.range(0, eligible.len() as i32 - 1) as usize]]
 }
 
 fn battle_companion_visible(
@@ -1287,6 +1280,14 @@ fn battle_spell_cost(quest: &QuestLog, run: Option<&RunState>) -> i32 {
     }
 }
 
+/// Fallback spell pricing shared by gameplay and read-only automation.
+fn fallback_spell_cost(quest: &QuestLog, run: Option<&RunState>) -> i32 {
+    (battle_spell_cost(quest, run)
+        + run.map_or(0, RunState::spell_cost_delta)
+        + run.map_or(0, RunState::hex_spell_cost_delta))
+    .max(1)
+}
+
 fn battle_spell_power_multiplier(quest: &QuestLog, run: Option<&RunState>) -> i32 {
     if battle_has_late_spell(quest, run) {
         3
@@ -1318,122 +1319,124 @@ fn spawn_battle_backdrop(
 ) {
     let backdrop = battle_backdrop(zone);
     commands.spawn((
-        Sprite::from_color(backdrop.base, Vec2::new(1280.0, 720.0)),
+        Sprite {
+            image: asset_server.load(battle_background_path(zone)),
+            custom_size: Some(Vec2::new(1280.0, 720.0)),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, -3.0),
-        DespawnOnExit(AppState::Battle),
-    ));
-    commands.spawn((
-        Sprite {
-            image: asset_server.load(backdrop.far_texture),
-            color: backdrop.far_tint,
-            custom_size: Some(Vec2::new(1280.0, 380.0)),
-            ..default()
-        },
-        Transform::from_xyz(0.0, 88.0, -2.6),
-        DespawnOnExit(AppState::Battle),
-    ));
-    commands.spawn((
-        Sprite::from_color(backdrop.horizon, Vec2::new(1280.0, 190.0)),
-        Transform::from_xyz(0.0, 20.0, -2.35),
-        DespawnOnExit(AppState::Battle),
-    ));
-    commands.spawn((
-        Sprite {
-            image: asset_server.load(backdrop.floor_texture),
-            color: backdrop.floor_tint,
-            custom_size: Some(Vec2::new(1280.0, 300.0)),
-            ..default()
-        },
-        Transform::from_xyz(0.0, -118.0, -2.1),
-        DespawnOnExit(AppState::Battle),
-    ));
-    commands.spawn((
-        Sprite::from_color(Color::srgba(0.0, 0.0, 0.0, 0.34), Vec2::new(1280.0, 130.0)),
-        Transform::from_xyz(0.0, -218.0, -1.9),
         DespawnOnExit(AppState::Battle),
     ));
     lighting::spawn_light(
         commands,
         lights,
-        Vec3::new(0.0, 50.0, -1.8),
-        620.0,
+        Vec3::new(-100.0, 60.0, -1.8),
+        720.0,
         backdrop.light,
         AppState::Battle,
     );
 }
 
+fn battle_background_path(zone: EncounterZone) -> &'static str {
+    match zone {
+        EncounterZone::Village => "backgrounds/battle-village.png",
+        EncounterZone::Bamboo => "backgrounds/battle-bamboo.png",
+        EncounterZone::Cave => "backgrounds/battle-cave.png",
+        EncounterZone::RiverTown => "backgrounds/battle-river.png",
+        EncounterZone::PlagueVillage => "backgrounds/battle-plague.png",
+        EncounterZone::Capital => "backgrounds/battle-capital.png",
+        EncounterZone::SouthernRoad => "backgrounds/battle-southern.png",
+        EncounterZone::FinalSanctum => "backgrounds/battle-dream.png",
+    }
+}
+
+/// Shared encounter construction: renderer and simulations use identical scaling/affixes.
+fn scaled_enemy(def: &EnemyDef, mods: Option<&RunBattleMods>, rng: &mut Rng) -> EnemyInstance {
+    let mut enemy = EnemyInstance {
+        name: def.name.into(),
+        hp: def.max_hp,
+        max_hp: def.max_hp,
+        atk: def.atk,
+        def: def.def,
+        exp: def.exp,
+    };
+
+    // Roguelike run: scale enemies by chapter/elite/boss multipliers, and
+    // give elites a random affix so repeat fights feel different.
+    if let Some(mods) = mods {
+        enemy.max_hp = (enemy.max_hp as f32 * mods.hp_mul).round() as i32;
+        enemy.hp = enemy.max_hp;
+        enemy.atk = (enemy.atk as f32 * mods.atk_mul).round() as i32;
+        if mods.rank == FightRank::Elite {
+            let affix = match rng.range(0, 2) {
+                0 => {
+                    enemy.atk = (enemy.atk as f32 * 1.25).round() as i32;
+                    "狂暴"
+                }
+                1 => {
+                    enemy.def += 3;
+                    "坚鳞"
+                }
+                _ => {
+                    enemy.max_hp = (enemy.max_hp as f32 * 1.25).round() as i32;
+                    enemy.hp = enemy.max_hp;
+                    "嗜血"
+                }
+            };
+            enemy.name = format!("精英 · {affix} · {}", enemy.name);
+        }
+    }
+
+    enemy
+}
+
+fn enemy_style(def: &EnemyDef) -> EnemyStyle {
+    match def.image {
+        "creatures/ai_stone_guardian.png" | "creatures/ai_moss_turtle.png" => EnemyStyle::Armored,
+        "creatures/ai_cave_bat.png" | "creatures/ai_shadow_swordsman.png" => EnemyStyle::Trickster,
+        "creatures/ai_fire_wisp.png"
+        | "creatures/ai_lotus_spirit.png"
+        | "creatures/ai_water_serpent.png" => EnemyStyle::Spirit,
+        _ => EnemyStyle::Assault,
+    }
+}
+
+fn initial_intent(def: &EnemyDef, kind: EncounterKind) -> EnemyIntent {
+    if matches!(kind, EncounterKind::Boss(_)) {
+        EnemyIntent::Charge
+    } else {
+        enemy_style(def).intent(0)
+    }
+}
+
+fn tactical_damage(state: &mut BattleState, damage: i32, kind: StrikeKind) -> i32 {
+    state.tactics.hit(damage, kind, state.intent).damage
+}
+
 fn battle_backdrop(zone: EncounterZone) -> BattleBackdrop {
     match zone {
         EncounterZone::Village => BattleBackdrop {
-            base: Color::srgb(0.07, 0.10, 0.08),
-            horizon: Color::srgba(0.12, 0.22, 0.14, 0.58),
-            far_texture: "tiles/forest_floor.png",
-            far_tint: Color::srgba(0.34, 0.54, 0.32, 0.42),
-            floor_texture: "tiles/ai_village_moss_path.png",
-            floor_tint: Color::srgb(0.62, 0.58, 0.42),
             light: Color::srgba(0.82, 0.96, 0.54, 0.20),
         },
         EncounterZone::Bamboo => BattleBackdrop {
-            base: Color::srgb(0.06, 0.12, 0.09),
-            horizon: Color::srgba(0.12, 0.30, 0.16, 0.58),
-            far_texture: "tiles/ai_bamboo_thicket.png",
-            far_tint: Color::srgba(0.32, 0.72, 0.34, 0.46),
-            floor_texture: "tiles/ai_bamboo_path.png",
-            floor_tint: Color::srgb(0.72, 0.64, 0.42),
             light: Color::srgba(0.54, 1.0, 0.52, 0.22),
         },
         EncounterZone::Cave => BattleBackdrop {
-            base: Color::srgb(0.07, 0.06, 0.12),
-            horizon: Color::srgba(0.20, 0.18, 0.32, 0.64),
-            far_texture: "tiles/ai_moon_cave_wall.png",
-            far_tint: Color::srgba(0.54, 0.48, 0.82, 0.48),
-            floor_texture: "tiles/ai_cave_floor.png",
-            floor_tint: Color::srgb(0.48, 0.52, 0.66),
             light: Color::srgba(0.52, 0.72, 1.0, 0.28),
         },
         EncounterZone::RiverTown => BattleBackdrop {
-            base: Color::srgb(0.06, 0.10, 0.12),
-            horizon: Color::srgba(0.08, 0.24, 0.30, 0.56),
-            far_texture: "tiles/water_edge.png",
-            far_tint: Color::srgba(0.42, 0.76, 1.0, 0.46),
-            floor_texture: "tiles/ai_shrine_floor.png",
-            floor_tint: Color::srgb(0.56, 0.58, 0.50),
             light: Color::srgba(0.42, 0.82, 1.0, 0.26),
         },
         EncounterZone::PlagueVillage => BattleBackdrop {
-            base: Color::srgb(0.08, 0.10, 0.07),
-            horizon: Color::srgba(0.18, 0.30, 0.12, 0.60),
-            far_texture: "tiles/ai_mystic_grass.png",
-            far_tint: Color::srgba(0.44, 0.62, 0.32, 0.42),
-            floor_texture: "tiles/ai_village_moss_path.png",
-            floor_tint: Color::srgb(0.42, 0.46, 0.32),
             light: Color::srgba(0.62, 0.96, 0.42, 0.22),
         },
         EncounterZone::Capital => BattleBackdrop {
-            base: Color::srgb(0.08, 0.08, 0.13),
-            horizon: Color::srgba(0.20, 0.20, 0.34, 0.60),
-            far_texture: "tiles/stone_road.png",
-            far_tint: Color::srgba(0.48, 0.50, 0.66, 0.44),
-            floor_texture: "tiles/ai_shrine_floor.png",
-            floor_tint: Color::srgb(0.54, 0.54, 0.68),
             light: Color::srgba(0.64, 0.72, 1.0, 0.24),
         },
         EncounterZone::SouthernRoad => BattleBackdrop {
-            base: Color::srgb(0.07, 0.11, 0.08),
-            horizon: Color::srgba(0.14, 0.34, 0.18, 0.58),
-            far_texture: "tiles/ai_bamboo_thicket.png",
-            far_tint: Color::srgba(0.28, 0.68, 0.42, 0.46),
-            floor_texture: "tiles/ai_bamboo_path.png",
-            floor_tint: Color::srgb(0.62, 0.56, 0.34),
             light: Color::srgba(0.72, 1.0, 0.48, 0.24),
         },
         EncounterZone::FinalSanctum => BattleBackdrop {
-            base: Color::srgb(0.06, 0.06, 0.14),
-            horizon: Color::srgba(0.12, 0.18, 0.40, 0.64),
-            far_texture: "tiles/ai_moon_cave_wall.png",
-            far_tint: Color::srgba(0.46, 0.54, 1.0, 0.50),
-            floor_texture: "tiles/ai_cave_floor.png",
-            floor_tint: Color::srgb(0.46, 0.50, 0.76),
             light: Color::srgba(0.52, 0.68, 1.0, 0.32),
         },
     }
@@ -1449,6 +1452,8 @@ fn battle_input(
     font: Res<GameFont>,
     anims: Res<AnimationAssets>,
     lights: Res<LightingAssets>,
+    vfx_assets: Res<SkillVfxAssets>,
+    mut color_materials: ResMut<Assets<ColorMaterial>>,
     mut state: ResMut<BattleState>,
     mut stats: ResMut<PlayerStats>,
     quest: Res<QuestLog>,
@@ -1459,7 +1464,7 @@ fn battle_input(
         return;
     }
 
-    // 百技谱子菜单:选式、翻页、施放、返回。
+    // 二十式仙术秘卷子菜单:选式、翻页、施放、返回。
     if state.skill_menu {
         let skills: Vec<super::roguelike::skill::SkillId> =
             run.as_ref().map(|r| r.skills.clone()).unwrap_or_default();
@@ -1487,6 +1492,8 @@ fn battle_input(
                 &mut commands,
                 &font,
                 &lights,
+                &vfx_assets,
+                &mut color_materials,
                 &mut state,
                 &mut stats,
                 run,
@@ -1506,7 +1513,6 @@ fn battle_input(
     // Roguelike relic modifiers (all zero/1.0 outside run mode).
     let relic_attack = run.as_ref().map_or(0, |r| r.attack_bonus());
     let relic_spell = run.as_ref().map_or(0, |r| r.spell_bonus());
-    let relic_spell_cost = run.as_ref().map_or(0, |r| r.spell_cost_delta());
     let relic_potion = run.as_ref().map_or(0, |r| r.potion_bonus());
     let relic_flee = run.as_ref().is_some_and(|r| r.flee_always());
     let hunter_mul = run.as_ref().map_or(1.0, |r| {
@@ -1555,6 +1561,7 @@ fn battle_input(
                 * hunter_mul
                 * first_mul)
                 .round() as i32;
+            let dmg = tactical_damage(&mut state, dmg, StrikeKind::Sword);
             state.enemy.hp -= dmg;
             state.message = format!(
                 "李逍遥 挥剑而上，对 {} 造成 {} 点伤害！",
@@ -1608,12 +1615,13 @@ fn battle_input(
             let run_camp_restore = run_camp_guard_mp_bonus(run_camp_tactic);
             let hex_mp = run.as_ref().map_or(0, |r| r.hex_guard_mp_delta());
             let total_restore = (restore + run_camp_restore + hex_mp).max(0);
+            let before_mp = stats.mp;
             stats.mp = (stats.mp + total_restore).min(stats.max_mp);
+            let restored = stats.mp - before_mp;
             if run.as_ref().is_some_and(|r| r.hex_guard_momentum()) {
                 state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
             }
-            state.message =
-                format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {total_restore} 点灵力。");
+            state.message = format!("李逍遥 剑交左手,凝神御守——气随息回,恢复 {restored} 点灵力。");
             if restore > GUARD_MP_RESTORE {
                 state
                     .message
@@ -1621,24 +1629,23 @@ fn battle_input(
             }
             if run_camp_restore > 0 {
                 state.message.push_str(&format!(
-                    "\n【营策】{}让御守多回稳 {run_camp_restore} 点灵力。",
+                    "\n【营策】{}加持御守；本次实际恢复 {restored} 点灵力。",
                     run_camp_tactic.map(RunCampTactic::name).unwrap_or("凝灵")
                 ));
             }
             start_player_acting(&mut state, PlayerAction::Guard);
+            spawn_guard_halo(&mut commands, &lights);
         }
         2 => {
             // 仙术：御剑术 / 万剑诀
             let late_spell = battle_has_late_spell(&quest, run_ref);
-            // run 模式已拓技能谱:仙术槽打开「百技谱」子菜单。
+            // run 模式已拓技能谱:仙术槽打开二十式秘卷子菜单。
             if run.as_ref().is_some_and(|r| !r.skills.is_empty()) {
                 state.skill_menu = true;
                 state.skill_cursor = 0;
                 return;
             }
-            let hex_cost = run.as_ref().map_or(0, |r| r.hex_spell_cost_delta());
-            let spell_cost =
-                (battle_spell_cost(&quest, run_ref) + relic_spell_cost + hex_cost).max(1);
+            let spell_cost = fallback_spell_cost(&quest, run_ref);
             let spell_name = battle_spell_name(&quest, run_ref);
             if stats.mp < spell_cost {
                 state.message = format!("灵力不足，无法施展{spell_name}！");
@@ -1666,6 +1673,7 @@ fn battle_input(
                     as f32)
                     * hunter_mul)
                     .round() as i32;
+                let dmg = tactical_damage(&mut state, dmg, StrikeKind::Spell);
                 state.enemy.hp -= dmg;
                 let spell_element = spell_impact_element(battle_spell_chapter(&quest, run_ref));
                 let flavor = spell_impact_flavor(spell_element, late_spell);
@@ -1715,6 +1723,7 @@ fn battle_input(
                     * hunter_mul
                     * burst_mul)
                     .round() as i32;
+                let dmg = tactical_damage(&mut state, dmg, StrikeKind::Burst);
                 state.enemy.hp -= dmg;
                 state.momentum = 0;
                 state.message =
@@ -1763,6 +1772,7 @@ fn battle_input(
                     as f32)
                     * hunter_mul)
                     .round() as i32;
+                let dmg = tactical_damage(&mut state, dmg, StrikeKind::Burst);
                 state.enemy.hp -= dmg;
                 state.message = combo_party_message(&quest, dmg);
                 append_blessing_damage_line(&mut state.message, blessing, blessing_bonus);
@@ -1828,6 +1838,41 @@ fn battle_input(
     }
 }
 
+fn battle_lessons(mut state: ResMut<BattleState>, mut run: Option<ResMut<RunState>>) {
+    if state.phase != Phase::Menu {
+        return;
+    }
+    let Some(run) = run.as_mut() else {
+        return;
+    };
+    let lesson = if state.tactics.riposte {
+        Some((
+            BattleLesson::Counter,
+            "反击已就绪：现在攻击，伤害 +50%；调息或吃药会放弃机会。",
+        ))
+    } else if state.tactics.exposed {
+        Some((
+            BattleLesson::Break,
+            "架势已破：下一次进攻伤害 +50%，抓住这次追击。",
+        ))
+    } else if matches!(state.intent, EnemyIntent::Heavy | EnemyIntent::Special) {
+        Some((BattleLesson::Heavy, "重击将至：选择御守可卸力并准备反击。"))
+    } else if state.intent == EnemyIntent::Charge {
+        Some((
+            BattleLesson::Charge,
+            "敌人正在蓄力：这一回合不会攻击，可以挥剑施压；下一回合留意御守。",
+        ))
+    } else {
+        None
+    };
+    if let Some((lesson, line)) = lesson {
+        if !run.battle_lessons_seen.contains(&lesson) {
+            run.battle_lessons_seen.push(lesson);
+            state.message.push_str(&format!("\n【战斗提示】{line}"));
+        }
+    }
+}
+
 fn sync_battle_automation_view(
     state: Res<BattleState>,
     quest: Res<QuestLog>,
@@ -1835,31 +1880,64 @@ fn sync_battle_automation_view(
     mut view: ResMut<BattleAutomationView>,
 ) {
     let run_ref = run.as_deref();
-    let spell_cost_delta = run_ref.map_or(0, RunState::spell_cost_delta);
     *view = BattleAutomationView {
         menu_open: state.phase == Phase::Menu,
         menu_index: state.menu_index,
+        skill_menu_open: state.skill_menu,
+        skill_cursor: state.skill_cursor,
         enemy_hp: state.enemy.hp.max(0),
         enemy_max_hp: state.enemy.max_hp,
-        enemy_heavy_intent: state.intent == EnemyIntent::Heavy,
+        enemy_heavy_intent: matches!(state.intent, EnemyIntent::Heavy | EnemyIntent::Special),
+        enemy_charging: state.intent == EnemyIntent::Charge,
+        enemy_bracing: state.intent == EnemyIntent::Brace,
+        pressure: state.tactics.pressure,
+        pressure_limit: state.tactics.limit,
+        riposte_ready: state.tactics.riposte,
+        exposed: state.tactics.exposed,
+        breaks: state.tactics.breaks,
+        counters: state.tactics.counters,
         spell_cost: run_ref
             .filter(|r| !r.skills.is_empty())
             .map(|r| {
                 r.skills
                     .iter()
-                    .map(|id| super::roguelike::skill::skill(*id).cost + r.hex_spell_cost_delta())
+                    .map(|id| skill_cost(*id, r))
                     .min()
                     .unwrap_or(4)
             })
-            .unwrap_or_else(|| (battle_spell_cost(&quest, run_ref) + spell_cost_delta).max(1)),
+            .unwrap_or_else(|| fallback_spell_cost(&quest, run_ref)),
         momentum: state.momentum,
+        poison_stacks: state.statuses.poison.stacks,
+        burn_turns: state.statuses.burn.turns,
+        frozen: state.statuses.frozen,
+        stunned: state.statuses.stunned,
     };
 }
 
 fn start_player_acting(state: &mut BattleState, action: PlayerAction) {
     state.phase = Phase::PlayerActing;
-    state.timer = 0.8;
+    state.phase_duration = match action {
+        PlayerAction::Attack => 0.72,
+        PlayerAction::Guard => 0.32,
+        PlayerAction::Spell => 0.88,
+        PlayerAction::Combo => 0.92,
+        PlayerAction::Item => 0.40,
+        PlayerAction::Flee => 0.45,
+    };
+    state.timer = state.phase_duration;
     state.player_action = Some(action);
+    if matches!(
+        action,
+        PlayerAction::Guard | PlayerAction::Item | PlayerAction::Flee
+    ) {
+        state.tactics.wait();
+    }
+    if !state.tactics.notice.is_empty() {
+        state.message.push('\n');
+        state
+            .message
+            .push_str(&std::mem::take(&mut state.tactics.notice));
+    }
 }
 
 fn spell_impact_profile(late_spell: bool) -> SpellImpactProfile {
@@ -2449,6 +2527,25 @@ fn spawn_spirit_witch_support_aura(
         .insert(BattleEffect::new(0.30, 0.24, 0.76, 0.0));
 }
 
+fn spawn_guard_halo(commands: &mut Commands, lights: &LightingAssets) {
+    for (size, y, alpha) in [
+        (Vec2::new(150.0, 190.0), 8.0, 0.18),
+        (Vec2::new(170.0, 24.0), -85.0, 0.35),
+    ] {
+        commands.spawn((
+            Sprite {
+                image: lights.orb.clone(),
+                color: Color::srgba(0.72, 0.90, 1.0, alpha),
+                custom_size: Some(size),
+                ..default()
+            },
+            BattleEffect::new(0.95, 0.70, 1.10, 0.0),
+            Transform::from_xyz(HERO_POS.x, HERO_POS.y + y, 2.2),
+            DespawnOnExit(AppState::Battle),
+        ));
+    }
+}
+
 fn spawn_weapon_hit(
     commands: &mut Commands,
     anims: &AnimationAssets,
@@ -2569,6 +2666,8 @@ fn battle_tick(
     font: Res<GameFont>,
     anims: Res<AnimationAssets>,
     lights: Res<LightingAssets>,
+    vfx_assets: Res<SkillVfxAssets>,
+    mut color_materials: ResMut<Assets<ColorMaterial>>,
     mut state: ResMut<BattleState>,
     mut stats: ResMut<PlayerStats>,
     mut quest: ResMut<QuestLog>,
@@ -2581,9 +2680,7 @@ fn battle_tick(
         return;
     }
 
-    // Roguelike runs play at a brisker tempo.
-    let tempo = if run.is_some() { 1.6 } else { 1.0 };
-    state.timer -= time.delta_secs() * tempo;
+    state.timer -= time.delta_secs();
     if state.timer > 0.0 {
         return;
     }
@@ -2699,18 +2796,24 @@ fn battle_tick(
                     state.eclipse_heart = run.as_ref().is_some_and(|r| r.qingyuan > r.daoxin);
                     let heart = state.eclipse_heart;
                     state.message = boss_phase2_transform(boss, &mut state.enemy, heart);
+                    state.enemy_turns += 1;
+                    state.intent = EnemyIntent::Strike;
                     state.intent = next_intent(&state, &mut rng);
+                    state.guarding = false;
+                    state.tactics.wait();
+                    state.executing_intent = EnemyIntent::Gather;
+                    state.enemy_attacked = false;
                     state.phase = Phase::EnemyActing;
-                    state.timer = 1.1;
+                    state.phase_duration = 0.72;
+                    state.timer = state.phase_duration;
                     state.player_action = None;
-                    spawn_enemy_strike_impact(&mut commands, &anims, &lights, true);
                     return;
                 }
                 let relic_guard = run.as_ref().map_or(0, |r| r.incoming_reduction());
                 let strong_guard = run.as_ref().map_or(0, |r| r.strong_hit_guard());
                 let guard_keep = run.as_ref().map_or(35, |r| r.guard_keep_pct());
                 let enemy_first = run.as_ref().map_or(0, |r| r.hex_enemy_first_hit_bonus());
-                let attack = begin_enemy_turn(
+                let turn = begin_enemy_turn(
                     &mut state,
                     &mut stats,
                     &mut rng,
@@ -2719,16 +2822,24 @@ fn battle_tick(
                     guard_keep,
                     enemy_first,
                 );
-                spawn_enemy_strike_impact(&mut commands, &anims, &lights, attack.strong);
-                spawn_damage_text(
+                spawn_enemy_turn_result_vfx(
                     &mut commands,
                     &font,
-                    HERO_POS + Vec3::new(34.0, 116.0, 0.0),
-                    attack.damage,
+                    &anims,
+                    &lights,
+                    &vfx_assets,
+                    &mut color_materials,
+                    turn,
                 );
             }
         }
         Phase::EnemyActing => {
+            if state.enemy.hp <= 0 && stats.hp > 0 {
+                state.phase = Phase::PlayerActing;
+                state.timer = 0.0;
+                state.player_action = None;
+                return;
+            }
             if stats.hp <= 0 {
                 // 檀木符:一次原地复活。
                 if let Some(run) = run.as_mut() {
@@ -2767,7 +2878,10 @@ fn battle_tick(
                 let run_ref = run.as_deref();
                 let heal = companion_support(&quest, run_ref, state.bond_bonus, &mut stats);
                 let restored = spirit_witch_support(&quest, run_ref, &mut stats);
-                state.message = party_support_message(heal, restored);
+                state.message.push('\n');
+                state
+                    .message
+                    .push_str(&party_support_message(heal, restored));
                 if let Some(heal) = heal {
                     spawn_linger_support_aura(&mut commands, &anims, &lights);
                     spawn_heal_text(
@@ -2821,6 +2935,77 @@ fn battle_tick(
             }
         }
         Phase::Menu => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_enemy_turn_result_vfx(
+    commands: &mut Commands,
+    font: &GameFont,
+    anims: &AnimationAssets,
+    lights: &LightingAssets,
+    vfx_assets: &SkillVfxAssets,
+    color_materials: &mut Assets<ColorMaterial>,
+    result: EnemyTurnResult,
+) {
+    if result.poison_damage > 0 {
+        skill_vfx::spawn_status_burst(
+            commands,
+            color_materials,
+            vfx_assets,
+            lights,
+            StatusBurstKind::Poison,
+            ENEMY_POS + Vec3::new(0.0, 12.0, 2.7),
+        );
+        spawn_floating_combat_text(
+            commands,
+            font,
+            format!("毒 -{}", result.poison_damage),
+            ENEMY_POS + Vec3::new(82.0, 98.0, 0.0),
+            Color::srgb(0.56, 1.0, 0.22),
+            Vec2::new(8.0, 84.0),
+            31.0,
+        );
+    }
+    if result.burn_damage > 0 {
+        skill_vfx::spawn_status_burst(
+            commands,
+            color_materials,
+            vfx_assets,
+            lights,
+            StatusBurstKind::Burn,
+            ENEMY_POS + Vec3::new(0.0, 12.0, 2.7),
+        );
+        spawn_floating_combat_text(
+            commands,
+            font,
+            format!("火 -{}", result.burn_damage),
+            ENEMY_POS + Vec3::new(118.0, 72.0, 0.0),
+            Color::srgb(1.0, 0.48, 0.10),
+            Vec2::new(-5.0, 88.0),
+            31.0,
+        );
+    }
+    if let Some(control) = result.control {
+        skill_vfx::spawn_status_burst(
+            commands,
+            color_materials,
+            vfx_assets,
+            lights,
+            control,
+            ENEMY_POS + Vec3::new(0.0, 12.0, 2.7),
+        );
+    }
+    if let Some(attack) = result.attack
+        && attack.damage > 0
+    {
+        spawn_enemy_strike_impact(commands, anims, lights, attack.strong);
+        spawn_damage_text(
+            commands,
+            font,
+            HERO_POS + Vec3::new(34.0, 116.0, 0.0),
+            attack.damage,
+        );
     }
 }
 
@@ -3111,6 +3296,56 @@ fn sword_sister_followup(
     Some(dmg)
 }
 
+fn apply_skill_status(state: &mut BattleState, status: SkillStatus, rng: &mut Rng) -> String {
+    match status {
+        SkillStatus::Poison { damage, turns } => {
+            let poison = &mut state.statuses.poison;
+            poison.damage = poison.damage.max(damage);
+            poison.stacks = (poison.stacks + 1).min(3);
+            poison.turns = turns.max(poison.turns);
+            format!(
+                "\n【中毒】毒息缠身:每层 {} 点,当前 {} 层,持续 {} 回合。",
+                poison.damage, poison.stacks, poison.turns
+            )
+        }
+        SkillStatus::Burn { damage, turns } => {
+            let burn = &mut state.statuses.burn;
+            if burn.turns > 0 {
+                burn.damage = (burn.damage + damage).min(24);
+                burn.turns = burn.turns.saturating_add(turns).min(5);
+            } else {
+                burn.damage = damage;
+                burn.turns = turns.min(5);
+                burn.stacks = 1;
+            }
+            format!(
+                "\n【灼烧】妖火附体:行动后 {} 点,持续 {} 回合。",
+                burn.damage, burn.turns
+            )
+        }
+        SkillStatus::Freeze { chance } => {
+            if state.statuses.freeze_immunity > 0
+                && matches!(state.encounter_kind, EncounterKind::Boss(_))
+            {
+                "\n【抗冻】首领震碎寒意,本回合不会再次被冻结。".to_string()
+            } else if rng.chance(chance) {
+                state.statuses.frozen = true;
+                "\n【冰冻】寒晶封住妖物,下一次行动将被跳过。".to_string()
+            } else {
+                "\n寒晶掠过,妖物没有被完全冻住。".to_string()
+            }
+        }
+        SkillStatus::Stun { chance } => {
+            if rng.chance(chance) {
+                state.statuses.stunned = true;
+                "\n【震慑】雷意锁住妖物,下一次行动将被跳过。".to_string()
+            } else {
+                "\n雷光散去,妖物勉强稳住了身形。".to_string()
+            }
+        }
+    }
+}
+
 fn begin_enemy_turn(
     state: &mut BattleState,
     stats: &mut PlayerStats,
@@ -3119,44 +3354,154 @@ fn begin_enemy_turn(
     strong_guard: i32,
     guard_keep: i32,
     enemy_first_bonus: i32,
-) -> EnemyAttackResult {
+) -> EnemyTurnResult {
     let turn_index = state.enemy_turns;
+    state.executing_intent = state.intent;
+    state.enemy_attacked = false;
     state.enemy_turns += 1;
     let guarding = state.guarding;
     state.guarding = false;
 
-    // 「震」形态命中:妖物动弹不得,跳过这一手。
-    if state.enemy_stunned {
-        state.enemy_stunned = false;
-        state.message = format!("{} 仍被震得头晕目眩,这一回合动弹不得!", state.enemy.name);
-        tick_enemy_dot(state);
+    // 中毒先于敌方行动结算,因此致死时可以直接阻止这一手。
+    let poison_damage = tick_poison(state);
+    let poison_note = (poison_damage > 0)
+        .then(|| format!("【中毒】毒息在行动前发作,造成 {poison_damage} 点伤害。"));
+    if state.enemy.hp <= 0 {
+        state.message = format!(
+            "{}\n{} 毒发倒下,未能出手。",
+            poison_note.as_deref().unwrap_or("【中毒】"),
+            state.enemy.name
+        );
+        state.intent = EnemyIntent::Strike;
         state.intent = next_intent(state, rng);
         state.phase = Phase::EnemyActing;
-        state.timer = 0.8;
+        state.phase_duration = 0.34;
+        state.timer = state.phase_duration;
         state.player_action = None;
-        return EnemyAttackResult {
-            damage: 0,
-            strong: false,
+        return EnemyTurnResult {
+            poison_damage,
+            ..default()
+        };
+    }
+
+    // 冰冻与震慑都跳过行动;灼烧仍在这个回合结束时结算。
+    let control = if state.statuses.frozen {
+        state.statuses.frozen = false;
+        if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+            state.statuses.freeze_immunity = 1;
+        }
+        Some(StatusBurstKind::Freeze)
+    } else if state.statuses.stunned {
+        state.statuses.stunned = false;
+        Some(StatusBurstKind::Stun)
+    } else {
+        None
+    };
+    if let Some(control) = control {
+        let label = if control == StatusBurstKind::Freeze {
+            "冰封碎裂"
+        } else {
+            "雷意震慑"
+        };
+        state.message = poison_note.unwrap_or_default();
+        if !state.message.is_empty() {
+            state.message.push('\n');
+        }
+        state.message.push_str(&format!(
+            "{} 被{label}困住,这一回合动弹不得!",
+            state.enemy.name
+        ));
+        let burn_damage = tick_burn(state);
+        if control == StatusBurstKind::Stun {
+            age_freeze_immunity(state);
+        }
+        state.intent = EnemyIntent::Strike;
+        state.intent = next_intent(state, rng);
+        state.phase = Phase::EnemyActing;
+        state.phase_duration = 0.34;
+        state.timer = state.phase_duration;
+        state.player_action = None;
+        return EnemyTurnResult {
+            poison_damage,
+            burn_damage,
+            control: Some(control),
+            ..default()
+        };
+    }
+
+    if state.tactics.cancel_action(state.intent) {
+        state.message = format!(
+            "【破势】{} 架势崩解，预告的行动被打断！下一击可追击。",
+            state.enemy.name
+        );
+        prepend_status_note(&mut state.message, poison_note.as_deref());
+        let burn_damage = tick_burn(state);
+        age_freeze_immunity(state);
+        state.intent = EnemyIntent::Strike;
+        state.intent = next_intent(state, rng);
+        state.phase = Phase::EnemyActing;
+        state.phase_duration = 0.42;
+        state.timer = state.phase_duration;
+        state.player_action = None;
+        return EnemyTurnResult {
+            poison_damage,
+            burn_damage,
+            ..default()
         };
     }
 
     if let EncounterKind::Boss(boss) = state.encounter_kind {
-        if let Some(result) =
-            begin_boss_special_turn(boss, turn_index, state, stats, rng, guarding, guard_keep)
-        {
+        if let Some(result) = begin_boss_special_turn(
+            boss,
+            turn_index,
+            state,
+            stats,
+            rng,
+            guarding,
+            guard_keep,
+            relic_guard,
+            strong_guard,
+        ) {
+            state.enemy_attacked = true;
+            if guarding {
+                state.tactics.successful_guard(EnemyIntent::Special);
+                state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
+                state
+                    .message
+                    .push_str("\n【借势】御守秘法，反击已就绪，气势 +1。");
+            }
+            prepend_status_note(&mut state.message, poison_note.as_deref());
+            let burn_damage = tick_burn(state);
+            age_freeze_immunity(state);
+            state.intent = EnemyIntent::Strike;
             state.intent = next_intent(state, rng);
-            return result;
+            return EnemyTurnResult {
+                attack: Some(result),
+                poison_damage,
+                burn_damage,
+                control: None,
+            };
         }
     }
 
     let intent = state.intent;
-    let (dmg, strong) = if intent == EnemyIntent::Gather {
-        // 凝气回合:不攻击,回血并提升防御——错过输出窗口是玩家的损失。
-        let heal = (state.enemy.max_hp / 12).max(3);
-        state.enemy.hp = (state.enemy.hp + heal).min(state.enemy.max_hp);
-        state.enemy.def += 1;
+    let (dmg, strong) = if intent == EnemyIntent::Charge {
         state.message = format!(
-            "{} 凝气回息,恢复 {heal} 点气血,妖气愈发凝实(防御 +1)。",
+            "{} 蓄势未发；下一手将释放{}，现在可以施压打断！",
+            state.enemy.name,
+            if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+                "秘法"
+            } else {
+                "重击"
+            }
+        );
+        (0, false)
+    } else if intent == EnemyIntent::Gather {
+        // 凝气回合不攻击；首领回复消耗本战有限的再生余力。
+        let requested = (state.enemy.max_hp / 12).max(3);
+        let heal = heal_enemy(state, requested);
+        state.message = format!(
+            "{} 凝气回息,恢复 {heal} 点气血,重新稳住了呼吸。",
             state.enemy.name
         );
         if guarding {
@@ -3167,8 +3512,13 @@ fn begin_enemy_turn(
         let (mult, strong) = match intent {
             EnemyIntent::Heavy => (1.8, true),
             EnemyIntent::Drain => (0.7, false),
+            EnemyIntent::Brace => (0.65, false),
             _ => (1.0, false),
         };
+        state.enemy_attacked = true;
+        if intent == EnemyIntent::Brace {
+            state.tactics.pressure = state.tactics.pressure.saturating_sub(1);
+        }
         let first_bonus = if turn_index == 0 {
             enemy_first_bonus
         } else {
@@ -3200,7 +3550,16 @@ fn begin_enemy_turn(
             dmg -= absorbed;
             guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
         }
+        if guarding && strong {
+            state.tactics.successful_guard(intent);
+            state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
+            guard_note.push_str("\n【借势】重击被卸开，反击已就绪，气势 +1。");
+        }
         state.message = match intent {
+            EnemyIntent::Brace => format!(
+                "{} 架甲反击，造成 {dmg} 点伤害，并回稳 1 点架势。",
+                state.enemy.name
+            ),
             EnemyIntent::Heavy => format!(
                 "{} 蓄力已足,一记重击轰然落下!造成 {dmg} 点伤害!",
                 state.enemy.name
@@ -3231,18 +3590,16 @@ fn begin_enemy_turn(
     if state.boss_phase2 {
         match state.encounter_kind {
             EncounterKind::Boss(BossKind::MiasmaRoot) => {
-                let heal = 6.min(state.enemy.max_hp - state.enemy.hp).max(0);
+                let heal = heal_enemy(state, 6);
                 if heal > 0 {
-                    state.enemy.hp += heal;
                     state
                         .message
                         .push_str(&format!("\n根须自大地汲取生机,回复 {heal} 点气血。"));
                 }
             }
             EncounterKind::Boss(BossKind::DreamEclipse) if state.eclipse_heart => {
-                let heal = 4.min(state.enemy.max_hp - state.enemy.hp).max(0);
+                let heal = heal_enemy(state, 4);
                 if heal > 0 {
-                    state.enemy.hp += heal;
                     state
                         .message
                         .push_str(&format!("\n旧梦潮水抚过伤口,水影回复 {heal} 点气血。"));
@@ -3260,28 +3617,88 @@ fn begin_enemy_turn(
             _ => {}
         }
     }
-    tick_enemy_dot(state);
+    prepend_status_note(&mut state.message, poison_note.as_deref());
+    let burn_damage = tick_burn(state);
+    age_freeze_immunity(state);
     state.intent = next_intent(state, rng);
     state.phase = Phase::EnemyActing;
-    state.timer = 0.8;
+    state.phase_duration = if state.enemy_attacked { 0.60 } else { 0.34 };
+    state.timer = state.phase_duration;
     state.player_action = None;
-    EnemyAttackResult {
-        damage: dmg,
-        strong,
+    EnemyTurnResult {
+        attack: state.enemy_attacked.then_some(EnemyAttackResult {
+            damage: dmg,
+            strong,
+        }),
+        poison_damage,
+        burn_damage,
+        control: None,
     }
 }
 
-/// 「蚀」形态的流失结算:敌人行动后掉血,持续回合递减。
-fn tick_enemy_dot(state: &mut BattleState) {
-    let (dot, turns) = state.enemy_dot;
-    if turns == 0 || dot <= 0 {
-        return;
+fn tick_poison(state: &mut BattleState) -> i32 {
+    let poison = &mut state.statuses.poison;
+    if poison.turns == 0 || poison.damage <= 0 || poison.stacks == 0 {
+        return 0;
     }
-    state.enemy.hp -= dot;
-    state.enemy_dot = (dot, turns - 1);
-    state
-        .message
-        .push_str(&format!("\n侵蚀之力灼烧妖躯,再失 {dot} 点气血。"));
+    let raw = poison.damage * poison.stacks as i32;
+    let damage = if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+        raw.min((state.enemy.max_hp * 8 / 100).max(1))
+    } else {
+        raw
+    };
+    state.enemy.hp -= damage;
+    poison.turns -= 1;
+    if poison.turns == 0 {
+        *poison = TimedDamageStatus::default();
+    }
+    damage
+}
+
+fn tick_burn(state: &mut BattleState) -> i32 {
+    let burn = &mut state.statuses.burn;
+    if burn.turns == 0 || burn.damage <= 0 {
+        return 0;
+    }
+    let damage = burn.damage;
+    state.enemy.hp -= damage;
+    burn.turns -= 1;
+    state.message.push_str(&format!(
+        "\n【灼烧】妖火在行动后爆燃,造成 {damage} 点伤害。"
+    ));
+    if burn.turns == 0 {
+        *burn = TimedDamageStatus::default();
+    }
+    damage
+}
+
+fn prepend_status_note(message: &mut String, note: Option<&str>) {
+    let Some(note) = note else {
+        return;
+    };
+    *message = format!("{note}\n{message}");
+}
+
+fn age_freeze_immunity(state: &mut BattleState) {
+    if state.statuses.freeze_immunity > 0 && !state.statuses.frozen {
+        state.statuses.freeze_immunity -= 1;
+    }
+}
+
+/// Boss healing cannot create an endless damage/regeneration equilibrium.
+fn heal_enemy(state: &mut BattleState, requested: i32) -> i32 {
+    if state.enemy.hp <= 0 {
+        return 0;
+    }
+    let mut heal = requested
+        .max(0)
+        .min((state.enemy.max_hp - state.enemy.hp).max(0));
+    if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+        heal = heal.min(state.boss_heal_remaining.max(0));
+        state.boss_heal_remaining -= heal;
+    }
+    state.enemy.hp += heal;
+    heal
 }
 
 /// 「护」形态的护罩:先于气血抵挡伤害,返回剩余伤害。
@@ -3299,27 +3716,27 @@ fn absorb_with_shield(state: &mut BattleState, dmg: i32) -> i32 {
 
 /// 掷下一回合的意图;首领每逢秘法回合提前亮出重击预警,
 /// 二阶段真身还会扭曲意图池(雷麟连环蓄力、月魄嗜灵)。
-fn next_intent(state: &BattleState, rng: &mut Rng) -> EnemyIntent {
-    if let EncounterKind::Boss(boss) = state.encounter_kind {
-        let cadence = boss_special_cadence(boss, state.boss_phase2);
-        if state.enemy_turns % cadence == 0 {
-            return EnemyIntent::Heavy;
-        }
-        if state.boss_phase2 {
-            match boss {
-                BossKind::ThunderQilin if rng.chance(0.6) => return EnemyIntent::Heavy,
-                BossKind::MoonWraith if rng.chance(0.5) => return EnemyIntent::Drain,
-                BossKind::DreamEclipse if state.eclipse_heart && rng.chance(0.5) => {
-                    return EnemyIntent::Drain;
-                }
-                BossKind::DreamEclipse if !state.eclipse_heart && rng.chance(0.5) => {
-                    return EnemyIntent::Heavy;
-                }
-                _ => {}
-            }
-        }
+fn next_intent(state: &BattleState, _rng: &mut Rng) -> EnemyIntent {
+    if state.intent == EnemyIntent::Charge {
+        return if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+            EnemyIntent::Special
+        } else {
+            EnemyIntent::Heavy
+        };
     }
-    roll_intent(rng)
+    if let EncounterKind::Boss(boss) = state.encounter_kind {
+        if state.enemy_turns % boss_special_cadence(boss, state.boss_phase2) == 0 {
+            return EnemyIntent::Charge;
+        }
+        return match (boss, state.boss_phase2, state.enemy_turns % 3) {
+            (BossKind::MoonWraith, _, _) => EnemyIntent::Drain,
+            (BossKind::MiasmaRoot, true, _) if state.boss_heal_remaining > 0 => EnemyIntent::Gather,
+            (BossKind::MirrorMinister, _, 2) => EnemyIntent::Brace,
+            (BossKind::DreamEclipse, true, _) if state.eclipse_heart => EnemyIntent::Drain,
+            (_, _, _) => EnemyIntent::Strike,
+        };
+    }
+    state.tactics.style.intent(state.enemy_turns)
 }
 
 /// 首领秘法节奏:默认每三回合;宿命水影二阶段加速到每两回合。
@@ -3333,14 +3750,16 @@ fn boss_special_cadence(boss: BossKind, phase2: bool) -> u32 {
 
 fn begin_boss_special_turn(
     boss: BossKind,
-    turn_index: u32,
+    _turn_index: u32,
     state: &mut BattleState,
     stats: &mut PlayerStats,
     rng: &mut Rng,
     guarding: bool,
     guard_keep: i32,
+    relic_guard: i32,
+    strong_guard: i32,
 ) -> Option<EnemyAttackResult> {
-    if turn_index % boss_special_cadence(boss, state.boss_phase2) != 0 {
+    if state.intent != EnemyIntent::Special {
         return None;
     }
 
@@ -3353,23 +3772,35 @@ fn begin_boss_special_turn(
         state.bond_bonus,
         raw - blocked - camp_blocked - run_camp_blocked,
     );
-    let mut dmg = (raw - blocked - camp_blocked - run_camp_blocked - bond_blocked).max(0);
+    let mut dmg = (raw
+        - blocked
+        - camp_blocked
+        - run_camp_blocked
+        - bond_blocked
+        - relic_guard
+        - strong_guard)
+        .max(0);
     let mut guard_note = String::new();
     if guarding {
         let absorbed = dmg - dmg * guard_keep / 100;
         dmg -= absorbed;
         guard_note = format!("\n李逍遥 御守卸力,挡下 {absorbed} 点伤害!");
     }
+    state.message = message.to_string();
     let dmg = absorb_with_shield(state, dmg);
+    let shield_note = state
+        .message
+        .strip_prefix(message)
+        .unwrap_or("")
+        .to_string();
     stats.hp -= dmg;
     if mp_drain > 0 {
         stats.mp = (stats.mp - mp_drain).max(0);
     }
-    if enemy_heal > 0 {
-        state.enemy.hp = (state.enemy.hp + enemy_heal).min(state.enemy.max_hp);
-    }
+    let enemy_heal = heal_enemy(state, enemy_heal);
 
-    state.message = format!("{message}造成 {dmg} 点伤害！");
+    state.message = format!("{message}造成 {dmg} 点伤害！{shield_note}");
+    append_relic_guard_line(&mut state.message, relic_guard + strong_guard);
     append_blessing_guard_line(&mut state.message, blocked);
     append_camp_guard_line(&mut state.message, state.camp_bonus, camp_blocked);
     append_run_camp_guard_line(&mut state.message, state.run_camp_tactic, run_camp_blocked);
@@ -3378,17 +3809,18 @@ fn begin_boss_special_turn(
     if mp_drain > 0 {
         state
             .message
-            .push_str(&format!("\n【Boss】灵力被扰乱，失去 {mp_drain} 点灵力。"));
+            .push_str(&format!("\n【首领】灵力被扰乱，失去 {mp_drain} 点灵力。"));
     }
     if enemy_heal > 0 {
         state.message.push_str(&format!(
-            "\n【Boss】{} 回稳 {enemy_heal} 点气血。",
+            "\n【首领】{} 回稳 {enemy_heal} 点气血。",
             state.enemy.name
         ));
     }
 
     state.phase = Phase::EnemyActing;
-    state.timer = 0.9;
+    state.phase_duration = 0.72;
+    state.timer = state.phase_duration;
     state.player_action = None;
     Some(EnemyAttackResult {
         damage: dmg,
@@ -3398,6 +3830,9 @@ fn begin_boss_special_turn(
 
 /// 照影国师二阶段:玩家武力攻击被镜界照回两成。
 fn mirror_backlash(state: &BattleState, stats: &mut PlayerStats, dmg: i32) -> Option<String> {
+    if dmg <= 0 {
+        return None;
+    }
     if !state.boss_phase2
         || state.encounter_kind != EncounterKind::Boss(BossKind::MirrorMinister)
         || dmg <= 0
@@ -3438,7 +3873,7 @@ fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance, eclipse_hear
             )
         }
         BossKind::MiasmaRoot => format!(
-            "{} 的根须疯长,扎入大地深处汲取生机!\n(此后每回合回复气血——抢攻才是活路)",
+            "{} 的根须疯长,扎入大地深处汲取生机!\n(地脉回复总量有限；耗尽后根须失去再生之力)",
             enemy.name
         ),
         BossKind::MirrorMinister => format!(
@@ -3455,7 +3890,7 @@ fn boss_phase2_transform(boss: BossKind, enemy: &mut EnemyInstance, eclipse_hear
         BossKind::DreamEclipse => {
             if eclipse_heart {
                 format!(
-                    "{} 水面一晃,竟化作灵儿的眉眼:「逍遥哥哥,别打了……」\n(以情乱心:招招摄灵,水影不断自愈——斩情,或者被情斩)",
+                    "{} 水面一晃,竟化作灵儿的眉眼:「逍遥哥哥,别打了……」\n(以情乱心:招招摄灵,水影以有限余力自愈——稳住心神,耗尽它的旧梦)",
                     enemy.name
                 )
             } else {
@@ -3609,12 +4044,46 @@ fn append_bond_guard_line(message: &mut String, bonus: Option<BondBonus>, blocke
     }
 }
 
+fn update_tactical_feedback(
+    mut commands: Commands,
+    font: Res<GameFont>,
+    state: Res<BattleState>,
+    mut seen: Local<(u32, u32)>,
+) {
+    if state.tactics.breaks < seen.0 || state.tactics.counters < seen.1 {
+        *seen = (0, 0);
+    }
+    if state.tactics.breaks > seen.0 {
+        spawn_floating_combat_text(
+            &mut commands,
+            &font,
+            "破势！".into(),
+            ENEMY_POS + Vec3::new(-32.0, 100.0, 3.0),
+            super::ui::GOLD,
+            Vec2::new(0.0, 55.0),
+            38.0,
+        );
+    }
+    if state.tactics.counters > seen.1 {
+        spawn_floating_combat_text(
+            &mut commands,
+            &font,
+            "反击就绪".into(),
+            HERO_POS + Vec3::new(0.0, 80.0, 3.0),
+            super::ui::GOLD,
+            Vec2::new(0.0, 45.0),
+            26.0,
+        );
+    }
+    *seen = (state.tactics.breaks, state.tactics.counters);
+}
+
 fn update_battle_animations(
     time: Res<Time>,
     state: Res<BattleState>,
     anims: Res<AnimationAssets>,
     mut hero: Query<
-        (&mut Sprite, &mut SpriteAnimation),
+        (&mut Sprite, &mut SpriteAnimation, &mut Transform),
         (
             With<BattleHero>,
             Without<BattleCompanion>,
@@ -3630,24 +4099,20 @@ fn update_battle_animations(
         ),
     >,
     mut enemy: Query<
-        (&mut Transform, &mut BattleEnemyMotion),
+        (
+            &mut Transform,
+            &mut BattleEnemyMotion,
+            &mut Sprite,
+            Option<&enemy_animation::EnemyAtlas>,
+        ),
         (
             With<BattleEnemy>,
             Without<BattleHero>,
             Without<BattleCompanion>,
         ),
     >,
-    mut enemy_parts: Query<
-        (&BattleEnemyPart, &mut Transform, &mut Sprite),
-        (
-            With<BattleEnemyPart>,
-            Without<BattleEnemy>,
-            Without<BattleHero>,
-            Without<BattleCompanion>,
-        ),
-    >,
 ) {
-    if let Ok((mut sprite, mut animation)) = hero.single_mut() {
+    if let Ok((mut sprite, mut animation, mut transform)) = hero.single_mut() {
         let clip = if state.phase == Phase::PlayerActing
             && matches!(
                 state.player_action,
@@ -3658,15 +4123,63 @@ fn update_battle_animations(
             AnimationClip::HeroIdle
         };
         animation::set_clip(&anims, &mut sprite, &mut animation, clip);
+        // Anticipation, a short grounded step, then recovery; recoil belongs
+        // to the body while the contact shadow remains on the ground.
+        let acting = state.phase == Phase::PlayerActing;
+        let attacking = acting
+            && matches!(
+                state.player_action,
+                Some(PlayerAction::Attack | PlayerAction::Combo)
+            );
+        let p = phase_progress(state.timer, state.phase_duration);
+        let contact = ENEMY_POS.x - HERO_POS.x - 120.0;
+        let step = if attacking {
+            if p < 0.12 {
+                -10.0 * (p / 0.12)
+            } else if p < 0.30 {
+                -10.0 + (contact + 10.0) * ((p - 0.12) / 0.18)
+            } else if p < 0.68 {
+                contact
+            } else {
+                contact * ((1.0 - p) / 0.32)
+            }
+        } else {
+            0.0
+        };
+        let recoil = if state.phase == Phase::EnemyActing && state.enemy_attacked {
+            (phase_progress(state.timer, state.phase_duration) * std::f32::consts::PI).sin()
+        } else {
+            0.0
+        };
+        transform.translation.x = HERO_POS.x + step - recoil * 20.0;
+        transform.translation.y = HERO_POS.y;
+        sprite.color = if recoil > 0.0 && state.tactics.riposte {
+            Color::srgb(1.0, 0.94, 0.72)
+        } else {
+            Color::srgb(1.0, 1.0 - recoil * 0.35, 1.0 - recoil * 0.35)
+        };
     }
 
     for (mut companion, mut transform, mut sprite) in &mut companions {
         companion.age += time.delta_secs();
+        let visual_phase = if (state.phase == Phase::EnemyActing && !state.enemy_attacked)
+            || (state.phase == Phase::PlayerActing && state.tactics.last_hit.damage == 0)
+        {
+            Phase::Menu
+        } else {
+            state.phase
+        };
+        let motion_timer = state.timer / state.phase_duration.max(0.001)
+            * if visual_phase == Phase::EnemyActing {
+                0.9
+            } else {
+                0.8
+            };
         let (offset, scale, tint) = companion_motion(
             companion.kind,
-            state.phase,
+            visual_phase,
             state.player_action,
-            state.timer,
+            motion_timer,
             companion.age,
         );
 
@@ -3676,43 +4189,30 @@ fn update_battle_animations(
         sprite.color = tint;
     }
 
-    let mut enemy_visual = None;
-    if let Ok((mut transform, mut motion)) = enemy.single_mut() {
+    if let Ok((mut transform, mut motion, mut sprite, atlas)) = enemy.single_mut() {
         motion.age += time.delta_secs();
-        let breath = (motion.age * 3.0).sin();
-        let (x, y, scale, hit) = enemy_phase_motion(state.phase, state.player_action, state.timer);
-        let root_scale = (scale + breath * 0.025).max(0.82);
-
-        transform.translation.x = motion.origin.x + x;
-        transform.translation.y = motion.origin.y + y + breath * 5.0;
-        transform.scale = Vec3::splat(root_scale);
-        enemy_visual = Some((motion.age, x, y, breath, root_scale, hit));
-    }
-
-    if let Some((age, x, y, breath, root_scale, hit)) = enemy_visual {
-        let base_color = enemy_primary_color(state.phase, hit);
-        let intensity = match state.phase {
-            Phase::EnemyActing => 1.55,
-            Phase::PlayerActing if hit > 0.0 => 1.35,
-            Phase::Won => 0.45,
-            Phase::Menu | Phase::PlayerActing | Phase::Lost | Phase::Fled => 1.0,
+        let breath = (motion.age * 2.0).sin();
+        let visual_phase = if (state.phase == Phase::EnemyActing && !state.enemy_attacked)
+            || (state.phase == Phase::PlayerActing && state.tactics.last_hit.damage == 0)
+        {
+            Phase::Menu
+        } else {
+            state.phase
         };
-
-        for (part, mut transform, mut sprite) in &mut enemy_parts {
-            let segment = cutout_part_motion(part.part, age * 3.8 + part.phase, intensity);
-            transform.translation.x =
-                ENEMY_POS.x + x + part.base_offset.x * root_scale + segment.offset.x;
-            transform.translation.y =
-                ENEMY_POS.y + y + breath * 5.0 + part.base_offset.y * root_scale + segment.offset.y;
-            transform.translation.z = ENEMY_POS.z + part.part.z_offset();
-            transform.rotation = Quat::from_rotation_z(segment.rotation);
-            transform.scale = Vec3::new(
-                root_scale * segment.scale.x,
-                root_scale * segment.scale.y,
-                1.0,
-            );
-            sprite.custom_size = Some(part.base_size);
-            sprite.color = brighten_color(base_color, segment.brightness);
+        let normalized_timer = (state.timer / state.phase_duration.max(0.001))
+            * if visual_phase == Phase::EnemyActing {
+                0.9
+            } else {
+                0.8
+            };
+        let (x, y, scale, hit) =
+            enemy_phase_motion(visual_phase, state.player_action, normalized_timer);
+        transform.translation.x = motion.origin.x + x;
+        transform.translation.y = motion.origin.y + y;
+        transform.scale = Vec3::new(scale, scale + breath * 0.008, 1.0);
+        sprite.color = enemy_primary_color(state.phase, hit);
+        if atlas.is_some() {
+            enemy_animation::update(&mut sprite, &state, motion.age);
         }
     }
 }
@@ -3723,34 +4223,6 @@ fn enemy_primary_image(def: &EnemyDef) -> &'static str {
 
 fn enemy_primary_size(def: &EnemyDef) -> f32 {
     def.size
-}
-
-fn spawn_battle_enemy_cutout(commands: &mut Commands, asset_server: &AssetServer, def: &EnemyDef) {
-    let path = enemy_primary_image(def);
-    let image = asset_server.load(path);
-    for spec in cutout_part_specs(cutout_source_px_for_path(path), enemy_primary_size(def)) {
-        commands.spawn((
-            BattleEnemyPart {
-                part: spec.part,
-                base_offset: spec.offset,
-                base_size: spec.size,
-                phase: spec.part.z_offset() * 11.0,
-            },
-            Sprite {
-                image: image.clone(),
-                rect: Some(spec.rect),
-                color: enemy_primary_color(Phase::Menu, 0.0),
-                custom_size: Some(spec.size),
-                ..default()
-            },
-            Transform::from_xyz(
-                ENEMY_POS.x + spec.offset.x,
-                ENEMY_POS.y + spec.offset.y,
-                ENEMY_POS.z + spec.part.z_offset(),
-            ),
-            DespawnOnExit(AppState::Battle),
-        ));
-    }
 }
 
 fn enemy_phase_motion(
@@ -3955,170 +4427,13 @@ fn update_floating_combat_text(
 // UI refresh
 // ---------------------------------------------------------------------------
 
-fn update_battle_ui(
-    state: Res<BattleState>,
-    stats: Res<PlayerStats>,
-    quest: Res<QuestLog>,
-    run: Option<Res<RunState>>,
-    mut bar: Query<(&mut Sprite, &mut Transform), With<EnemyHpBar>>,
-    mut enemy_info: Query<&mut Text, (With<EnemyInfoText>, Without<MessageText>)>,
-    mut message: Query<
-        &mut Text,
-        (
-            With<MessageText>,
-            Without<EnemyInfoText>,
-            Without<PlayerInfoText>,
-        ),
-    >,
-    mut player_info: Query<
-        &mut Text,
-        (
-            With<PlayerInfoText>,
-            Without<MessageText>,
-            Without<EnemyInfoText>,
-        ),
-    >,
-    mut menu: Query<
-        (&MenuItem, &mut Text, &mut TextColor),
-        (
-            Without<MessageText>,
-            Without<EnemyInfoText>,
-            Without<PlayerInfoText>,
-        ),
-    >,
-) {
-    let run_ref = run.as_deref();
-    // Enemy HP bar shrinks from the left.
-    if let Ok((mut sprite, mut tf)) = bar.single_mut() {
-        let ratio =
-            (state.enemy.hp.max(0) as f32 / state.enemy.max_hp.max(1) as f32).clamp(0.0, 1.0);
-        let w = HP_BAR_W * ratio;
-        sprite.custom_size = Some(Vec2::new(w, 14.0));
-        tf.translation.x = HP_BAR_LEFT + w / 2.0;
-    }
-
-    if let Ok(mut t) = enemy_info.single_mut() {
-        let phase_tag = if state.boss_phase2 { "·真身 " } else { "" };
-        let mut ail = String::new();
-        if state.enemy_dot.1 > 0 {
-            ail.push_str(&format!("  蚀{}", state.enemy_dot.1));
-        }
-        if state.enemy_stunned {
-            ail.push_str("  震慑");
-        }
-        t.0 = format!(
-            "{}{}  气血 {}/{}   {}{}",
-            state.enemy.name,
-            phase_tag,
-            state.enemy.hp.max(0),
-            state.enemy.max_hp,
-            state.intent.describe(),
-            ail,
-        );
-    }
-    if let Ok(mut t) = message.single_mut() {
-        t.0 = state.message.clone();
-    }
-    if let Ok(mut t) = player_info.single_mut() {
-        let momentum: String = (0..MOMENTUM_MAX)
-            .map(|i| if i < state.momentum { '●' } else { '○' })
-            .collect();
-        t.0 = format!(
-            "{}  气血 {}/{}   灵力 {}/{}   气势 {}   药水 x{}   钱 {}文   {}   {}   {}   {}",
-            battle_party_summary(&quest, run_ref),
-            stats.hp.max(0),
-            stats.max_hp,
-            stats.mp.max(0),
-            stats.max_mp,
-            momentum,
-            stats.potions,
-            stats.gold,
-            quest.bond_summary(),
-            battle_bond_summary(state.bond_bonus),
-            battle_blessing_summary(state.blessing),
-            battle_camp_summary(state.camp_bonus, state.run_camp_tactic),
-        );
-    }
-
-    let show_cursor = state.phase == Phase::Menu;
-
-    // 百技谱子菜单:6 个槽位改为显示技能窗口(5 式 + 返回),按品级着色。
-    if state.skill_menu {
-        let skills: Vec<super::roguelike::skill::SkillId> =
-            run.as_ref().map(|r| r.skills.clone()).unwrap_or_default();
-        let page = state.skill_cursor / 5;
-        let start = page * 5;
-        for (item, mut text, mut color) in menu.iter_mut() {
-            let slot = item.0;
-            if slot < 5 {
-                let idx = start + slot;
-                if idx < skills.len() {
-                    let def = super::roguelike::skill::skill(skills[idx]);
-                    let selected = show_cursor && idx == state.skill_cursor;
-                    text.0 = format!(
-                        "{} {} 〔{}〕(灵{}) {}",
-                        if selected { "▶" } else { " " },
-                        def.name(),
-                        def.grade.name(),
-                        def.cost,
-                        def.desc(),
-                    );
-                    *color = if selected {
-                        TextColor(Color::srgb(1.0, 0.9, 0.4))
-                    } else {
-                        TextColor(def.grade.color())
-                    };
-                } else {
-                    text.0 = String::new();
-                }
-            } else {
-                let selected = show_cursor && state.skill_cursor >= skills.len();
-                text.0 = if selected {
-                    "▶ 返回".to_string()
-                } else {
-                    "   返回".to_string()
-                };
-                *color = TextColor(if selected {
-                    Color::srgb(1.0, 0.9, 0.4)
-                } else {
-                    Color::srgb(0.8, 0.8, 0.85)
-                });
-            }
-        }
-        return;
-    }
-
-    for (item, mut text, mut color) in menu.iter_mut() {
-        let selected = show_cursor && item.0 == state.menu_index;
-        let label = match item.0 {
-            2 if run.as_ref().is_some_and(|r| !r.skills.is_empty()) => {
-                let n = run.as_ref().map_or(0, |r| r.skills.len());
-                format!("仙术·百技谱 ({n}式)")
-            }
-            2 => format!(
-                "{} (灵力{})",
-                battle_spell_name(&quest, run_ref),
-                battle_spell_cost(&quest, run_ref)
-            ),
-            3 if run.is_some() => {
-                let need = run.as_ref().map_or(MOMENTUM_MAX, |r| r.hex_burst_cost());
-                format!("绝技·剑气爆发 (气势{need})")
-            }
-            3 if combo_unlocked(&quest) => format!("合击 (灵力{COMBO_COST})"),
-            3 => "合击 (未解锁)".to_string(),
-            _ => MENU[item.0].to_string(),
-        };
-        text.0 = if selected {
-            format!("▶ {}", label)
-        } else {
-            format!("   {}", label)
-        };
-        *color = if selected {
-            TextColor(Color::srgb(1.0, 0.9, 0.4))
-        } else {
-            TextColor(Color::srgb(0.8, 0.8, 0.85))
-        };
-    }
+fn sync_status_vfx_state(state: Res<BattleState>, mut vfx: ResMut<StatusVfxState>) {
+    *vfx = StatusVfxState {
+        poison_stacks: state.statuses.poison.stacks,
+        burn_turns: state.statuses.burn.turns,
+        frozen: state.statuses.frozen,
+        stunned: state.statuses.stunned,
+    };
 }
 
 fn battle_blessing_summary(blessing: Option<ShrineBlessing>) -> &'static str {
@@ -4150,10 +4465,28 @@ fn battle_bond_summary(bonus: Option<BondBonus>) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// 百技谱:技能结算与参数化特效(十系元素 × 十种形态 = 100 式)
+// 二十式仙术秘卷:逐招结算与独立特效
 // ---------------------------------------------------------------------------
 
-use super::roguelike::skill::{self, SkillKind};
+use super::roguelike::skill::{self, SkillKind, SkillStatus};
+
+/// Preserve the first three chapters; practiced skills grow from chapter four.
+pub fn skill_mastery_bonus(run: &RunState) -> i32 {
+    let chapter = run.chapter.min(6);
+    chapter.saturating_sub(2) as i32 * 2 + chapter.saturating_sub(4) as i32 * 2
+}
+
+pub fn skill_cost(id: skill::SkillId, run: &RunState) -> i32 {
+    (skill::skill(id).cost + run.spell_cost_delta() + run.hex_spell_cost_delta()).max(2)
+}
+
+/// Apply offensive bonuses once per cast, including multi-hit skills.
+fn skill_hit_damage(state: &mut BattleState, run: &RunState, raw: i32, kind: StrikeKind) -> i32 {
+    let camp = run_camp_damage_bonus(state.run_camp_tactic, PlayerAction::Spell);
+    let multiplier = run.hunter_multiplier(run.current_fight.unwrap_or(FightRank::Normal));
+    let damage = ((raw + run.spell_bonus() + camp) as f32 * multiplier).round() as i32;
+    tactical_damage(state, damage, kind)
+}
 
 /// 施放一式技能:扣灵、结算、叠气势。返回 false 表示灵力不足未施放。
 #[allow(clippy::too_many_arguments)]
@@ -4161,6 +4494,8 @@ fn cast_skill(
     commands: &mut Commands,
     font: &GameFont,
     lights: &LightingAssets,
+    vfx_assets: &SkillVfxAssets,
+    color_materials: &mut Assets<ColorMaterial>,
     state: &mut BattleState,
     stats: &mut PlayerStats,
     run: &super::roguelike::RunState,
@@ -4168,31 +4503,42 @@ fn cast_skill(
     id: skill::SkillId,
 ) -> bool {
     let def = skill::skill(id);
-    let cost = (def.cost + run.hex_spell_cost_delta()).max(2);
+    let cost = skill_cost(id, run);
     if stats.mp < cost {
         state.message = format!("灵力不足,施展不出「{}」(需 {cost} 灵)。", def.name());
         return false;
     }
     stats.mp -= cost;
     let hex_spell = run.hex_spell_bonus();
-    let base = (def.power + hex_spell + rng.range(-2, 3)).max(1);
+    let base = (def.power + skill_mastery_bonus(run) + hex_spell + rng.range(-2, 3)).max(1);
     let name = def.name();
+    let strike_kind = if matches!(
+        def.kind,
+        SkillKind::Bind | SkillKind::Flurry | SkillKind::Stun
+    ) {
+        StrikeKind::Breaker
+    } else {
+        StrikeKind::Spell
+    };
+    let before_hp = state.enemy.hp;
     match def.kind {
         SkillKind::Slash | SkillKind::Burst => {
             let dmg = (base - state.enemy.def / 2).max(2);
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.message = format!("「{name}」剑气迸发,造成 {dmg} 点元素伤害!");
             spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
         }
         SkillKind::Corrode => {
             let dmg = (base - state.enemy.def / 3).max(2);
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
-            state.enemy_dot = (def.power.max(2), 3);
-            state.message = format!("「{name}」蚀入妖躯,造成 {dmg} 点伤害,侵蚀之力将持续三回合!");
+            state.message = format!("「{name}」蚀入妖躯,造成 {dmg} 点伤害!");
             spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
         }
         SkillKind::Bind => {
             let dmg = (base - state.enemy.def / 3).max(2);
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.enemy.def = (state.enemy.def - 3).max(0);
             state.message = format!("「{name}」缠住妖物,造成 {dmg} 点伤害并削去 3 点防御!");
@@ -4200,6 +4546,7 @@ fn cast_skill(
         }
         SkillKind::Drain => {
             let dmg = (base - state.enemy.def / 2).max(2);
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             let heal = (dmg / 2).min(stats.max_hp - stats.hp).max(0);
             stats.hp += heal;
@@ -4215,6 +4562,7 @@ fn cast_skill(
             for _ in 0..hits {
                 total += (base - state.enemy.def / 2 + rng.range(-1, 2)).max(1);
             }
+            let total = skill_hit_damage(state, run, total, strike_kind);
             state.enemy.hp -= total;
             state.message = format!("「{name}」连绵 {hits} 段,共造成 {total} 点伤害!");
             spawn_damage_text(
@@ -4225,10 +4573,12 @@ fn cast_skill(
             );
         }
         SkillKind::Ward => {
+            state.tactics.wait();
             state.player_shield = state.player_shield.max(base);
             state.message = format!("「{name}」结成 {base} 点灵光护罩,先于气血抵伤。");
         }
         SkillKind::Mend => {
+            state.tactics.wait();
             let heal = base.min(stats.max_hp - stats.hp).max(0);
             stats.hp += heal;
             state.message = format!("「{name}」灵息回环,恢复 {heal} 点气血。");
@@ -4238,13 +4588,9 @@ fn cast_skill(
         }
         SkillKind::Stun => {
             let dmg = (base - state.enemy.def / 3).max(2);
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
-            if rng.chance(0.5) {
-                state.enemy_stunned = true;
-                state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害——妖物被震慑住了!");
-            } else {
-                state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害,妖物稳住了身形。");
-            }
+            state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害!");
             spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
         }
         SkillKind::Execute => {
@@ -4253,6 +4599,7 @@ fn cast_skill(
             if low {
                 dmg *= 2;
             }
+            let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.message = if low {
                 format!("「{name}」诛机已现——{dmg} 点致命一击!")
@@ -4262,172 +4609,36 @@ fn cast_skill(
             spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
         }
     }
-    spawn_skill_vfx(commands, lights, def.element, def.kind);
+    if !matches!(def.kind, SkillKind::Ward | SkillKind::Mend) {
+        let camp_damage = run_camp_damage_bonus(state.run_camp_tactic, PlayerAction::Spell);
+        append_run_camp_damage_line(&mut state.message, state.run_camp_tactic, camp_damage);
+        let bonus = run.spell_bonus();
+        if bonus > 0 {
+            state
+                .message
+                .push_str(&format!("\n【御剑心诀】法宝助术，伤害 +{bonus}。"));
+        }
+    }
+    if state.enemy.hp > 0
+        && let Some(status) = def.status
+    {
+        let status_line = apply_skill_status(state, status, rng);
+        state.message.push_str(&status_line);
+    }
+    skill_vfx::spawn_skill_vfx(
+        commands,
+        color_materials,
+        vfx_assets,
+        lights,
+        def.vfx,
+        HERO_POS + Vec3::new(18.0, 38.0, 2.4),
+        ENEMY_POS + Vec3::new(0.0, 12.0, 2.5),
+    );
     state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
-    if let Some(line) = mirror_backlash(state, stats, def.power) {
+    if let Some(line) = mirror_backlash(state, stats, (before_hp - state.enemy.hp).max(0)) {
         state.message.push_str(&line);
     }
     true
-}
-
-/// 参数化技能特效:元素定色,形态定形——组合出 100 种视觉。
-fn spawn_skill_vfx(
-    commands: &mut Commands,
-    lights: &LightingAssets,
-    element: skill::Element,
-    kind: SkillKind,
-) {
-    let c = element.color().to_srgba();
-    let col = |a: f32| Color::srgba(c.red, c.green, c.blue, a);
-    let orb = |size: f32, alpha: f32| Sprite {
-        image: lights.orb.clone(),
-        color: col(alpha),
-        custom_size: Some(Vec2::splat(size)),
-        ..default()
-    };
-    let mut fx = |sprite: Sprite, pos: Vec3, rot: f32, e: BattleEffect| {
-        commands.spawn((
-            e,
-            sprite,
-            Transform::from_translation(pos).with_rotation(Quat::from_rotation_z(rot)),
-            DespawnOnExit(AppState::Battle),
-        ));
-    };
-    let at = |dx: f32, dy: f32, z: f32| ENEMY_POS + Vec3::new(dx, dy, z);
-    match kind {
-        SkillKind::Slash => {
-            // 两道交叉斩痕。
-            for (i, rot) in [0.6f32, -0.8].iter().enumerate() {
-                let mut sp = orb(30.0, 0.9);
-                sp.custom_size = Some(Vec2::new(190.0, 16.0));
-                fx(
-                    sp,
-                    at(0.0, 6.0 - i as f32 * 10.0, 2.2),
-                    *rot,
-                    BattleEffect::new(0.34, 0.4, 1.5, 0.0),
-                );
-            }
-        }
-        SkillKind::Burst => {
-            fx(
-                orb(180.0, 0.95),
-                at(0.0, 0.0, 2.2),
-                0.0,
-                BattleEffect::new(0.42, 0.3, 1.8, 0.0),
-            );
-            for k in 0..8 {
-                let ang = k as f32 * std::f32::consts::TAU / 8.0;
-                let mut sp = orb(26.0, 0.8);
-                sp.custom_size = Some(Vec2::new(64.0, 10.0));
-                fx(
-                    sp,
-                    at(ang.cos() * 70.0, ang.sin() * 70.0, 2.3),
-                    ang,
-                    BattleEffect::new(0.4, 0.5, 2.2, 0.0),
-                );
-            }
-        }
-        SkillKind::Corrode => {
-            for k in 0..5 {
-                let ang = k as f32 * 1.257 + 0.4;
-                fx(
-                    orb(56.0, 0.55),
-                    at(ang.cos() * 46.0, ang.sin() * 34.0 - 8.0, 2.1),
-                    0.0,
-                    BattleEffect::new(0.8, 0.4, 1.3, 1.2),
-                );
-            }
-        }
-        SkillKind::Bind => {
-            for k in 0..4 {
-                let mut sp = orb(24.0, 0.85);
-                sp.custom_size = Some(Vec2::new(150.0, 8.0));
-                fx(
-                    sp,
-                    at(0.0, k as f32 * 26.0 - 40.0, 2.2),
-                    0.15 * (k as f32 - 1.5),
-                    BattleEffect::new(0.5, 0.6, 1.15, 2.4),
-                );
-            }
-        }
-        SkillKind::Drain => {
-            fx(
-                orb(120.0, 0.7),
-                at(0.0, 0.0, 2.1),
-                0.0,
-                BattleEffect::new(0.5, 1.4, 0.3, 0.0),
-            );
-            fx(
-                orb(70.0, 0.6),
-                HERO_POS + Vec3::new(0.0, 30.0, 2.1),
-                0.0,
-                BattleEffect::new(0.55, 0.4, 1.2, 0.0),
-            );
-        }
-        SkillKind::Flurry => {
-            for k in 0..3 {
-                let mut sp = orb(26.0, 0.9);
-                sp.custom_size = Some(Vec2::new(120.0, 12.0));
-                fx(
-                    sp,
-                    at(k as f32 * 26.0 - 26.0, k as f32 * 18.0 - 18.0, 2.2),
-                    0.5 - k as f32 * 0.5,
-                    BattleEffect::new(0.28 + k as f32 * 0.12, 0.4, 1.6, 0.0),
-                );
-            }
-        }
-        SkillKind::Ward => {
-            fx(
-                orb(150.0, 0.55),
-                HERO_POS + Vec3::new(0.0, 40.0, 2.1),
-                0.0,
-                BattleEffect::new(0.7, 0.5, 1.25, 0.6),
-            );
-        }
-        SkillKind::Mend => {
-            for k in 0..3 {
-                fx(
-                    orb(46.0, 0.6),
-                    HERO_POS + Vec3::new(k as f32 * 20.0 - 20.0, 20.0 + k as f32 * 14.0, 2.1),
-                    0.0,
-                    BattleEffect::new(0.6 + k as f32 * 0.1, 0.5, 1.4, 0.0),
-                );
-            }
-        }
-        SkillKind::Stun => {
-            fx(
-                orb(130.0, 0.8),
-                at(0.0, 20.0, 2.2),
-                0.0,
-                BattleEffect::new(0.38, 1.6, 0.5, 0.0),
-            );
-            for k in 0..5 {
-                let ang = k as f32 * 1.257;
-                fx(
-                    orb(22.0, 0.9),
-                    at(ang.cos() * 60.0, ang.sin() * 60.0 + 20.0, 2.3),
-                    ang,
-                    BattleEffect::new(0.45, 0.6, 1.8, 3.0),
-                );
-            }
-        }
-        SkillKind::Execute => {
-            let mut sp = orb(30.0, 0.95);
-            sp.custom_size = Some(Vec2::new(20.0, 220.0));
-            fx(
-                sp,
-                at(0.0, 10.0, 2.3),
-                0.0,
-                BattleEffect::new(0.4, 0.5, 1.4, 0.0),
-            );
-            fx(
-                orb(140.0, 0.85),
-                at(0.0, -20.0, 2.2),
-                0.0,
-                BattleEffect::new(0.45, 0.4, 1.7, 0.0),
-            );
-        }
-    }
 }
 
 #[cfg(test)]
@@ -4438,6 +4649,140 @@ mod tests {
     };
     use crate::game::roguelike::RunChapterVow;
     use crate::game::roguelike::graph::NodeKind;
+
+    pub(super) fn status_test_state(encounter_kind: EncounterKind) -> BattleState {
+        BattleState {
+            enemy: EnemyInstance {
+                name: "试炼妖".into(),
+                hp: 100,
+                max_hp: 100,
+                atk: 8,
+                def: 2,
+                exp: 0,
+            },
+            encounter_kind,
+            phase: Phase::PlayerActing,
+            timer: 0.0,
+            enemy_turns: 0,
+            tactics: Tactics::new(
+                EnemyStyle::Assault,
+                matches!(encounter_kind, EncounterKind::Boss(_)),
+            ),
+            executing_intent: EnemyIntent::Strike,
+            enemy_attacked: false,
+            phase_duration: 0.8,
+            menu_index: 0,
+            player_action: Some(PlayerAction::Spell),
+            intent: EnemyIntent::Strike,
+            guarding: false,
+            momentum: 0,
+            boss_phase2: false,
+            boss_heal_remaining: 25,
+            eclipse_heart: false,
+            hex_first_hit_used: false,
+            skill_menu: false,
+            skill_cursor: 0,
+            player_shield: 0,
+            statuses: EnemyStatuses::default(),
+            message: String::new(),
+            blessing: None,
+            camp_bonus: None,
+            run_camp_tactic: None,
+            bond_bonus: None,
+        }
+    }
+
+    #[test]
+    fn poison_stacks_to_three_and_refreshes_duration() {
+        let mut state = status_test_state(EncounterKind::Random);
+        let mut rng = Rng::default();
+        for _ in 0..4 {
+            apply_skill_status(
+                &mut state,
+                SkillStatus::Poison {
+                    damage: 3,
+                    turns: 3,
+                },
+                &mut rng,
+            );
+        }
+        assert_eq!(state.statuses.poison.damage, 3);
+        assert_eq!(state.statuses.poison.stacks, 3);
+        assert_eq!(state.statuses.poison.turns, 3);
+    }
+
+    #[test]
+    fn lethal_poison_prevents_the_enemy_action_and_burn_tick() {
+        let mut state = status_test_state(EncounterKind::Random);
+        state.enemy.hp = 5;
+        state.statuses.poison = TimedDamageStatus {
+            damage: 5,
+            turns: 2,
+            stacks: 1,
+        };
+        state.statuses.burn = TimedDamageStatus {
+            damage: 4,
+            turns: 2,
+            stacks: 1,
+        };
+        let mut stats = PlayerStats::default();
+        let hp_before = stats.hp;
+        let mut rng = Rng::default();
+
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+
+        assert_eq!(turn.poison_damage, 5);
+        assert_eq!(turn.burn_damage, 0);
+        assert!(turn.attack.is_none());
+        assert_eq!(stats.hp, hp_before);
+        assert!(state.message.contains("未能出手"));
+    }
+
+    #[test]
+    fn burn_resolves_after_the_enemy_action() {
+        let mut state = status_test_state(EncounterKind::Random);
+        state.statuses.burn = TimedDamageStatus {
+            damage: 4,
+            turns: 2,
+            stacks: 1,
+        };
+        let enemy_before = state.enemy.hp;
+        let mut stats = PlayerStats::default();
+        let player_before = stats.hp;
+        let mut rng = Rng::default();
+
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+
+        assert!(turn.attack.is_some());
+        assert!(stats.hp < player_before);
+        assert_eq!(turn.burn_damage, 4);
+        assert_eq!(state.enemy.hp, enemy_before - 4);
+        assert!(state.message.contains("行动后爆燃"));
+    }
+
+    #[test]
+    fn boss_gains_one_turn_of_freeze_immunity_after_thawing() {
+        let mut state = status_test_state(EncounterKind::Boss(BossKind::MountainFiend));
+        let mut stats = PlayerStats::default();
+        let mut rng = Rng::default();
+        apply_skill_status(&mut state, SkillStatus::Freeze { chance: 1.0 }, &mut rng);
+        assert!(state.statuses.frozen);
+
+        let frozen_turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        assert_eq!(frozen_turn.control, Some(StatusBurstKind::Freeze));
+        assert_eq!(state.statuses.freeze_immunity, 1);
+
+        let resisted =
+            apply_skill_status(&mut state, SkillStatus::Freeze { chance: 1.0 }, &mut rng);
+        assert!(resisted.contains("抗冻"));
+        assert!(!state.statuses.frozen);
+
+        state.phase = Phase::PlayerActing;
+        let _ = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        assert_eq!(state.statuses.freeze_immunity, 0);
+        apply_skill_status(&mut state, SkillStatus::Freeze { chance: 1.0 }, &mut rng);
+        assert!(state.statuses.frozen);
+    }
 
     #[test]
     fn run_party_companions_are_visible_in_run_battles() {
@@ -4911,7 +5256,10 @@ mod tests {
 
         for (index, boss) in bosses.iter().enumerate() {
             assert!(boss.image.starts_with("creatures/boss_"));
-            assert_eq!(cutout_source_px_for_path(boss.image), 512.0);
+            assert_eq!(
+                super::super::cutout::cutout_source_px_for_path(boss.image),
+                512.0
+            );
             for previous in &bosses[..index] {
                 assert_ne!(boss.image, previous.image);
             }
@@ -4921,18 +5269,8 @@ mod tests {
     #[test]
     fn generated_enemy_cutouts_are_primary_battle_visuals() {
         let enemy = &ENEMIES[0];
-        let parts = cutout_part_specs(
-            cutout_source_px_for_path(enemy_primary_image(enemy)),
-            enemy_primary_size(enemy),
-        );
-
         assert_eq!(enemy_primary_image(enemy), "creatures/ai_water_serpent.png");
         assert_eq!(enemy_primary_size(enemy), enemy.size);
-        assert_eq!(parts.len(), CutoutPart::ALL.len());
-        assert!(parts[0].offset.y < 0.0);
-        assert!(parts[2].offset.y > 0.0);
-        // Enemy identity still comes from the generated creature art; the body is
-        // now sliced into animated parts instead of overlaid with a mismatched sheet.
         let primary_alpha = enemy_primary_color(Phase::Menu, 0.0).to_srgba().alpha;
         assert!(primary_alpha > 0.9);
     }
@@ -5027,27 +5365,29 @@ mod tests {
     }
 
     #[test]
-    fn battle_backdrops_use_zone_specific_map_assets() {
-        assert_eq!(
-            battle_backdrop(EncounterZone::Village).far_texture,
-            "tiles/forest_floor.png"
-        );
-        assert_eq!(
-            battle_backdrop(EncounterZone::Cave).floor_texture,
-            "tiles/ai_cave_floor.png"
-        );
-        assert_eq!(
-            battle_backdrop(EncounterZone::RiverTown).far_texture,
-            "tiles/water_edge.png"
-        );
-        assert_eq!(
-            battle_backdrop(EncounterZone::Capital).floor_texture,
-            "tiles/ai_shrine_floor.png"
-        );
-        assert_ne!(
-            battle_backdrop(EncounterZone::Village).far_texture,
-            battle_backdrop(EncounterZone::FinalSanctum).far_texture
-        );
+    fn battle_environments_are_distinct_and_shipped_for_every_encounter_zone() {
+        let zones = [
+            EncounterZone::Village,
+            EncounterZone::Bamboo,
+            EncounterZone::Cave,
+            EncounterZone::RiverTown,
+            EncounterZone::PlagueVillage,
+            EncounterZone::Capital,
+            EncounterZone::SouthernRoad,
+            EncounterZone::FinalSanctum,
+        ];
+        let paths: std::collections::HashSet<_> =
+            zones.iter().map(|z| battle_background_path(*z)).collect();
+        assert_eq!(paths.len(), zones.len());
+        for path in paths {
+            assert!(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join(path)
+                    .exists(),
+                "missing battlefield {path}"
+            );
+        }
     }
 
     #[test]
@@ -5374,18 +5714,22 @@ mod tests {
             phase: Phase::PlayerActing,
             timer: 0.0,
             enemy_turns: 0,
+            tactics: Tactics::new(EnemyStyle::Assault, false),
+            executing_intent: EnemyIntent::Strike,
+            enemy_attacked: false,
+            phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            boss_heal_remaining: 25,
             eclipse_heart: false,
             hex_first_hit_used: false,
             skill_menu: false,
             skill_cursor: 0,
             player_shield: 0,
-            enemy_dot: (0, 0),
-            enemy_stunned: false,
+            statuses: EnemyStatuses::default(),
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -5397,7 +5741,8 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let attack = turn.attack.expect("normal strike should attack");
 
         assert!(attack.damage > 0);
         assert!(!attack.strong);
@@ -5421,18 +5766,22 @@ mod tests {
             phase: Phase::PlayerActing,
             timer: 0.0,
             enemy_turns: 0,
+            tactics: Tactics::new(EnemyStyle::Assault, false),
+            executing_intent: EnemyIntent::Strike,
+            enemy_attacked: false,
+            phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
+            boss_heal_remaining: 25,
             eclipse_heart: false,
             hex_first_hit_used: false,
             skill_menu: false,
             skill_cursor: 0,
             player_shield: 0,
-            enemy_dot: (0, 0),
-            enemy_stunned: false,
+            statuses: EnemyStatuses::default(),
             momentum: 0,
             message: String::new(),
             blessing: Some(ShrineBlessing::Guard),
@@ -5444,7 +5793,8 @@ mod tests {
         let before = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let attack = turn.attack.expect("normal strike should attack");
 
         assert!(attack.damage > 0);
         assert!(attack.damage < 7);
@@ -5453,7 +5803,7 @@ mod tests {
     }
 
     #[test]
-    fn boss_opening_turn_uses_signature_move() {
+    fn advertised_boss_signature_uses_its_signature_move() {
         let mut state = BattleState {
             enemy: EnemyInstance {
                 name: "月魄妖".to_string(),
@@ -5467,18 +5817,22 @@ mod tests {
             phase: Phase::PlayerActing,
             timer: 0.0,
             enemy_turns: 0,
+            tactics: Tactics::new(EnemyStyle::Assault, false),
+            executing_intent: EnemyIntent::Special,
+            enemy_attacked: false,
+            phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
-            intent: EnemyIntent::Strike,
+            intent: EnemyIntent::Special,
             guarding: false,
             boss_phase2: false,
+            boss_heal_remaining: 25,
             eclipse_heart: false,
             hex_first_hit_used: false,
             skill_menu: false,
             skill_cursor: 0,
             player_shield: 0,
-            enemy_dot: (0, 0),
-            enemy_stunned: false,
+            statuses: EnemyStatuses::default(),
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -5491,7 +5845,8 @@ mod tests {
         let before_hp = stats.hp;
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let attack = turn.attack.expect("boss special should attack");
 
         assert!(attack.strong);
         assert!(state.message.contains("月影噬灵"));
@@ -5516,18 +5871,22 @@ mod tests {
             phase: Phase::PlayerActing,
             timer: 0.0,
             enemy_turns: 0,
+            tactics: Tactics::new(EnemyStyle::Assault, false),
+            executing_intent: EnemyIntent::Special,
+            enemy_attacked: false,
+            phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
-            intent: EnemyIntent::Strike,
+            intent: EnemyIntent::Special,
             guarding: false,
             boss_phase2: false,
+            boss_heal_remaining: 25,
             eclipse_heart: false,
             hex_first_hit_used: false,
             skill_menu: false,
             skill_cursor: 0,
             player_shield: 0,
-            enemy_dot: (0, 0),
-            enemy_stunned: false,
+            statuses: EnemyStatuses::default(),
             momentum: 0,
             message: String::new(),
             blessing: None,
@@ -5538,7 +5897,8 @@ mod tests {
         let mut stats = PlayerStats::default();
         let mut rng = Rng::default();
 
-        let attack = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let turn = begin_enemy_turn(&mut state, &mut stats, &mut rng, 0, 0, 35, 0);
+        let attack = turn.attack.expect("boss special should attack");
 
         assert!(attack.strong);
         assert!(state.message.contains("旧梦潮声"));
