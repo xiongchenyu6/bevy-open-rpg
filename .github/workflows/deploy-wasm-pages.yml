@@ -71,6 +71,9 @@ jobs:
             sudo apt-get install -y binaryen
           fi
 
+      - name: Verify paperdoll decoding without filesystem extraction
+        run: cargo test --locked -p paperdoll-tar
+
       - name: Build web artifacts
         run: bash scripts/build_web.sh
 

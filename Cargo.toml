@@ -56,6 +56,7 @@ webgpu = ["bevy/web", "bevy/webgpu"]
 
 [patch.crates-io]
 bevy_firefly = { path = "vendor/bevy_firefly" }
+paperdoll-tar = { path = "vendor/paperdoll-tar" }
 
 [profile.release]
 codegen-units = 1

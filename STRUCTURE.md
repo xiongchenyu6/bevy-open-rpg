@@ -18,6 +18,10 @@ for legacy capture presets but is no longer the main loop.
   hosts, run inside `nix develop` / `direnv` so Wayland, libxkbcommon, and Vulkan
   runtime libraries are on `LD_LIBRARY_PATH`.
 - Package: `love-rpg`, edition 2024.
+- `vendor/paperdoll-tar` patches version0.1.1 to decode `.ppd` manifests and
+  images directly from the archive in memory. The upstream reader uses a
+  temporary directory, which panics in browsers. Keep this patch alongside
+  `vendor/bevy_firefly`; it preserves the existing paperdoll asset format.
 - Dimension: 2D (`Camera2d`, sprites, `Text2d`, Bevy UI).
 
 ## App Entry

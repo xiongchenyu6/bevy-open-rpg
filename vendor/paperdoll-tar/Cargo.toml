@@ -1,0 +1,21 @@
+[package]
+name = "paperdoll-tar"
+version = "0.1.1"
+authors = ["Fralonra <zoronlivingston@gmail.com>"]
+description = "2D paper doll model"
+edition = "2021"
+homepage = "https://github.com/fralonra/paperdoll-tar"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/fralonra/paperdoll-tar"
+keywords = ["paperdoll", "paperdoll-tar"]
+exclude = [".gitignore", ".github/*"]
+
+[dependencies]
+anyhow = "1.0"
+image = "0.24"
+paperdoll = "0.1.1"
+serde_yaml = "0.9"
+tar = "0.4"
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tempdir = "0.3"
