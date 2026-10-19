@@ -25,7 +25,7 @@ use std::{
 };
 use tar::Archive;
 #[cfg(not(target_arch = "wasm32"))]
-use {tar::Builder, tempdir::TempDir};
+use tar::Builder;
 
 /// The file extension.
 pub const EXTENSION_NAME: &'static str = "ppd";
@@ -100,7 +100,9 @@ pub fn save<P>(manifest: &mut Manifest, path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let temp_dir = TempDir::new(FILE_NAME_TEMP_DIR)?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix(FILE_NAME_TEMP_DIR)
+        .tempdir()?;
 
     for doll in &mut manifest.dolls {
         if doll.image.is_empty() {
