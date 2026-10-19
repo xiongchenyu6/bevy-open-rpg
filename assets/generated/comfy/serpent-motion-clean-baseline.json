@@ -1,0 +1,190 @@
+{
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "SelectModelDevice",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "3": {
+      "class_type": "DualCLIPLoader",
+      "inputs": {
+        "clip_name1": "clip_l.safetensors",
+        "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+        "type": "flux",
+        "device": "cpu"
+      }
+    },
+    "4": {
+      "class_type": "SelectCLIPDevice",
+      "inputs": {
+        "clip": [
+          "3",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "5": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      }
+    },
+    "6": {
+      "class_type": "SelectVAEDevice",
+      "inputs": {
+        "vae": [
+          "5",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "7": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "repaired-base.png"
+      }
+    },
+    "8": {
+      "class_type": "FluxKontextImageScale",
+      "inputs": {
+        "image": [
+          "7",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": [
+          "8",
+          0
+        ],
+        "vae": [
+          "6",
+          0
+        ]
+      }
+    },
+    "10": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "4",
+          0
+        ],
+        "text": "A premium hand painted 2D fantasy RPG enemy sprite, full body turquoise blue water serpent Chinese dragon spirit, slender left facing dragon head with bright orange yellow eye, swept cyan hornlike fins on crown and cheeks, serpentine S curved neck and looped coiled lower body, solid continuous body covered in intact blue overlapping scales, subtle pale cyan belly, indigo and cyan flowing dorsal fins, large elegant forked fan shaped tail fin. Coherent solid anatomy, highly readable elegant silhouette, detailed painterly turquoise highlights and dark blue shading, clean crisp outlines. Isolated creature on pure flat white background, no shadows no scenery no text, full entire creature visible with generous 15 percent margins, centered. No legs, no holes, no transparent gaps in skin, no dots, no mesh, no damage."
+      }
+    },
+    "11": {
+      "class_type": "ReferenceLatent",
+      "inputs": {
+        "conditioning": [
+          "10",
+          0
+        ],
+        "latent": [
+          "9",
+          0
+        ]
+      }
+    },
+    "12": {
+      "class_type": "FluxGuidance",
+      "inputs": {
+        "conditioning": [
+          "10",
+          0
+        ],
+        "guidance": 7.0
+      }
+    },
+    "13": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "4",
+          0
+        ],
+        "text": ""
+      }
+    },
+    "14": {
+      "class_type": "EmptySD3LatentImage",
+      "inputs": {
+        "width": 768,
+        "height": 768,
+        "batch_size": 1
+      }
+    },
+    "15": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "2",
+          0
+        ],
+        "seed": 202610401,
+        "steps": 32,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "13",
+          0
+        ],
+        "latent_image": [
+          "14",
+          0
+        ],
+        "denoise": 1.0
+      }
+    },
+    "16": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "15",
+          0
+        ],
+        "vae": [
+          "6",
+          0
+        ]
+      }
+    },
+    "17": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "16",
+          0
+        ],
+        "filename_prefix": "love-rpg-serpent-clean-baseline"
+      }
+    }
+  },
+  "response": {
+    "prompt_id": "4dd8a60e-61f7-4588-a26f-9b35e06fdf6c",
+    "number": 20156,
+    "node_errors": {}
+  }
+}

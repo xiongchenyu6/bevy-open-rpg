@@ -1,0 +1,190 @@
+{
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "SelectModelDevice",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "3": {
+      "class_type": "DualCLIPLoader",
+      "inputs": {
+        "clip_name1": "clip_l.safetensors",
+        "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+        "type": "flux",
+        "device": "cpu"
+      }
+    },
+    "4": {
+      "class_type": "SelectCLIPDevice",
+      "inputs": {
+        "clip": [
+          "3",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "5": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      }
+    },
+    "6": {
+      "class_type": "SelectVAEDevice",
+      "inputs": {
+        "vae": [
+          "5",
+          0
+        ],
+        "device": "gpu:1"
+      }
+    },
+    "7": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "repaired-base.png"
+      }
+    },
+    "8": {
+      "class_type": "FluxKontextImageScale",
+      "inputs": {
+        "image": [
+          "7",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": [
+          "8",
+          0
+        ],
+        "vae": [
+          "6",
+          0
+        ]
+      }
+    },
+    "10": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "4",
+          0
+        ],
+        "text": "Redraw this creature cleanly as a complete blue water dragon with smooth SOLID skin and intact scales, especially the entire narrow tail must be a SOLID contiguous blue tube with no white gaps, no dotted scales and no torn mesh. Replace damaged fragmented texture with richly shaded smooth blue scales. Preserve orange eyes, long cyan fins and forked fan tail, narrow dragon head and original S shaped anatomy. Show whole creature smaller, with 15 percent white margins all sides, full crown and tail uncropped. Premium coherent painted fantasy game monster on plain white background."
+      }
+    },
+    "11": {
+      "class_type": "ReferenceLatent",
+      "inputs": {
+        "conditioning": [
+          "10",
+          0
+        ],
+        "latent": [
+          "9",
+          0
+        ]
+      }
+    },
+    "12": {
+      "class_type": "FluxGuidance",
+      "inputs": {
+        "conditioning": [
+          "11",
+          0
+        ],
+        "guidance": 7.0
+      }
+    },
+    "13": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "4",
+          0
+        ],
+        "text": ""
+      }
+    },
+    "14": {
+      "class_type": "EmptySD3LatentImage",
+      "inputs": {
+        "width": 768,
+        "height": 768,
+        "batch_size": 1
+      }
+    },
+    "15": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "2",
+          0
+        ],
+        "seed": 202610301,
+        "steps": 32,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "13",
+          0
+        ],
+        "latent_image": [
+          "14",
+          0
+        ],
+        "denoise": 1.0
+      }
+    },
+    "16": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "15",
+          0
+        ],
+        "vae": [
+          "6",
+          0
+        ]
+      }
+    },
+    "17": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "16",
+          0
+        ],
+        "filename_prefix": "love-rpg-serpent-repaired-v2"
+      }
+    }
+  },
+  "response": {
+    "prompt_id": "a1f86eb2-c543-4ba5-a868-ee9ddb76a76c",
+    "number": 20154,
+    "node_errors": {}
+  }
+}

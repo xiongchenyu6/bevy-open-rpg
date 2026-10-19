@@ -1,0 +1,71 @@
+{
+  "generator": "built-in image_gen",
+  "raw": "assets/generated/imagegen/raw/ground-textures.png",
+  "atlas_size": [
+    1254,
+    1254
+  ],
+  "grid": [
+    2,
+    2
+  ],
+  "tiles": [
+    {
+      "name": "earth",
+      "path": "assets/tiles/ground-earth.png",
+      "size": [
+        627,
+        627
+      ],
+      "atlas_box": [
+        0,
+        0,
+        627,
+        627
+      ]
+    },
+    {
+      "name": "grass",
+      "path": "assets/tiles/ground-grass.png",
+      "size": [
+        627,
+        627
+      ],
+      "atlas_box": [
+        627,
+        0,
+        1254,
+        627
+      ]
+    },
+    {
+      "name": "stone",
+      "path": "assets/tiles/ground-stone.png",
+      "size": [
+        627,
+        627
+      ],
+      "atlas_box": [
+        0,
+        627,
+        627,
+        1254
+      ]
+    },
+    {
+      "name": "rock",
+      "path": "assets/tiles/ground-rock.png",
+      "size": [
+        627,
+        627
+      ],
+      "atlas_box": [
+        627,
+        627,
+        1254,
+        1254
+      ]
+    }
+  ],
+  "prompt": "Four equal quadrant seamless flat orthographic paintedground: warmtan finepackedearth; mutedmoss finegrass no trees bushes rocks; coolgray smallirregularflatcobblecourtyard; bluegray cavefloorfinefissures no crystals cliffs boulders. Noobjects/shadows/frame/text. Cohesivefantasyhandpaintedmaterials."
+}
