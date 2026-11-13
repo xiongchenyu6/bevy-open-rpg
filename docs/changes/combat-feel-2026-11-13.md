@@ -30,3 +30,11 @@ Not included: audio (the project builds without `bevy_audio`), a reduced-motion
 option (there is no settings screen to put it in) and pause/load handling
 (the game has neither). Skill choreographies share one 0.38s contact time
 rather than a per-skill value.
+
+## Lighting
+
+Captured frames showed saturated green, magenta and orange discs over the
+battle backdrops and run maps: lights multiply the scene, the ambient level was
+low, and each light used its full colour. `lighting.rs` now raises ambient
+brightness (0.42 to 0.62), pulls light colour 60% toward white, and lowers
+light intensity and core boost, so painted scenes keep their own palette.

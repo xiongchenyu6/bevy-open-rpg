@@ -28,7 +28,9 @@ impl LightingAssets {
 pub fn camera_config() -> FireflyConfig {
     FireflyConfig {
         ambient_color: Color::srgb(0.86, 0.90, 1.0),
-        ambient_brightness: 0.42,
+        // Bright enough that painted scenes keep their own palette; lights add
+        // focus instead of carving coloured discs out of a dark screen.
+        ambient_brightness: 0.62,
         light_bands: None,
         soft_shadows: true,
         z_sorting: true,
@@ -42,6 +44,9 @@ pub fn camera_config() -> FireflyConfig {
     }
 }
 
+/// How far a light's colour is pulled toward white before it multiplies the scene.
+const LIGHT_WHITEN: f32 = 0.6;
+
 pub fn spawn_light(
     commands: &mut Commands,
     assets: &LightingAssets,
@@ -51,9 +56,12 @@ pub fn spawn_light(
     exit_state: AppState,
 ) -> Entity {
     let srgba = color.to_srgba();
-    let light_color = Color::srgb(srgba.red, srgba.green, srgba.blue);
+    // Lights multiply the scene, so a saturated light repaints everything it
+    // touches. Keep a hint of the hue and let the orb sprite carry the colour.
+    let tint = |channel: f32| channel + (1.0 - channel) * LIGHT_WHITEN;
+    let light_color = Color::srgb(tint(srgba.red), tint(srgba.green), tint(srgba.blue));
     let radius = size * 0.72;
-    let intensity = 0.65 + srgba.alpha * 3.0;
+    let intensity = 0.45 + srgba.alpha * 2.0;
     let mut vision = VisionSource::circle(radius * 0.92);
     vision.transition_ratio = 0.34;
 
@@ -64,7 +72,7 @@ pub fn spawn_light(
                 intensity,
                 radius,
                 falloff: Falloff::linear(-0.28),
-                core: LightCore::from_radius_boost((radius * 0.14).clamp(14.0, 58.0), 1.65),
+                core: LightCore::from_radius_boost((radius * 0.14).clamp(14.0, 58.0), 1.25),
                 cast_shadows: true,
                 ..default()
             },
