@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 use bevy_firefly::prelude::PointLight2d;
 
+use super::battle::BattleFeel;
 use super::lighting::{self, LightingAssets};
 use super::roguelike::skill::VfxStyle;
 use super::state::AppState;
@@ -1493,7 +1494,7 @@ fn spawn_status_aura(
 }
 
 fn update_vfx_nodes(
-    time: Res<Time>,
+    feel: Res<BattleFeel>,
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut nodes: Query<(
@@ -1507,7 +1508,8 @@ fn update_vfx_nodes(
     )>,
 ) {
     for (entity, mut node, mut transform, sprite, material, point_light, light) in &mut nodes {
-        node.age += time.delta_secs();
+        // Spell choreography shares the battle clock, so it holds on hit-stop.
+        node.age += feel.dt();
         if node.age < node.delay {
             continue;
         }

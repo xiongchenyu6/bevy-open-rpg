@@ -487,6 +487,7 @@ pub(super) fn latest_message(message: &str) -> String {
 }
 
 pub(super) fn update(
+    feel: Res<BattleFeel>,
     state: Res<BattleState>,
     stats: Res<PlayerStats>,
     quest: Res<QuestLog>,
@@ -524,14 +525,17 @@ pub(super) fn update(
     mut icons: Query<(&MenuIcon, &mut ImageNode)>,
     assets: Res<AssetServer>,
 ) {
+    // HP falls on the visible contact frame, not when the command resolves.
+    let enemy_hp = (state.enemy.hp + feel.pending_damage(Target::Enemy)).min(state.enemy.max_hp);
+    let hero_hp = (stats.hp + feel.pending_damage(Target::Hero)).min(stats.max_hp);
     let ratio = |value: i32, max: i32| {
         Val::Percent((value.max(0) as f32 / max.max(1) as f32 * 100.0).clamp(0.0, 100.0))
     };
     if let Ok(mut n) = bars.p0().single_mut() {
-        n.width = ratio(state.enemy.hp, state.enemy.max_hp);
+        n.width = ratio(enemy_hp, state.enemy.max_hp);
     }
     if let Ok(mut n) = bars.p1().single_mut() {
-        n.width = ratio(stats.hp, stats.max_hp);
+        n.width = ratio(hero_hp, stats.max_hp);
     }
     if let Ok(mut n) = bars.p2().single_mut() {
         n.width = ratio(stats.mp, stats.max_mp);
@@ -597,7 +601,7 @@ pub(super) fn update(
                 "{}{}    {}/{}",
                 state.enemy.name,
                 if state.boss_phase2 { " · 真身" } else { "" },
-                state.enemy.hp.max(0),
+                enemy_hp.max(0),
                 state.enemy.max_hp
             ),
             BattleLabel::Intent => {
@@ -648,7 +652,7 @@ pub(super) fn update(
             BattleLabel::Party => battle_party_summary(&quest, run),
             BattleLabel::Vitals => format!(
                 "气血 {}/{}   灵力 {}/{}",
-                stats.hp.max(0),
+                hero_hp.max(0),
                 stats.max_hp,
                 stats.mp.max(0),
                 stats.max_mp

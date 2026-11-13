@@ -1,5 +1,5 @@
 //! Identity-specific enemy atlas poses, driven by the actual combat phase clock.
-use super::{BattleState, EnemyDef, EnemyIntent, Phase, PlayerAction, phase_progress};
+use super::{BattleState, EnemyDef, EnemyIntent, Phase, phase_progress};
 use bevy::prelude::*;
 
 const SERPENT_IMAGE: &str = "creatures/ai_water_serpent.png";
@@ -62,7 +62,8 @@ impl FramePose {
     }
 }
 
-fn pose(state: &BattleState, idle_age: f32) -> FramePose {
+/// `hit` is the progress of a confirmed hit reaction that began on contact.
+fn pose(state: &BattleState, idle_age: f32, hit: Option<f32>) -> FramePose {
     let clip = match state.phase {
         Phase::EnemyActing
             if state.enemy_attacked
@@ -73,19 +74,13 @@ fn pose(state: &BattleState, idle_age: f32) -> FramePose {
         {
             Clip::Attack
         }
-        Phase::PlayerActing
-            if state.tactics.last_hit.damage > 0
-                && matches!(
-                    state.player_action,
-                    Some(PlayerAction::Attack | PlayerAction::Spell | PlayerAction::Combo)
-                ) =>
-        {
-            Clip::Hit
-        }
+        _ if hit.is_some() => Clip::Hit,
         _ => Clip::Idle,
     };
     let column = if clip == Clip::Idle {
         ((idle_age.max(0.0) / 0.15) as usize) % FRAMES
+    } else if clip == Clip::Hit {
+        ((hit.unwrap_or(0.0) * FRAMES as f32) as usize).min(FRAMES - 1)
     } else {
         // The authored bite's frame 4 meets the existing phase-midpoint lunge.
         ((phase_progress(state.timer, state.phase_duration.max(0.001)) * FRAMES as f32) as usize)
@@ -94,15 +89,15 @@ fn pose(state: &BattleState, idle_age: f32) -> FramePose {
     FramePose { clip, column }
 }
 
-pub(super) fn update(sprite: &mut Sprite, state: &BattleState, idle_age: f32) {
+pub(super) fn update(sprite: &mut Sprite, state: &BattleState, idle_age: f32, hit: Option<f32>) {
     if let Some(atlas) = sprite.texture_atlas.as_mut() {
-        atlas.index = pose(state, idle_age).index();
+        atlas.index = pose(state, idle_age, hit).index();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{EncounterKind, tests::status_test_state};
+    use super::super::{EncounterKind, PlayerAction, tests::status_test_state};
     use super::*;
 
     #[test]
@@ -139,19 +134,19 @@ mod tests {
         for duration in [0.60, 0.72] {
             state.phase_duration = duration;
             state.timer = duration;
-            let start = pose(&state, 100.0);
+            let start = pose(&state, 100.0, None);
             state.timer = duration / 2.0;
-            let contact = pose(&state, 100.0);
+            let contact = pose(&state, 100.0, None);
             state.timer = 0.0;
-            let recovery = pose(&state, 100.0);
+            let recovery = pose(&state, 100.0, None);
             assert_eq!(start.clip, Clip::Attack);
             assert!(start.column < contact.column && contact.column < recovery.column);
             assert!((contact.column as f32 / FRAMES as f32 - 0.5).abs() < 0.13);
             state.timer = -duration;
-            assert_eq!(pose(&state, 100.0), recovery);
+            assert_eq!(pose(&state, 100.0, None), recovery);
         }
         state.phase = Phase::Menu;
-        assert_eq!(pose(&state, 100.0).clip, Clip::Idle);
+        assert_eq!(pose(&state, 100.0, None).clip, Clip::Idle);
     }
 
     #[test]
@@ -161,43 +156,34 @@ mod tests {
         state.enemy_attacked = true;
         for intent in [EnemyIntent::Charge, EnemyIntent::Gather, EnemyIntent::Brace] {
             state.executing_intent = intent;
-            assert_eq!(pose(&state, 0.2).clip, Clip::Idle);
+            assert_eq!(pose(&state, 0.2, None).clip, Clip::Idle);
         }
         state.executing_intent = EnemyIntent::Heavy;
         state.enemy_attacked = false;
-        assert_eq!(pose(&state, 0.2).clip, Clip::Idle);
+        assert_eq!(pose(&state, 0.2, None).clip, Clip::Idle);
     }
 
     #[test]
-    fn actual_damaging_player_actions_recoil_but_support_actions_do_not() {
+    fn confirmed_hits_recoil_from_contact_but_unhurt_turns_do_not() {
         let mut state = status_test_state(EncounterKind::Random);
         state.phase = Phase::PlayerActing;
-        state.tactics.last_hit.damage = 10;
         for action in [
             PlayerAction::Attack,
             PlayerAction::Spell,
             PlayerAction::Combo,
+            PlayerAction::Guard,
+            PlayerAction::Item,
         ] {
             super::super::start_player_acting(&mut state, action);
-            let start = pose(&state, 0.2);
-            state.timer = state.phase_duration / 2.0;
-            let contact = pose(&state, 0.2);
-            state.timer = 0.0;
-            let recovery = pose(&state, 0.2);
-            assert_eq!(start.clip, Clip::Hit);
-            assert!(start.column < contact.column && contact.column < recovery.column);
-            assert!((contact.column as f32 / FRAMES as f32 - 0.5).abs() < 0.13);
-            state.timer = -state.phase_duration;
-            assert_eq!(pose(&state, 0.2), recovery);
+            // Before contact, and on any turn without a hit, the body idles.
+            assert_eq!(pose(&state, 0.2, None).clip, Clip::Idle);
         }
-        for action in [PlayerAction::Guard, PlayerAction::Item, PlayerAction::Flee] {
-            state.player_action = Some(action);
-            assert_eq!(pose(&state, 0.2).clip, Clip::Idle);
-        }
-        state.tactics.last_hit.damage = 0;
-        super::super::start_player_acting(&mut state, PlayerAction::Spell);
-        state.timer = state.phase_duration / 2.0;
-        assert_eq!(pose(&state, 0.2).clip, Clip::Idle);
+        let start = pose(&state, 0.2, Some(0.0));
+        let middle = pose(&state, 0.2, Some(0.5));
+        let end = pose(&state, 0.2, Some(0.999));
+        assert_eq!(start.clip, Clip::Hit);
+        assert!(start.column < middle.column && middle.column < end.column);
+        assert_eq!(end.column, FRAMES - 1);
     }
 
     #[test]
@@ -205,20 +191,19 @@ mod tests {
         let state = status_test_state(EncounterKind::Random);
         let mut idle = status_test_state(EncounterKind::Random);
         idle.phase = Phase::Menu;
-        assert_ne!(pose(&idle, 0.0), pose(&idle, 0.6));
-        assert_eq!(pose(&idle, 0.0), pose(&idle, 1.2));
-        assert_eq!(pose(&state, 0.0).clip, Clip::Idle);
-        let idle_index = pose(&idle, 0.6).index();
+        assert_ne!(pose(&idle, 0.0, None), pose(&idle, 0.6, None));
+        assert_eq!(pose(&idle, 0.0, None), pose(&idle, 1.2, None));
+        assert_eq!(pose(&state, 0.0, None).clip, Clip::Idle);
+        let idle_index = pose(&idle, 0.6, None).index();
         let mut acting = status_test_state(EncounterKind::Random);
         acting.phase = Phase::EnemyActing;
         acting.enemy_attacked = true;
         acting.executing_intent = EnemyIntent::Strike;
         acting.timer = acting.phase_duration / 2.0;
-        let attack_index = pose(&acting, 0.6).index();
+        let attack_index = pose(&acting, 0.6, None).index();
         acting.phase = Phase::PlayerActing;
         acting.player_action = Some(PlayerAction::Attack);
-        acting.tactics.last_hit.damage = 12;
-        let hit_index = pose(&acting, 0.6).index();
+        let hit_index = pose(&acting, 0.6, Some(0.5)).index();
         assert_ne!(idle_index, attack_index);
         assert_ne!(attack_index, hit_index);
         assert_ne!(idle_index, hit_index);

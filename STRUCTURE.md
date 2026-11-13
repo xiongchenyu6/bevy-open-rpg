@@ -148,10 +148,21 @@ game fills any window) and the capture binary wire those separately. While in
 clamped to the bordered map (`scene::zoom_camera_in/out`, `camera_follow`).
 
 ### `battle.rs` — `BattlePlugin` (shared by run + legacy)
+- `battle/feel.rs` owns combat feel (`BattleFeel`). Rules still resolve when a
+  command is confirmed; `feel::observe` turns each frame's actual HP loss into a
+  contact cue (weight Light/Normal/Heavy/Crit, delay to the visible contact), so
+  guards, heals and failed casts give no hit feedback. `BattleFeel::advance`
+  integrates hit-stop exactly per frame and exposes `dt()`, the battle clock
+  used by the phase timer, actor motion, `BattleEffect`s, float text and
+  `skill_vfx` nodes; `AnimationHold` freezes sprite clips for the same time.
+  It also owns the capped, rate-limited camera shake, hit flash/squash/recoil
+  poses, and HP hidden until contact (`pending_damage`). Tuning is constants at
+  the top of the file. `feel::reset` runs on battle enter and exit.
 - `battle/enemy_animation.rs` owns identity-specific enemy atlas construction
   and phase-clock frame selection. Water-serpent motion has three 8-frame rows
   (idle, bite, hit), 384px cells. Bite contact follows the existing lunge peak;
-  charge/gather/brace and non-damaging support actions remain idle. Numerical
+  charge/gather/brace and non-damaging support actions remain idle; the hit row
+  plays from the contact frame of a confirmed hit. Numerical
   damage resolution stays in `battle.rs`.
 - `ENEMIES[9]` zone pools + 7 boss defs, each with a distinct generated
   `creatures/boss_*.png` cutout; `PendingEncounter{zone, kind}` is the

@@ -182,7 +182,22 @@ impl SpriteAnimation {
             repeat: false,
         }
     }
+
+    /// Holds the first frame for `secs` before the clip starts playing.
+    pub fn delayed(mut self, secs: f32) -> Self {
+        self.elapsed = -secs;
+        self
+    }
 }
+
+/// Seconds of this frame during which sprite clips stand still. Combat
+/// hit-stop writes it so attack and impact frames freeze with the blow.
+#[derive(Resource, Default)]
+pub struct AnimationHold(pub f32);
+
+/// Sprite clip and bobbing updates; order hold writers before this set.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AnimationSystems;
 
 #[derive(Component)]
 pub struct Bobbing {
@@ -207,7 +222,10 @@ pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (tick_sprite_animations, update_bobbing));
+        app.init_resource::<AnimationHold>().add_systems(
+            Update,
+            (tick_sprite_animations, update_bobbing).in_set(AnimationSystems),
+        );
     }
 }
 
@@ -254,9 +272,14 @@ pub fn set_clip(
     });
 }
 
-fn tick_sprite_animations(time: Res<Time>, mut query: Query<(&mut SpriteAnimation, &mut Sprite)>) {
+fn tick_sprite_animations(
+    time: Res<Time>,
+    hold: Res<AnimationHold>,
+    mut query: Query<(&mut SpriteAnimation, &mut Sprite)>,
+) {
+    let dt = (time.delta_secs() - hold.0).max(0.0);
     for (mut animation, mut sprite) in &mut query {
-        animation.elapsed += time.delta_secs();
+        animation.elapsed += dt;
         let frame_time = 1.0 / animation.clip.fps();
         if animation.elapsed < frame_time {
             continue;

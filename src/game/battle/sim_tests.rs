@@ -102,11 +102,15 @@ fn simulation(def: &EnemyDef, kind: EncounterKind, chapter: usize, seed: u64) ->
             orb: Handle::default(),
         })
         .insert_resource(Assets::<ColorMaterial>::default())
+        .insert_resource(BattleFeel::default())
+        .insert_resource(crate::game::animation::AnimationHold::default())
         .add_systems(
             Update,
             (
+                feel::advance,
                 battle_input,
                 battle_tick,
+                feel::observe,
                 battle_lessons,
                 sync_battle_automation_view,
             )
@@ -116,10 +120,14 @@ fn simulation(def: &EnemyDef, kind: EncounterKind, chapter: usize, seed: u64) ->
 }
 
 fn step(app: &mut App, intent: Intent) {
+    step_for(app, intent, 1.0 / 30.0);
+}
+
+fn step_for(app: &mut App, intent: Intent, frame_secs: f64) {
     app.insert_resource(intent);
     app.world_mut()
         .resource_mut::<Time>()
-        .advance_by(Duration::from_secs_f64(1.0 / 30.0));
+        .advance_by(Duration::from_secs_f64(frame_secs));
     app.update();
     // Finish hook-generated commands before collecting visual entities. Internal
     // system/observer entities must survive between frames.
@@ -430,6 +438,106 @@ fn real_support_spell_neither_damages_nor_builds_pressure() {
     assert_eq!(state.tactics.pressure, 0);
     assert!(!state.tactics.riposte);
     assert!(state.player_shield > 0);
+}
+
+/// The sword blow resolves at once, but its number, HP drop and hit-stop wait
+/// for the blade, and cost the same real time at every frame rate.
+#[test]
+fn real_sword_hit_lands_on_contact_and_costs_equal_time_at_any_frame_rate() {
+    const SWORD_SECS: f64 = 0.72;
+    const CONTACT_SECS: f64 = 0.72 * 0.30;
+    const NORMAL_STOP_SECS: f64 = 0.045;
+    for frame in [1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0, 0.25] {
+        let mut app = simulation(&ENEMIES[0], EncounterKind::Random, 0, 7);
+        {
+            let mut state = app.world_mut().resource_mut::<BattleState>();
+            state.intent = EnemyIntent::Strike;
+            state.enemy.hp = 500;
+            state.enemy.max_hp = 500;
+            state.menu_index = 0;
+        }
+        step_for(&mut app, Intent::default(), frame);
+        assert_eq!(
+            app.world()
+                .resource::<BattleFeel>()
+                .pending_damage(feel::Target::Enemy),
+            0
+        );
+        let confirm = Intent {
+            confirm: true,
+            ..default()
+        };
+        step_for(&mut app, confirm, frame);
+        let dealt = 500 - app.world().resource::<BattleState>().enemy.hp;
+        assert!(dealt > 0, "the rules resolve on confirm");
+        let mut elapsed = frame;
+        let mut contact_at = None;
+        let mut frozen = 0.0;
+        while app.world().resource::<BattleState>().phase == Phase::PlayerActing {
+            let hidden = app
+                .world()
+                .resource::<BattleFeel>()
+                .pending_damage(feel::Target::Enemy);
+            if contact_at.is_none() {
+                if hidden == 0 {
+                    contact_at = Some(elapsed);
+                } else {
+                    assert_eq!(hidden, dealt, "the HP bar waits for contact");
+                }
+            }
+            step_for(&mut app, Intent::default(), frame);
+            elapsed += frame;
+            frozen += frame - app.world().resource::<BattleFeel>().dt() as f64;
+            assert!(elapsed < 3.0, "{frame}s frames never finished the action");
+        }
+        let contact_at = contact_at.expect("contact fired");
+        assert!(
+            (CONTACT_SECS - 1e-4..=CONTACT_SECS.max(frame) + frame + 1e-4).contains(&contact_at),
+            "{frame}s frames showed contact at {contact_at}"
+        );
+        assert!(
+            (frozen - NORMAL_STOP_SECS).abs() < 1e-4,
+            "{frame}s frames froze {frozen}"
+        );
+        let total = SWORD_SECS + NORMAL_STOP_SECS;
+        assert!(
+            (total - 1e-4..=total + frame + 1e-4).contains(&elapsed),
+            "{frame}s frames took {elapsed}"
+        );
+    }
+}
+
+/// Guarding, a failed cast and a healing item change no HP for the worse,
+/// so they must leave the scene completely still.
+#[test]
+fn real_actions_without_a_hit_produce_no_stop_or_shake() {
+    let mut app = simulation(&ENEMIES[0], EncounterKind::Random, 0, 7);
+    {
+        let mut state = app.world_mut().resource_mut::<BattleState>();
+        state.intent = EnemyIntent::Gather;
+        state.menu_index = 1;
+    }
+    step(&mut app, Intent::default());
+    step(
+        &mut app,
+        Intent {
+            confirm: true,
+            ..default()
+        },
+    );
+    assert!(app.world().resource::<BattleState>().guarding);
+    for _ in 0..90 {
+        let feel = app.world().resource::<BattleFeel>();
+        assert_eq!(feel.pending_damage(feel::Target::Enemy), 0);
+        assert_eq!(feel.pending_damage(feel::Target::Hero), 0);
+        assert_eq!(feel.shake_offset(), Vec2::ZERO);
+        assert!((feel.dt() - 1.0 / 30.0).abs() < 1e-5);
+        if app.world().resource::<BattleState>().phase == Phase::Menu {
+            break;
+        }
+        step(&mut app, Intent::default());
+    }
+    assert!(app.world().resource::<BattleState>().phase == Phase::Menu);
 }
 
 fn finish_round(app: &mut App) {

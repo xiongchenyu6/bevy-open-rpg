@@ -1,12 +1,16 @@
 use bevy::prelude::*;
+use bevy::sprite::Text2dShadow;
 mod enemy_animation;
+mod feel;
 #[cfg(test)]
 mod sim_tests;
 mod tactics;
 mod ui;
+pub(crate) use feel::BattleFeel;
+use feel::{Contact, Target};
 use tactics::{EnemyStyle, StrikeKind, Tactics};
 
-use super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
+use super::animation::{self, AnimationAssets, AnimationClip, AnimationSystems, SpriteAnimation};
 use super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::cutout::{COMPANION_BATTLE_SIZE, companion_cutout_path};
 use super::lighting::{self, LightingAssets};
@@ -420,6 +424,8 @@ struct BattleEffect {
     start_scale: f32,
     end_scale: f32,
     spin: f32,
+    /// Authored sprite alpha, captured on the first visible frame.
+    alpha: Option<f32>,
 }
 
 impl BattleEffect {
@@ -430,7 +436,23 @@ impl BattleEffect {
             start_scale,
             end_scale,
             spin,
+            alpha: None,
         }
+    }
+
+    /// Stays hidden and frozen until `delay` battle-seconds have passed, so
+    /// an impact appears on the contact frame instead of at the command.
+    fn after(mut self, delay: f32) -> (Self, Visibility) {
+        self.age = -delay;
+        (self, delayed_visibility(delay))
+    }
+}
+
+fn delayed_visibility(delay: f32) -> Visibility {
+    if delay > 0.0 {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
     }
 }
 
@@ -484,17 +506,19 @@ struct FloatingCombatText {
     duration: f32,
     velocity: Vec2,
     color: Color,
+    /// Extra scale on the first frames; bigger for critical numbers.
+    pop: f32,
 }
 
-impl FloatingCombatText {
-    fn new(duration: f32, velocity: Vec2, color: Color) -> Self {
-        Self {
-            age: 0.0,
-            duration,
-            velocity,
-            color,
-        }
-    }
+/// One floating battle label. `delay` hides it until the visible contact.
+struct FloatText {
+    label: String,
+    pos: Vec3,
+    color: Color,
+    velocity: Vec2,
+    size: f32,
+    delay: f32,
+    pop: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -569,23 +593,29 @@ pub struct BattlePlugin;
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattleAutomationView>()
-            .add_systems(OnEnter(AppState::Battle), spawn_battle)
+            .init_resource::<BattleFeel>()
+            .add_systems(OnEnter(AppState::Battle), (feel::reset, spawn_battle))
+            .add_systems(OnExit(AppState::Battle), feel::reset)
             .add_systems(
                 Update,
                 (
                     ui::menu_pointer_input,
+                    feel::advance,
                     battle_input,
                     battle_tick,
+                    feel::observe,
                     sync_status_vfx_state,
                     update_tactical_feedback,
                     update_battle_animations,
                     update_battle_effects,
                     update_floating_combat_text,
+                    feel::shake_camera,
                     battle_lessons,
                     ui::update,
                     sync_battle_automation_view,
                 )
                     .chain()
+                    .before(AnimationSystems)
                     .run_if(in_state(AppState::Battle)),
             );
     }
@@ -779,7 +809,7 @@ fn spawn_battle(
         custom_size: Some(Vec2::splat(enemy_primary_size(def))),
         ..default()
     });
-    sprite.color = enemy_primary_color(Phase::Menu, 0.0);
+    sprite.color = enemy_primary_color(Phase::Menu, feel::Pose::REST);
     let enemy_entity = commands
         .spawn((
             BattleEnemy,
@@ -1582,12 +1612,14 @@ fn battle_input(
             if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                 state.message.push_str(&line);
             }
-            spawn_weapon_hit(&mut commands, &anims, &lights, ENEMY_POS);
+            let contact = Contact::of(PlayerAction::Attack, state.tactics.last_hit);
+            spawn_weapon_hit(&mut commands, &anims, &lights, ENEMY_POS, contact.delay);
             spawn_damage_text(
                 &mut commands,
                 &font,
                 ENEMY_POS + Vec3::new(96.0, 72.0, 0.0),
                 dmg,
+                contact,
             );
             if let Some(extra) =
                 sword_sister_followup(&quest, run_ref, &stats, &mut state.enemy, &mut rng)
@@ -1595,12 +1627,14 @@ fn battle_input(
                 state
                     .message
                     .push_str(&format!("\n林月衡 补上一剑，追加 {extra} 点伤害！"));
-                spawn_sword_sister_followup(&mut commands, &anims, &lights);
+                let followup = contact.followup();
+                spawn_sword_sister_followup(&mut commands, &anims, &lights, followup.delay);
                 spawn_damage_text(
                     &mut commands,
                     &font,
                     ENEMY_POS + Vec3::new(144.0, 46.0, 0.0),
                     extra,
+                    followup,
                 );
             }
             state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
@@ -1675,6 +1709,7 @@ fn battle_input(
                     .round() as i32;
                 let dmg = tactical_damage(&mut state, dmg, StrikeKind::Spell);
                 state.enemy.hp -= dmg;
+                let contact = Contact::of(PlayerAction::Spell, state.tactics.last_hit);
                 let spell_element = spell_impact_element(battle_spell_chapter(&quest, run_ref));
                 let flavor = spell_impact_flavor(spell_element, late_spell);
                 state.message = format!("李逍遥 施展{spell_name}，{flavor}，造成 {dmg} 点伤害！");
@@ -1693,16 +1728,32 @@ fn battle_input(
                     state
                         .message
                         .push_str(&format!("\n林月衡 趁势追击，追加 {extra} 点伤害！"));
-                    spawn_sword_sister_followup(&mut commands, &anims, &lights);
+                    let followup = contact.followup();
+                    spawn_sword_sister_followup(&mut commands, &anims, &lights, followup.delay);
                     spawn_damage_text(
                         &mut commands,
                         &font,
                         ENEMY_POS + Vec3::new(150.0, 54.0, 0.0),
                         extra,
+                        followup,
                     );
                 }
-                spawn_spell_impact(&mut commands, &anims, &lights, late_spell, spell_element);
-                spawn_spell_damage_texts(&mut commands, &font, dmg, late_spell, spell_element);
+                spawn_spell_impact(
+                    &mut commands,
+                    &anims,
+                    &lights,
+                    late_spell,
+                    spell_element,
+                    contact.delay,
+                );
+                spawn_spell_damage_texts(
+                    &mut commands,
+                    &font,
+                    dmg,
+                    late_spell,
+                    spell_element,
+                    contact.delay,
+                );
                 state.momentum = (state.momentum + 1).min(MOMENTUM_MAX);
                 start_player_acting(&mut state, PlayerAction::Spell);
             }
@@ -1742,12 +1793,14 @@ fn battle_input(
                 if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                     state.message.push_str(&line);
                 }
-                spawn_combo_impact(&mut commands, &anims, &lights);
+                let contact = Contact::of(PlayerAction::Combo, state.tactics.last_hit);
+                spawn_combo_impact(&mut commands, &anims, &lights, contact.delay);
                 spawn_damage_text(
                     &mut commands,
                     &font,
                     ENEMY_POS + Vec3::new(118.0, 84.0, 0.0),
                     dmg,
+                    contact,
                 );
                 start_player_acting(&mut state, PlayerAction::Combo);
             }
@@ -1780,12 +1833,14 @@ fn battle_input(
                 append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
                 append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
                 spawn_combo_party_casts(&mut commands, &anims, &lights, &quest);
-                spawn_combo_impact(&mut commands, &anims, &lights);
+                let contact = Contact::of(PlayerAction::Combo, state.tactics.last_hit);
+                spawn_combo_impact(&mut commands, &anims, &lights, contact.delay);
                 spawn_damage_text(
                     &mut commands,
                     &font,
                     ENEMY_POS + Vec3::new(118.0, 84.0, 0.0),
                     dmg,
+                    contact,
                 );
                 start_player_acting(&mut state, PlayerAction::Combo);
             }
@@ -1914,16 +1969,20 @@ fn sync_battle_automation_view(
     };
 }
 
-fn start_player_acting(state: &mut BattleState, action: PlayerAction) {
-    state.phase = Phase::PlayerActing;
-    state.phase_duration = match action {
+fn action_duration(action: PlayerAction) -> f32 {
+    match action {
         PlayerAction::Attack => 0.72,
         PlayerAction::Guard => 0.32,
         PlayerAction::Spell => 0.88,
         PlayerAction::Combo => 0.92,
         PlayerAction::Item => 0.40,
         PlayerAction::Flee => 0.45,
-    };
+    }
+}
+
+fn start_player_acting(state: &mut BattleState, action: PlayerAction) {
+    state.phase = Phase::PlayerActing;
+    state.phase_duration = action_duration(action);
     state.timer = state.phase_duration;
     state.player_action = Some(action);
     if matches!(
@@ -2143,6 +2202,7 @@ fn spawn_spell_impact(
     lights: &LightingAssets,
     late_spell: bool,
     element: SpellImpactElement,
+    delay: f32,
 ) {
     let profile = spell_impact_profile(late_spell);
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(profile.core_size));
@@ -2155,13 +2215,14 @@ fn spawn_spell_impact(
 
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
         BattleEffect::new(
             profile.core_duration,
             profile.core_start_scale,
             profile.core_end_scale,
             -0.55,
-        ),
+        )
+        .after(delay),
         Transform::from_xyz(ENEMY_POS.x, ENEMY_POS.y + 4.0, 2.8),
         DespawnOnExit(AppState::Battle),
     ));
@@ -2175,14 +2236,14 @@ fn spawn_spell_impact(
     );
     commands.spawn((
         ring,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
-        BattleEffect::new(profile.ring_duration, 0.20, profile.ring_end_scale, 0.42),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
+        BattleEffect::new(profile.ring_duration, 0.20, profile.ring_end_scale, 0.42).after(delay),
         Transform::from_xyz(ENEMY_POS.x, ENEMY_POS.y + 2.0, 2.55),
         DespawnOnExit(AppState::Battle),
     ));
 
     for shard in themed_spell_impact_shards(late_spell, element) {
-        spawn_spell_impact_shard(commands, anims, shard);
+        spawn_spell_impact_shard(commands, anims, shard, delay);
     }
 
     let flash = lighting::spawn_light(
@@ -2195,13 +2256,14 @@ fn spawn_spell_impact(
     );
     commands
         .entity(flash)
-        .insert(BattleEffect::new(0.40, 0.28, 1.12, 0.0));
+        .insert(BattleEffect::new(0.40, 0.28, 1.12, 0.0).after(delay));
 }
 
 fn spawn_spell_impact_shard(
     commands: &mut Commands,
     anims: &AnimationAssets,
     shard: SpellImpactShard,
+    delay: f32,
 ) {
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, shard.size);
     sprite.color = shard.color;
@@ -2214,13 +2276,14 @@ fn spawn_spell_impact_shard(
 
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
         BattleEffect::new(
             shard.duration,
             shard.start_scale,
             shard.end_scale,
             shard.spin,
-        ),
+        )
+        .after(delay),
         transform,
         DespawnOnExit(AppState::Battle),
     ));
@@ -2328,30 +2391,40 @@ fn spawn_spell_damage_texts(
     total: i32,
     late_spell: bool,
     element: SpellImpactElement,
+    delay: f32,
 ) {
     let color = spell_damage_text_color(element, late_spell);
     for text in spell_damage_texts(total, late_spell) {
         spawn_floating_combat_text(
             commands,
             font,
-            format!("-{}", text.amount),
-            ENEMY_POS + Vec3::new(text.offset.x, text.offset.y, 0.0),
-            color,
-            text.velocity,
-            text.size,
+            FloatText {
+                label: format!("-{}", text.amount),
+                pos: ENEMY_POS + Vec3::new(text.offset.x, text.offset.y, 0.0),
+                color,
+                velocity: text.velocity,
+                size: text.size,
+                delay,
+                pop: DAMAGE_POP,
+            },
         );
     }
 }
 
-fn spawn_combo_impact(commands: &mut Commands, anims: &AnimationAssets, lights: &LightingAssets) {
+fn spawn_combo_impact(
+    commands: &mut Commands,
+    anims: &AnimationAssets,
+    lights: &LightingAssets,
+    delay: f32,
+) {
     let duration = AnimationClip::SkillImpact.duration() + 0.34;
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(360.0));
     sprite.color = Color::srgba(0.96, 0.84, 1.0, 0.98);
 
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
-        BattleEffect::new(duration, 0.82, 1.38, 0.72),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
+        BattleEffect::new(duration, 0.82, 1.38, 0.72).after(delay),
         Transform::from_xyz(ENEMY_POS.x, ENEMY_POS.y + 4.0, 2.9),
         DespawnOnExit(AppState::Battle),
     ));
@@ -2366,7 +2439,7 @@ fn spawn_combo_impact(commands: &mut Commands, anims: &AnimationAssets, lights: 
     );
     commands
         .entity(flash)
-        .insert(BattleEffect::new(0.42, 0.34, 1.18, 0.0));
+        .insert(BattleEffect::new(0.42, 0.34, 1.18, 0.0).after(delay));
 }
 
 fn spawn_combo_party_casts(
@@ -2447,13 +2520,14 @@ fn spawn_sword_sister_followup(
     commands: &mut Commands,
     anims: &AnimationAssets,
     lights: &LightingAssets,
+    delay: f32,
 ) {
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(205.0));
     sprite.color = Color::srgba(1.0, 0.36, 0.25, 0.90);
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
-        BattleEffect::new(0.34, 0.46, 1.08, 1.15),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
+        BattleEffect::new(0.34, 0.46, 1.08, 1.15).after(delay),
         Transform::from_xyz(ENEMY_POS.x - 22.0, ENEMY_POS.y + 24.0, 2.85),
         DespawnOnExit(AppState::Battle),
     ));
@@ -2468,7 +2542,7 @@ fn spawn_sword_sister_followup(
     );
     commands
         .entity(flash)
-        .insert(BattleEffect::new(0.28, 0.28, 0.90, 0.0));
+        .insert(BattleEffect::new(0.28, 0.28, 0.90, 0.0).after(delay));
 }
 
 fn spawn_linger_support_aura(
@@ -2551,13 +2625,14 @@ fn spawn_weapon_hit(
     anims: &AnimationAssets,
     lights: &LightingAssets,
     pos: Vec3,
+    delay: f32,
 ) {
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(145.0));
     sprite.color = Color::srgba(1.0, 0.94, 0.64, 0.78);
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
-        BattleEffect::new(0.34, 0.45, 0.86, -0.9),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
+        BattleEffect::new(0.34, 0.45, 0.86, -0.9).after(delay),
         Transform::from_xyz(pos.x, pos.y + 8.0, 2.7),
         DespawnOnExit(AppState::Battle),
     ));
@@ -2572,7 +2647,7 @@ fn spawn_weapon_hit(
     );
     commands
         .entity(flash)
-        .insert(BattleEffect::new(0.24, 0.30, 0.72, 0.0));
+        .insert(BattleEffect::new(0.24, 0.30, 0.72, 0.0).after(delay));
 }
 
 fn spawn_enemy_strike_impact(
@@ -2580,6 +2655,7 @@ fn spawn_enemy_strike_impact(
     anims: &AnimationAssets,
     lights: &LightingAssets,
     strong: bool,
+    delay: f32,
 ) {
     let size = if strong { 230.0 } else { 175.0 };
     let mut sprite = anims.sprite(AnimationClip::SkillImpact, Vec2::splat(size));
@@ -2590,8 +2666,8 @@ fn spawn_enemy_strike_impact(
     };
     commands.spawn((
         sprite,
-        SpriteAnimation::once(AnimationClip::SkillImpact),
-        BattleEffect::new(0.38, 0.50, 1.0, 0.82),
+        SpriteAnimation::once(AnimationClip::SkillImpact).delayed(delay),
+        BattleEffect::new(0.38, 0.50, 1.0, 0.82).after(delay),
         Transform::from_xyz(HERO_POS.x + 22.0, HERO_POS.y + 58.0, 2.75),
         DespawnOnExit(AppState::Battle),
     ));
@@ -2610,48 +2686,79 @@ fn spawn_enemy_strike_impact(
     );
     commands
         .entity(flash)
-        .insert(BattleEffect::new(0.30, 0.32, 0.94, 0.0));
+        .insert(BattleEffect::new(0.30, 0.32, 0.94, 0.0).after(delay));
 }
 
-fn spawn_damage_text(commands: &mut Commands, font: &GameFont, pos: Vec3, amount: i32) {
-    spawn_floating_combat_text(
-        commands,
-        font,
-        format!("-{amount}"),
-        pos,
-        Color::srgb(1.0, 0.42, 0.30),
-        Vec2::new(8.0, 78.0),
-        36.0,
-    );
+const DAMAGE_POP: f32 = 0.45;
+const CRIT_POP: f32 = 0.95;
+
+/// Damage number shown at `contact`: critical blows are larger, gold and
+/// punctuated so they read apart from ordinary hits at a glance.
+fn spawn_damage_text(
+    commands: &mut Commands,
+    font: &GameFont,
+    pos: Vec3,
+    amount: i32,
+    contact: Contact,
+) {
+    let text = if contact.crit {
+        FloatText {
+            label: format!("{amount}!"),
+            pos,
+            color: Color::srgb(1.0, 0.86, 0.30),
+            velocity: Vec2::new(10.0, 64.0),
+            size: 52.0,
+            delay: contact.delay,
+            pop: CRIT_POP,
+        }
+    } else {
+        FloatText {
+            label: format!("-{amount}"),
+            pos,
+            color: Color::srgb(1.0, 0.42, 0.30),
+            velocity: Vec2::new(8.0, 78.0),
+            size: 36.0,
+            delay: contact.delay,
+            pop: DAMAGE_POP,
+        }
+    };
+    spawn_floating_combat_text(commands, font, text);
 }
 
 fn spawn_heal_text(commands: &mut Commands, font: &GameFont, pos: Vec3, amount: i32) {
     spawn_floating_combat_text(
         commands,
         font,
-        format!("+{amount}"),
-        pos,
-        Color::srgb(0.48, 1.0, 0.62),
-        Vec2::new(-4.0, 70.0),
-        30.0,
+        FloatText {
+            label: format!("+{amount}"),
+            pos,
+            color: Color::srgb(0.48, 1.0, 0.62),
+            velocity: Vec2::new(-4.0, 70.0),
+            size: 30.0,
+            delay: 0.0,
+            pop: 0.0,
+        },
     );
 }
 
-fn spawn_floating_combat_text(
-    commands: &mut Commands,
-    font: &GameFont,
-    label: String,
-    pos: Vec3,
-    color: Color,
-    velocity: Vec2,
-    size: f32,
-) {
+fn spawn_floating_combat_text(commands: &mut Commands, font: &GameFont, text: FloatText) {
     commands.spawn((
-        FloatingCombatText::new(0.92, velocity, color),
-        Text2d::new(label),
-        font.text_font(size),
-        TextColor(color),
-        Transform::from_xyz(pos.x, pos.y, 4.2),
+        FloatingCombatText {
+            age: -text.delay,
+            duration: 0.92,
+            velocity: text.velocity,
+            color: text.color,
+            pop: text.pop,
+        },
+        Text2d::new(text.label),
+        font.text_font(text.size),
+        TextColor(text.color),
+        Text2dShadow {
+            offset: Vec2::new(2.0, -2.0),
+            color: Color::srgba(0.04, 0.02, 0.02, 0.85),
+        },
+        Transform::from_xyz(text.pos.x, text.pos.y, 4.2),
+        delayed_visibility(text.delay),
         DespawnOnExit(AppState::Battle),
     ));
 }
@@ -2662,7 +2769,7 @@ fn spawn_floating_combat_text(
 
 fn battle_tick(
     mut commands: Commands,
-    time: Res<Time>,
+    feel: Res<BattleFeel>,
     font: Res<GameFont>,
     anims: Res<AnimationAssets>,
     lights: Res<LightingAssets>,
@@ -2680,7 +2787,8 @@ fn battle_tick(
         return;
     }
 
-    state.timer -= time.delta_secs();
+    // Hit-stop freezes the phase clock, so actors hold on the contact frame.
+    state.timer -= feel.dt();
     if state.timer > 0.0 {
         return;
     }
@@ -2830,6 +2938,7 @@ fn battle_tick(
                     &vfx_assets,
                     &mut color_materials,
                     turn,
+                    state.phase_duration * feel::ENEMY_CONTACT_FRACTION,
                 );
             }
         }
@@ -2947,6 +3056,7 @@ fn spawn_enemy_turn_result_vfx(
     vfx_assets: &SkillVfxAssets,
     color_materials: &mut Assets<ColorMaterial>,
     result: EnemyTurnResult,
+    contact_delay: f32,
 ) {
     if result.poison_damage > 0 {
         skill_vfx::spawn_status_burst(
@@ -2960,11 +3070,15 @@ fn spawn_enemy_turn_result_vfx(
         spawn_floating_combat_text(
             commands,
             font,
-            format!("毒 -{}", result.poison_damage),
-            ENEMY_POS + Vec3::new(82.0, 98.0, 0.0),
-            Color::srgb(0.56, 1.0, 0.22),
-            Vec2::new(8.0, 84.0),
-            31.0,
+            FloatText {
+                label: format!("毒 -{}", result.poison_damage),
+                pos: ENEMY_POS + Vec3::new(82.0, 98.0, 0.0),
+                color: Color::srgb(0.56, 1.0, 0.22),
+                velocity: Vec2::new(8.0, 84.0),
+                size: 31.0,
+                delay: 0.0,
+                pop: DAMAGE_POP,
+            },
         );
     }
     if result.burn_damage > 0 {
@@ -2979,11 +3093,15 @@ fn spawn_enemy_turn_result_vfx(
         spawn_floating_combat_text(
             commands,
             font,
-            format!("火 -{}", result.burn_damage),
-            ENEMY_POS + Vec3::new(118.0, 72.0, 0.0),
-            Color::srgb(1.0, 0.48, 0.10),
-            Vec2::new(-5.0, 88.0),
-            31.0,
+            FloatText {
+                label: format!("火 -{}", result.burn_damage),
+                pos: ENEMY_POS + Vec3::new(118.0, 72.0, 0.0),
+                color: Color::srgb(1.0, 0.48, 0.10),
+                velocity: Vec2::new(-5.0, 88.0),
+                size: 31.0,
+                delay: 0.0,
+                pop: DAMAGE_POP,
+            },
         );
     }
     if let Some(control) = result.control {
@@ -2999,12 +3117,13 @@ fn spawn_enemy_turn_result_vfx(
     if let Some(attack) = result.attack
         && attack.damage > 0
     {
-        spawn_enemy_strike_impact(commands, anims, lights, attack.strong);
+        spawn_enemy_strike_impact(commands, anims, lights, attack.strong, contact_delay);
         spawn_damage_text(
             commands,
             font,
             HERO_POS + Vec3::new(34.0, 116.0, 0.0),
             attack.damage,
+            Contact::at(contact_delay),
         );
     }
 }
@@ -4057,29 +4176,37 @@ fn update_tactical_feedback(
         spawn_floating_combat_text(
             &mut commands,
             &font,
-            "破势！".into(),
-            ENEMY_POS + Vec3::new(-32.0, 100.0, 3.0),
-            super::ui::GOLD,
-            Vec2::new(0.0, 55.0),
-            38.0,
+            FloatText {
+                label: "破势！".into(),
+                pos: ENEMY_POS + Vec3::new(-32.0, 100.0, 3.0),
+                color: super::ui::GOLD,
+                velocity: Vec2::new(0.0, 55.0),
+                size: 38.0,
+                delay: state.player_action.map_or(0.0, feel::contact_delay),
+                pop: CRIT_POP,
+            },
         );
     }
     if state.tactics.counters > seen.1 {
         spawn_floating_combat_text(
             &mut commands,
             &font,
-            "反击就绪".into(),
-            HERO_POS + Vec3::new(0.0, 80.0, 3.0),
-            super::ui::GOLD,
-            Vec2::new(0.0, 45.0),
-            26.0,
+            FloatText {
+                label: "反击就绪".into(),
+                pos: HERO_POS + Vec3::new(0.0, 80.0, 3.0),
+                color: super::ui::GOLD,
+                velocity: Vec2::new(0.0, 45.0),
+                size: 26.0,
+                delay: 0.0,
+                pop: 0.0,
+            },
         );
     }
     *seen = (state.tactics.breaks, state.tactics.counters);
 }
 
 fn update_battle_animations(
-    time: Res<Time>,
+    feel: Res<BattleFeel>,
     state: Res<BattleState>,
     anims: Res<AnimationAssets>,
     mut hero: Query<
@@ -4132,36 +4259,21 @@ fn update_battle_animations(
                 Some(PlayerAction::Attack | PlayerAction::Combo)
             );
         let p = phase_progress(state.timer, state.phase_duration);
-        let contact = ENEMY_POS.x - HERO_POS.x - 120.0;
-        let step = if attacking {
-            if p < 0.12 {
-                -10.0 * (p / 0.12)
-            } else if p < 0.30 {
-                -10.0 + (contact + 10.0) * ((p - 0.12) / 0.18)
-            } else if p < 0.68 {
-                contact
-            } else {
-                contact * ((1.0 - p) / 0.32)
-            }
-        } else {
-            0.0
-        };
-        let recoil = if state.phase == Phase::EnemyActing && state.enemy_attacked {
-            (phase_progress(state.timer, state.phase_duration) * std::f32::consts::PI).sin()
-        } else {
-            0.0
-        };
-        transform.translation.x = HERO_POS.x + step - recoil * 20.0;
+        let step = if attacking { hero_attack_step(p) } else { 0.0 };
+        // Struck only on the enemy's contact frame, pushed away from it.
+        let pose = feel.pose(Target::Hero);
+        transform.translation.x = HERO_POS.x + step - pose.recoil * 0.8;
         transform.translation.y = HERO_POS.y;
-        sprite.color = if recoil > 0.0 && state.tactics.riposte {
+        transform.scale = pose.squash.extend(1.0);
+        sprite.color = if pose.hurt > 0.0 && state.tactics.riposte {
             Color::srgb(1.0, 0.94, 0.72)
         } else {
-            Color::srgb(1.0, 1.0 - recoil * 0.35, 1.0 - recoil * 0.35)
+            hit_tint(pose, 1.0)
         };
     }
 
     for (mut companion, mut transform, mut sprite) in &mut companions {
-        companion.age += time.delta_secs();
+        companion.age += feel.dt();
         let visual_phase = if (state.phase == Phase::EnemyActing && !state.enemy_attacked)
             || (state.phase == Phase::PlayerActing && state.tactics.last_hit.damage == 0)
         {
@@ -4190,31 +4302,57 @@ fn update_battle_animations(
     }
 
     if let Ok((mut transform, mut motion, mut sprite, atlas)) = enemy.single_mut() {
-        motion.age += time.delta_secs();
+        motion.age += feel.dt();
         let breath = (motion.age * 2.0).sin();
-        let visual_phase = if (state.phase == Phase::EnemyActing && !state.enemy_attacked)
-            || (state.phase == Phase::PlayerActing && state.tactics.last_hit.damage == 0)
-        {
+        let visual_phase = if state.phase == Phase::EnemyActing && !state.enemy_attacked {
             Phase::Menu
         } else {
             state.phase
         };
-        let normalized_timer = (state.timer / state.phase_duration.max(0.001))
-            * if visual_phase == Phase::EnemyActing {
-                0.9
-            } else {
-                0.8
-            };
-        let (x, y, scale, hit) =
-            enemy_phase_motion(visual_phase, state.player_action, normalized_timer);
-        transform.translation.x = motion.origin.x + x;
-        transform.translation.y = motion.origin.y + y;
-        transform.scale = Vec3::new(scale, scale + breath * 0.008, 1.0);
-        sprite.color = enemy_primary_color(state.phase, hit);
+        let p = phase_progress(state.timer, state.phase_duration.max(0.001));
+        let (x, y, scale) = enemy_phase_motion(visual_phase, p);
+        // The hit reaction starts on the visible contact, never at the command.
+        let pose = feel.pose(Target::Enemy);
+        transform.translation.x = motion.origin.x + x + pose.recoil;
+        transform.translation.y = motion.origin.y + y + pose.recoil * 0.15;
+        transform.scale = Vec3::new(
+            scale * pose.squash.x,
+            (scale + breath * 0.008) * pose.squash.y,
+            1.0,
+        );
+        sprite.color = enemy_primary_color(state.phase, pose);
         if atlas.is_some() {
-            enemy_animation::update(&mut sprite, &state, motion.age);
+            enemy_animation::update(
+                &mut sprite,
+                &state,
+                motion.age,
+                feel.reaction_progress(Target::Enemy),
+            );
         }
     }
+}
+
+/// Hero sword step: anticipation, lunge to the contact frame, hold, recovery.
+fn hero_attack_step(p: f32) -> f32 {
+    let reach = ENEMY_POS.x - HERO_POS.x - 120.0;
+    let contact = feel::ATTACK_CONTACT_FRACTION;
+    if p < 0.12 {
+        -10.0 * (p / 0.12)
+    } else if p < contact {
+        -10.0 + (reach + 10.0) * ((p - 0.12) / (contact - 0.12))
+    } else if p < 0.68 {
+        reach
+    } else {
+        reach * ((1.0 - p) / 0.32)
+    }
+}
+
+/// Brightness pop on the contact frame, then a red tint that fades with the
+/// recoil. Channels above 1.0 brighten the sprite's own texture.
+fn hit_tint(pose: feel::Pose, alpha: f32) -> Color {
+    let flash = pose.flash * 1.6;
+    let hurt = pose.hurt * (1.0 - pose.flash) * 0.38;
+    Color::srgba(1.0 + flash, 1.0 + flash - hurt, 1.0 + flash - hurt, alpha)
 }
 
 fn enemy_primary_image(def: &EnemyDef) -> &'static str {
@@ -4225,49 +4363,25 @@ fn enemy_primary_size(def: &EnemyDef) -> f32 {
     def.size
 }
 
-fn enemy_phase_motion(
-    phase: Phase,
-    action: Option<PlayerAction>,
-    timer: f32,
-) -> (f32, f32, f32, f32) {
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut scale = 1.0;
-    let mut hit = 0.0;
-
+/// Enemy body motion for its own turn: a short coil back, a fast lunge that
+/// peaks on the contact frame, then an eased recovery. `p` is phase progress.
+fn enemy_phase_motion(phase: Phase, p: f32) -> (f32, f32, f32) {
     match phase {
         Phase::EnemyActing => {
-            let p = phase_progress(timer, 0.9);
-            let lunge = (std::f32::consts::PI * p).sin();
-            x -= 42.0 * lunge;
-            y -= 7.0 * lunge;
-            scale += 0.08 * lunge;
-        }
-        Phase::PlayerActing => {
-            let p = phase_progress(timer, 0.8);
-            hit = (std::f32::consts::PI * p).sin();
-            let impact = match action {
-                Some(PlayerAction::Spell) => 1.42,
-                Some(PlayerAction::Combo) => 1.56,
-                _ => 1.0,
-            };
-            let shake = if matches!(action, Some(PlayerAction::Spell | PlayerAction::Combo)) {
-                (p * std::f32::consts::TAU * 3.0).sin() * 5.0
+            let contact = feel::ENEMY_CONTACT_FRACTION;
+            let lunge = if p < 0.22 {
+                -0.22 * (std::f32::consts::PI * p / 0.22).sin()
+            } else if p < contact {
+                1.0 - (1.0 - (p - 0.22) / (contact - 0.22)).powi(3)
             } else {
-                0.0
+                let back = (p - contact) / (1.0 - contact);
+                1.0 - back * back * (3.0 - 2.0 * back)
             };
-            x += 18.0 * hit * impact + shake;
-            y += 3.0 * hit * impact;
-            scale -= 0.045 * hit * impact;
+            (-46.0 * lunge, -7.0 * lunge, 1.0 + 0.08 * lunge)
         }
-        Phase::Won => {
-            y -= 10.0;
-            scale = 0.93;
-        }
-        Phase::Menu | Phase::Lost | Phase::Fled => {}
+        Phase::Won => (0.0, -10.0, 0.93),
+        Phase::Menu | Phase::PlayerActing | Phase::Lost | Phase::Fled => (0.0, 0.0, 1.0),
     }
-
-    (x, y, scale.max(0.82), hit)
 }
 
 fn companion_motion(
@@ -4357,38 +4471,55 @@ fn phase_progress(timer: f32, duration: f32) -> f32 {
     (1.0 - timer / duration).clamp(0.0, 1.0)
 }
 
-fn enemy_primary_color(phase: Phase, hit: f32) -> Color {
+fn enemy_primary_color(phase: Phase, pose: feel::Pose) -> Color {
     match phase {
-        Phase::PlayerActing if hit > 0.48 => Color::srgba(1.0, 0.72, 0.72, 0.98),
-        Phase::EnemyActing => Color::srgba(1.0, 0.96, 0.86, 1.0),
         Phase::Won => Color::srgba(0.70, 0.78, 0.92, 0.34),
+        _ if pose.flash > 0.0 || pose.hurt > 0.0 => hit_tint(pose, 0.98),
+        Phase::EnemyActing => Color::srgba(1.0, 0.96, 0.86, 1.0),
         _ => Color::srgba(1.0, 1.0, 1.0, 0.98),
     }
 }
 
+/// The clock stops exactly on the contact, so a delayed effect can sit a
+/// rounding error short of zero; it must still appear before the hit-stop.
+const CONTACT_EPSILON_SECS: f32 = 1e-4;
+
 fn update_battle_effects(
-    time: Res<Time>,
+    feel: Res<BattleFeel>,
     mut commands: Commands,
-    mut effects: Query<(Entity, &mut BattleEffect, &mut Sprite, &mut Transform)>,
+    mut effects: Query<(
+        Entity,
+        &mut BattleEffect,
+        &mut Sprite,
+        &mut Transform,
+        &mut Visibility,
+    )>,
 ) {
-    for (entity, mut effect, mut sprite, mut transform) in &mut effects {
-        effect.age += time.delta_secs();
+    let dt = feel.dt();
+    for (entity, mut effect, mut sprite, mut transform, mut visibility) in &mut effects {
+        effect.age += dt;
+        if effect.age < -CONTACT_EPSILON_SECS {
+            continue;
+        }
+        effect.age = effect.age.max(0.0);
+        visibility.set_if_neq(Visibility::Inherited);
         let p = (effect.age / effect.duration).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - p).powi(3);
 
         transform.scale = Vec3::splat(effect.start_scale.lerp(effect.end_scale, eased));
         if effect.spin != 0.0 {
-            transform.rotate_z(effect.spin * time.delta_secs());
+            transform.rotate_z(effect.spin * dt);
         }
 
-        let mut srgba = sprite.color.to_srgba();
+        // Fade from the authored alpha; multiplying the live value every
+        // frame made effects vanish sooner at higher frame rates.
+        let base = *effect.alpha.get_or_insert(sprite.color.alpha());
         let fade = if p < 0.68 {
             1.0
         } else {
             1.0 - ((p - 0.68) / 0.32).clamp(0.0, 1.0)
         };
-        srgba.alpha *= fade;
-        sprite.color = Color::Srgba(srgba);
+        sprite.color.set_alpha(base * fade);
 
         if effect.age >= effect.duration {
             commands.entity(entity).despawn();
@@ -4397,30 +4528,43 @@ fn update_battle_effects(
 }
 
 fn update_floating_combat_text(
-    time: Res<Time>,
+    feel: Res<BattleFeel>,
     mut commands: Commands,
     mut texts: Query<(
         Entity,
         &mut FloatingCombatText,
         &mut Transform,
         &mut TextColor,
+        &mut Text2dShadow,
+        &mut Visibility,
     )>,
 ) {
-    for (entity, mut floating, mut transform, mut color) in &mut texts {
-        let dt = time.delta_secs();
+    let dt = feel.dt();
+    for (entity, mut floating, mut transform, mut color, mut shadow, mut visibility) in &mut texts {
         floating.age += dt;
+        if floating.age < -CONTACT_EPSILON_SECS {
+            continue;
+        }
+        floating.age = floating.age.max(0.0);
+        visibility.set_if_neq(Visibility::Inherited);
         transform.translation.x += floating.velocity.x * dt;
         transform.translation.y += floating.velocity.y * dt;
+        transform.scale = Vec3::splat(float_text_scale(floating.pop, floating.age));
 
         let p = (floating.age / floating.duration).clamp(0.0, 1.0);
-        let mut srgba = floating.color.to_srgba();
-        srgba.alpha *= 1.0 - p.powi(2);
-        *color = TextColor(Color::Srgba(srgba));
+        let fade = 1.0 - p.powi(2);
+        *color = TextColor(floating.color.with_alpha(floating.color.alpha() * fade));
+        shadow.color.set_alpha(0.85 * fade);
 
         if floating.age >= floating.duration {
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// Numbers appear oversized on the contact frame and settle within 0.16s.
+fn float_text_scale(pop: f32, age: f32) -> f32 {
+    1.0 + pop * (1.0 - age / 0.16).clamp(0.0, 1.0).powi(2)
 }
 
 // ---------------------------------------------------------------------------
@@ -4488,6 +4632,21 @@ fn skill_hit_damage(state: &mut BattleState, run: &RunState, raw: i32, kind: Str
     tactical_damage(state, damage, kind)
 }
 
+fn spawn_skill_damage_text(
+    commands: &mut Commands,
+    font: &GameFont,
+    state: &BattleState,
+    amount: i32,
+) {
+    spawn_damage_text(
+        commands,
+        font,
+        ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
+        amount,
+        Contact::of(PlayerAction::Spell, state.tactics.last_hit),
+    );
+}
+
 /// 施放一式技能:扣灵、结算、叠气势。返回 false 表示灵力不足未施放。
 #[allow(clippy::too_many_arguments)]
 fn cast_skill(
@@ -4527,14 +4686,14 @@ fn cast_skill(
             let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.message = format!("「{name}」剑气迸发,造成 {dmg} 点元素伤害!");
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
         }
         SkillKind::Corrode => {
             let dmg = (base - state.enemy.def / 3).max(2);
             let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.message = format!("「{name}」蚀入妖躯,造成 {dmg} 点伤害!");
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
         }
         SkillKind::Bind => {
             let dmg = (base - state.enemy.def / 3).max(2);
@@ -4542,7 +4701,7 @@ fn cast_skill(
             state.enemy.hp -= dmg;
             state.enemy.def = (state.enemy.def - 3).max(0);
             state.message = format!("「{name}」缠住妖物,造成 {dmg} 点伤害并削去 3 点防御!");
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
         }
         SkillKind::Drain => {
             let dmg = (base - state.enemy.def / 2).max(2);
@@ -4551,7 +4710,7 @@ fn cast_skill(
             let heal = (dmg / 2).min(stats.max_hp - stats.hp).max(0);
             stats.hp += heal;
             state.message = format!("「{name}」摄取精魄,造成 {dmg} 点伤害,吸回 {heal} 点气血!");
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
             if heal > 0 {
                 spawn_heal_text(commands, font, HERO_POS + Vec3::new(10.0, 100.0, 0.0), heal);
             }
@@ -4565,12 +4724,7 @@ fn cast_skill(
             let total = skill_hit_damage(state, run, total, strike_kind);
             state.enemy.hp -= total;
             state.message = format!("「{name}」连绵 {hits} 段,共造成 {total} 点伤害!");
-            spawn_damage_text(
-                commands,
-                font,
-                ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
-                total,
-            );
+            spawn_skill_damage_text(commands, font, state, total);
         }
         SkillKind::Ward => {
             state.tactics.wait();
@@ -4591,7 +4745,7 @@ fn cast_skill(
             let dmg = skill_hit_damage(state, run, dmg, strike_kind);
             state.enemy.hp -= dmg;
             state.message = format!("「{name}」轰然震荡,造成 {dmg} 点伤害!");
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
         }
         SkillKind::Execute => {
             let low = state.enemy.hp * 10 < state.enemy.max_hp * 3;
@@ -4606,7 +4760,7 @@ fn cast_skill(
             } else {
                 format!("「{name}」落下,造成 {dmg} 点伤害。")
             };
-            spawn_damage_text(commands, font, ENEMY_POS + Vec3::new(104.0, 76.0, 0.0), dmg);
+            spawn_skill_damage_text(commands, font, state, dmg);
         }
     }
     if !matches!(def.kind, SkillKind::Ward | SkillKind::Mend) {
@@ -5271,7 +5425,9 @@ mod tests {
         let enemy = &ENEMIES[0];
         assert_eq!(enemy_primary_image(enemy), "creatures/ai_water_serpent.png");
         assert_eq!(enemy_primary_size(enemy), enemy.size);
-        let primary_alpha = enemy_primary_color(Phase::Menu, 0.0).to_srgba().alpha;
+        let primary_alpha = enemy_primary_color(Phase::Menu, feel::Pose::REST)
+            .to_srgba()
+            .alpha;
         assert!(primary_alpha > 0.9);
     }
 
@@ -5351,17 +5507,6 @@ mod tests {
         let dream_number = spell_damage_text_color(SpellImpactElement::Dream, true).to_srgba();
         assert!(dream_number.alpha > 0.9);
         assert!(dream_number.blue >= dream_number.red);
-    }
-
-    #[test]
-    fn spell_action_hits_enemy_harder_than_basic_attack_motion() {
-        let attack = enemy_phase_motion(Phase::PlayerActing, Some(PlayerAction::Attack), 0.4);
-        let spell = enemy_phase_motion(Phase::PlayerActing, Some(PlayerAction::Spell), 0.4);
-
-        assert!(spell.0 > attack.0);
-        assert!(spell.1 > attack.1);
-        assert!(spell.2 < attack.2);
-        assert!(spell.3 >= attack.3);
     }
 
     #[test]
