@@ -346,6 +346,9 @@ grid in `RunSceneState` and draw `RunFogTile` overlays from `scene.rs`.
 
 - `game/ui.rs` owns the ink/gold palette, panel chrome, clipped vital bars,
   soft contact shadows and automatic `UiScale` for the camera viewport.
+  `ui::Tooltip` on a node with `Interaction` names an icon-only element in one
+  shared panel while it is hovered or pressed; `ui::vignette` is the
+  screen-edge darkening used by the run map and battle.
 - `game/battle/ui.rs` owns enemy health/intent, compact party vitals, contextual
   action descriptions and six keyboard/mouse command cards. `SkillPage` retains
   the current five-spell page when Return is selected; pointer page controls

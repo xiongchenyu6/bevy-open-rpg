@@ -2,7 +2,7 @@ from PIL import Image, ImageDraw
 from pathlib import Path
 out=Path('assets/ui/icons')
 S=4
-for name in ['attack','guard','spell','combo','item','flee']:
+for name in ['attack','guard','spell','combo','item','flee','health','spirit','coin']:
     im=Image.new('RGBA',(64*S,64*S)); d=ImageDraw.Draw(im)
     gold=(225,195,135,255); pale=(242,232,204,255)
     def line(p,c=gold,w=3): d.line([(x*S,y*S) for x,y in p],fill=c,width=w*S,joint='curve')
@@ -18,6 +18,12 @@ for name in ['attack','guard','spell','combo','item','flee']:
         poly([(36,8),(20,34),(31,34),(25,56),(46,27),(34,27)]); line([(13,19),(8,27)],w=2); line([(51,40),(56,32)],w=2)
     elif name=='item':
         line([(25,11),(39,11)],w=4); line([(26,15),(26,25),(16,36),(16,49),(22,55),(42,55),(48,49),(48,36),(38,25),(38,15)],w=3); line([(20,40),(44,40)],w=2); line([(32,33),(32,49)],pale); line([(25,41),(39,41)],pale)
+    elif name=='health':
+        line([(32,53),(12,32),(10,22),(15,14),(23,12),(32,20),(41,12),(49,14),(54,22),(52,32),(32,53)],w=3); poly([(32,27),(39,33),(32,42),(25,33)])
+    elif name=='spirit':
+        line([(32,8),(46,30),(48,40),(42,50),(32,54),(22,50),(16,40),(18,30),(32,8)],w=3); poly([(32,27),(38,39),(32,47),(26,39)])
+    elif name=='coin':
+        ellipse((9,9,55,55),w=3); line([(25,25),(39,25),(39,39),(25,39),(25,25)],pale,w=3)
     else:
         line([(28,10),(15,10),(15,54),(28,54)]); line([(25,32),(55,32)],pale); line([(45,21),(56,32),(45,43)],pale); line([(20,16),(28,20),(28,47),(20,50)],w=2)
     im.resize((64,64),Image.Resampling.LANCZOS).save(out/f'{name}.png')
@@ -48,3 +54,11 @@ d.polygon([(92,3),(165,245),(112,214)],fill=(91,143,184,130))
 d.line([(92,8),(92,230),(27,240)],fill=(255,255,255,230),width=3)
 d.line([(92,144),(65,174),(87,213)],fill=(225,245,255,160),width=2)
 im.save('assets/effects/spell-shard.png')
+# Screen-edge vignette: transparent centre, ink corners; stretched over the view.
+im=Image.new('RGBA',(256,144)); pix=im.load()
+for y in range(144):
+    for x in range(256):
+        r=math.hypot((x-127.5)/127.5,(y-71.5)/71.5)/math.sqrt(2)
+        t=max(0,min(1,(r-.52)/.48))
+        pix[x,y]=(6,9,14,int(150*t*t*(3-2*t)))
+im.save('assets/effects/vignette.png')

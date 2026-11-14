@@ -96,3 +96,79 @@ pub fn follow_contact_shadows(
         }
     }
 }
+
+/// Explains an icon-only element while the pointer rests on it or it is held
+/// down (a press is how touch screens ask). Needs an `Interaction` on the node.
+#[derive(Component)]
+pub struct Tooltip(pub &'static str);
+
+#[derive(Component)]
+pub struct TooltipPanel;
+
+#[derive(Component)]
+pub struct TooltipText;
+
+/// Shows the one shared tooltip panel just under whichever element asks for it.
+pub fn show_tooltips(
+    mut commands: Commands,
+    font: Option<Res<super::core::GameFont>>,
+    targets: Query<(&Interaction, &Tooltip, &ComputedNode, &UiGlobalTransform)>,
+    mut panels: Query<(&mut Node, &mut Visibility), With<TooltipPanel>>,
+    mut texts: Query<&mut Text, With<TooltipText>>,
+) {
+    let Some(font) = font else { return };
+    let Ok((mut node, mut visibility)) = panels.single_mut() else {
+        commands
+            .spawn((
+                TooltipPanel,
+                panel(Node {
+                    position_type: PositionType::Absolute,
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    max_width: Val::Px(280.0),
+                    ..default()
+                }),
+                GlobalZIndex(200),
+                Visibility::Hidden,
+            ))
+            .with_child((
+                TooltipText,
+                Text::new(""),
+                font.text_font(14.0),
+                TextColor(TEXT),
+            ));
+        return;
+    };
+    let asking = targets
+        .iter()
+        .find(|(interaction, ..)| **interaction != Interaction::None);
+    let Some((_, tooltip, computed, transform)) = asking else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+    let to_px = computed.inverse_scale_factor();
+    let half = computed.size() * 0.5;
+    node.left = Val::Px((transform.translation.x - half.x) * to_px);
+    node.top = Val::Px((transform.translation.y + half.y) * to_px + 6.0);
+    *visibility = Visibility::Visible;
+    if let Ok(mut text) = texts.single_mut()
+        && text.0 != tooltip.0
+    {
+        text.0 = tooltip.0.into();
+    }
+}
+
+/// Darkens the corners of the view so the eye settles on the play area. It
+/// sits under every panel and never takes input.
+pub fn vignette(assets: &AssetServer, state: super::state::AppState) -> impl Bundle {
+    (
+        ImageNode::new(assets.load("effects/vignette.png")),
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        GlobalZIndex(-1),
+        DespawnOnExit(state),
+    )
+}

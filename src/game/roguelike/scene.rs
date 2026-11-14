@@ -220,11 +220,14 @@ pub struct HudHpFill;
 #[derive(Component)]
 pub struct HudMpFill;
 
-#[derive(Component)]
-pub struct HudSubText;
-
-#[derive(Component)]
-pub struct HudVitalsText;
+/// One number on the vitals panel; its icon carries the meaning.
+#[derive(Component, Clone, Copy)]
+pub enum HudStat {
+    Hp,
+    Mp,
+    Potions,
+    Gold,
+}
 
 #[derive(Component)]
 pub struct MapHudRoot;
@@ -672,6 +675,46 @@ fn reveal_run_fog(scene: &mut RunSceneState) -> bool {
         }
     }
     changed
+}
+
+/// An icon and its number; the name of the stat lives in the tooltip.
+fn stat_chip(
+    row: &mut ChildSpawnerCommands,
+    assets: &AssetServer,
+    font: &GameFont,
+    stat: HudStat,
+    icon: &str,
+    tip: &'static str,
+) {
+    row.spawn((
+        Node {
+            column_gap: Val::Px(5.0),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        Interaction::None,
+        theme::Tooltip(tip),
+    ))
+    .with_children(|chip| {
+        chip.spawn((
+            ImageNode::new(assets.load(format!("ui/icons/{icon}.png"))),
+            Node {
+                width: Val::Px(20.0),
+                height: Val::Px(20.0),
+                ..default()
+            },
+        ));
+        chip.spawn((
+            stat,
+            Text::new(""),
+            HudFont {
+                base: 15.0,
+                hint: false,
+            },
+            font.text_font(15.0),
+            TextColor(theme::TEXT),
+        ));
+    });
 }
 
 fn spawn_run_fog(commands: &mut Commands, images: &mut Assets<Image>, scene: &RunSceneState) {
@@ -1249,6 +1292,8 @@ pub(crate) fn spawn_run_scene(
     // hero's local light keeps the playable area clear.
     spawn_run_fog(&mut commands, &mut images, &scene);
 
+    commands.spawn(theme::vignette(&asset_server, AppState::RunScene));
+
     // Compact vitals, with one objective tracker; full receipts live in the inventory.
     commands
         .spawn((
@@ -1284,16 +1329,15 @@ pub(crate) fn spawn_run_scene(
                 ..default()
             })
             .with_children(|col| {
-                col.spawn((
-                    HudVitalsText,
-                    Text::new(""),
-                    HudFont {
-                        base: 14.0,
-                        hint: false,
-                    },
-                    font.text_font(14.0),
-                    TextColor(theme::TEXT),
-                ));
+                let chips = Node {
+                    column_gap: Val::Px(14.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                };
+                col.spawn(chips.clone()).with_children(|row| {
+                    stat_chip(row, &asset_server, &font, HudStat::Hp, "health", "气血");
+                    stat_chip(row, &asset_server, &font, HudStat::Mp, "spirit", "灵力");
+                });
                 col.spawn(theme::bar_track(Val::Percent(100.0), 8.0))
                     .with_children(|b| {
                         b.spawn((HudHpFill, theme::bar_fill(theme::HEALTH)));
@@ -1302,16 +1346,17 @@ pub(crate) fn spawn_run_scene(
                     .with_children(|b| {
                         b.spawn((HudMpFill, theme::bar_fill(theme::SPIRIT)));
                     });
-                col.spawn((
-                    HudSubText,
-                    Text::new(""),
-                    HudFont {
-                        base: 13.0,
-                        hint: false,
-                    },
-                    font.text_font(13.0),
-                    TextColor(theme::MUTED),
-                ));
+                col.spawn(chips).with_children(|row| {
+                    stat_chip(
+                        row,
+                        &asset_server,
+                        &font,
+                        HudStat::Potions,
+                        "item",
+                        "药水:战斗中在「物品」里饮用",
+                    );
+                    stat_chip(row, &asset_server, &font, HudStat::Gold, "coin", "钱财(文)");
+                });
             });
         });
     let beat = run.journey_beat();
@@ -2310,11 +2355,8 @@ pub(super) fn update_run_hud(
         Query<(&HudPanel, &mut Node)>,
         Query<&mut Node, With<HudPortrait>>,
     )>,
-    mut labels: ParamSet<(
-        Query<&mut Text, With<HudSubText>>,
-        Query<&mut Text, With<HudTaskText>>,
-        Query<&mut Text, With<HudVitalsText>>,
-    )>,
+    mut stat_labels: Query<(&HudStat, &mut Text), Without<HudTaskText>>,
+    mut task_labels: Query<&mut Text, With<HudTaskText>>,
 ) {
     let portrait_units = cameras.iter().find_map(|camera| {
         let size = camera.physical_viewport_size()?;
@@ -2421,14 +2463,19 @@ pub(super) fn update_run_hud(
             (stats.mp.max(0) as f32 / stats.max_mp.max(1) as f32 * 100.0).clamp(0.0, 100.0),
         );
     }
-    if let Ok(mut text) = labels.p0().single_mut() {
-        text.0 = format!("药水 {} · 钱财 {} 文", stats.potions, stats.gold);
-    }
-    if let Ok(mut text) = labels.p2().single_mut() {
-        text.0 = format!("气血 {} · 灵力 {}", stats.hp.max(0), stats.mp.max(0));
+    for (stat, mut text) in &mut stat_labels {
+        let value = match stat {
+            HudStat::Hp => format!("{}/{}", stats.hp.max(0), stats.max_hp),
+            HudStat::Mp => format!("{}/{}", stats.mp.max(0), stats.max_mp),
+            HudStat::Potions => stats.potions.to_string(),
+            HudStat::Gold => stats.gold.to_string(),
+        };
+        if text.0 != value {
+            text.0 = value;
+        }
     }
     if let (Some(run), Some(scene)) = (run.as_deref(), scene.as_deref()) {
-        if let Ok(mut text) = labels.p1().single_mut() {
+        if let Ok(mut text) = task_labels.single_mut() {
             text.0 = journey_task_status_line(&run, scene);
         }
     }

@@ -40,6 +40,7 @@ pub(super) enum BattleLabel {
 pub(super) fn spawn(commands: &mut Commands, font: &GameFont, assets: &AssetServer) {
     commands.insert_resource(SkillPage::default());
     let scope = || DespawnOnExit(AppState::Battle);
+    commands.spawn(theme::vignette(assets, AppState::Battle));
     commands
         .spawn((
             theme::panel(Node {

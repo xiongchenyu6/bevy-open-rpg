@@ -151,9 +151,10 @@ frame edge to edge, no border, no vignette, crisp fantasy game art`
   eight painted 1024×576 perspective arenas from one consistent imagegen
   2×4 atlas (`generated/imagegen/raw/battle-environments.png`). Run
   `bash tools/prepare_polish_assets.sh` to split the source into runtime assets.
-- `ui/icons/{attack,guard,spell,combo,item,flee}.png`: consistent 64px drawn
+- `ui/icons/{attack,guard,spell,combo,item,flee,health,spirit,coin}.png`: consistent 64px drawn
   gold/ivory symbols. `effects/contact_shadow.png`, `spell-ring*.png` and
-  `spell-shard.png` supply alpha-shaded ground contacts and spell surfaces.
+  `spell-shard.png` supply alpha-shaded ground contacts and spell surfaces;
+  `effects/vignette.png` darkens the corners of the run map and battle views.
   Reproduce code-owned art using `uv run --with pillow python tools/generate_ui_art.py`.
 - `fonts/NotoSansCJKsc-Regular.otf`: upstream Noto CJK Sans SC Regular,
   sourced from `notofonts/noto-cjk/Sans/OTF/SimplifiedChinese`; `fonts/OFL.txt`

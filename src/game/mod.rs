@@ -34,7 +34,7 @@ impl Plugin for GamePlugin {
         app.add_plugins(bevy_paperdoll::PaperdollPlugin)
             .add_plugins(lighting::LightingPlugin)
             .add_plugins(ui_scroll::UiScrollPlugin)
-            .add_systems(Update, ui::scale_to_viewport)
+            .add_systems(Update, (ui::scale_to_viewport, ui::show_tooltips))
             .add_systems(
                 PostUpdate,
                 ui::follow_contact_shadows.before(bevy::transform::TransformSystems::Propagate),

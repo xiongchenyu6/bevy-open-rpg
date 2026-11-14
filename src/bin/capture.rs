@@ -74,7 +74,8 @@
 //!   rogue-polish-skills browse all spell pages and Return via real menu inputs
 //!   rogue-tactics real boss windup/guard/riposte/break demo with tactics-trace.csv
 //!   rogue-enemy-motion water-serpent idle/bite/hit animation in real combat
-//! Environment: CAPTURE_SIZE=960x540, CAPTURE_UI_AUDIT=1 checks visible button bounds.
+//! Environment: CAPTURE_SIZE=960x540, CAPTURE_UI_AUDIT=1 checks visible button bounds,
+//! CAPTURE_TOOLTIP=1 rests a pointer on the first element that has a tooltip.
 
 use bevy::{
     camera::RenderTarget,
@@ -271,6 +272,12 @@ fn main() {
 
     app.add_plugins(GamePlugin);
     app.init_resource::<CaptureBattleDriver>();
+    if std::env::var_os("CAPTURE_TOOLTIP").is_some() {
+        app.add_systems(
+            PreUpdate,
+            hover_first_tooltip.after(bevy::ui::UiSystems::Focus),
+        );
+    }
     app.init_resource::<CaptureSkillProof>();
     app.init_resource::<CaptureTacticsProof>();
     app.init_resource::<CaptureStatusProof>();
@@ -3437,4 +3444,12 @@ fn settle_first_meeting(run: &mut love_rpg::game::roguelike::RunState) {
         run,
         &mut love_rpg::game::Rng(1),
     );
+}
+
+/// CAPTURE_TOOLTIP=1: there is no pointer offscreen, so rest one on the first
+/// element that has a tooltip to prove the panel appears.
+fn hover_first_tooltip(mut targets: Query<&mut Interaction, With<love_rpg::game::ui::Tooltip>>) {
+    if let Some(mut interaction) = targets.iter_mut().next() {
+        *interaction = Interaction::Hovered;
+    }
 }
