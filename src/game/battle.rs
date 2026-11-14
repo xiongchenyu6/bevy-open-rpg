@@ -335,6 +335,8 @@ struct BattleState {
     phase_duration: f32,
     menu_index: usize,
     player_action: Option<PlayerAction>,
+    /// Seconds from the cast to the visible landing of the spell being played.
+    spell_contact_secs: f32,
     intent: EnemyIntent,
     guarding: bool,
     momentum: u32,
@@ -770,6 +772,7 @@ fn spawn_battle(
         phase_duration: 0.8,
         menu_index: 0,
         player_action: None,
+        spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
         intent: if teaching_opening {
             EnemyIntent::Charge
         } else {
@@ -1612,7 +1615,7 @@ fn battle_input(
             if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                 state.message.push_str(&line);
             }
-            let contact = Contact::of(PlayerAction::Attack, state.tactics.last_hit);
+            let contact = Contact::of(&state, PlayerAction::Attack);
             spawn_weapon_hit(&mut commands, &anims, &lights, ENEMY_POS, contact.delay);
             spawn_damage_text(
                 &mut commands,
@@ -1688,6 +1691,7 @@ fn battle_input(
                 let camp_bonus = state.camp_bonus;
                 let bond_bonus = state.bond_bonus;
                 stats.mp -= spell_cost;
+                state.spell_contact_secs = feel::BASIC_SPELL_CONTACT_SECS;
                 let roll_max = if late_spell { 10 } else { 6 };
                 let base = (stats.atk * battle_spell_power_multiplier(&quest, run_ref)
                     - state.enemy.def
@@ -1709,7 +1713,7 @@ fn battle_input(
                     .round() as i32;
                 let dmg = tactical_damage(&mut state, dmg, StrikeKind::Spell);
                 state.enemy.hp -= dmg;
-                let contact = Contact::of(PlayerAction::Spell, state.tactics.last_hit);
+                let contact = Contact::of(&state, PlayerAction::Spell);
                 let spell_element = spell_impact_element(battle_spell_chapter(&quest, run_ref));
                 let flavor = spell_impact_flavor(spell_element, late_spell);
                 state.message = format!("李逍遥 施展{spell_name}，{flavor}，造成 {dmg} 点伤害！");
@@ -1793,7 +1797,7 @@ fn battle_input(
                 if let Some(line) = mirror_backlash(&state, &mut stats, dmg) {
                     state.message.push_str(&line);
                 }
-                let contact = Contact::of(PlayerAction::Combo, state.tactics.last_hit);
+                let contact = Contact::of(&state, PlayerAction::Combo);
                 spawn_combo_impact(&mut commands, &anims, &lights, contact.delay);
                 spawn_damage_text(
                     &mut commands,
@@ -1833,7 +1837,7 @@ fn battle_input(
                 append_run_camp_damage_line(&mut state.message, run_camp_tactic, run_camp_damage);
                 append_bond_damage_line(&mut state.message, bond_bonus, bond_damage);
                 spawn_combo_party_casts(&mut commands, &anims, &lights, &quest);
-                let contact = Contact::of(PlayerAction::Combo, state.tactics.last_hit);
+                let contact = Contact::of(&state, PlayerAction::Combo);
                 spawn_combo_impact(&mut commands, &anims, &lights, contact.delay);
                 spawn_damage_text(
                     &mut commands,
@@ -1969,6 +1973,9 @@ fn sync_battle_automation_view(
     };
 }
 
+/// Time a spell's target keeps reacting after the landing before the turn moves on.
+const SPELL_SETTLE_SECS: f32 = 0.40;
+
 fn action_duration(action: PlayerAction) -> f32 {
     match action {
         PlayerAction::Attack => 0.72,
@@ -1983,6 +1990,12 @@ fn action_duration(action: PlayerAction) -> f32 {
 fn start_player_acting(state: &mut BattleState, action: PlayerAction) {
     state.phase = Phase::PlayerActing;
     state.phase_duration = action_duration(action);
+    if action == PlayerAction::Spell {
+        // Long choreographies land late; the turn waits for the hit to settle.
+        state.phase_duration = state
+            .phase_duration
+            .max(state.spell_contact_secs + SPELL_SETTLE_SECS);
+    }
     state.timer = state.phase_duration;
     state.player_action = Some(action);
     if matches!(
@@ -4182,7 +4195,9 @@ fn update_tactical_feedback(
                 color: super::ui::GOLD,
                 velocity: Vec2::new(0.0, 55.0),
                 size: 38.0,
-                delay: state.player_action.map_or(0.0, feel::contact_delay),
+                delay: state
+                    .player_action
+                    .map_or(0.0, |action| feel::contact_delay(&state, action)),
                 pop: CRIT_POP,
             },
         );
@@ -4639,7 +4654,7 @@ fn spawn_skill_damage_text(
         font,
         ENEMY_POS + Vec3::new(104.0, 76.0, 0.0),
         amount,
-        Contact::of(PlayerAction::Spell, state.tactics.last_hit),
+        Contact::of(&state, PlayerAction::Spell),
     );
 }
 
@@ -4664,6 +4679,7 @@ fn cast_skill(
         return false;
     }
     stats.mp -= cost;
+    state.spell_contact_secs = skill_vfx::contact_secs(def.vfx);
     let hex_spell = run.hex_spell_bonus();
     let base = (def.power + skill_mastery_bonus(run) + hex_spell + rng.range(-2, 3)).max(1);
     let name = def.name();
@@ -4823,6 +4839,7 @@ mod tests {
             phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Spell),
+            spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
             intent: EnemyIntent::Strike,
             guarding: false,
             momentum: 0,
@@ -4932,6 +4949,18 @@ mod tests {
         assert_eq!(state.statuses.freeze_immunity, 0);
         apply_skill_status(&mut state, SkillStatus::Freeze { chance: 1.0 }, &mut rng);
         assert!(state.statuses.frozen);
+    }
+
+    #[test]
+    fn spell_turn_outlasts_the_landing_of_a_long_choreography() {
+        let mut state = status_test_state(EncounterKind::Random);
+        state.spell_contact_secs = skill_vfx::contact_secs(skill::VfxStyle::Starfall);
+        start_player_acting(&mut state, PlayerAction::Spell);
+        assert!(state.phase_duration >= state.spell_contact_secs + SPELL_SETTLE_SECS);
+
+        state.spell_contact_secs = skill_vfx::contact_secs(skill::VfxStyle::StormChain);
+        start_player_acting(&mut state, PlayerAction::Spell);
+        assert_eq!(state.phase_duration, action_duration(PlayerAction::Spell));
     }
 
     #[test]
@@ -5877,6 +5906,7 @@ mod tests {
             phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
@@ -5929,6 +5959,7 @@ mod tests {
             phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
             intent: EnemyIntent::Strike,
             guarding: false,
             boss_phase2: false,
@@ -5980,6 +6011,7 @@ mod tests {
             phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
             intent: EnemyIntent::Special,
             guarding: false,
             boss_phase2: false,
@@ -6034,6 +6066,7 @@ mod tests {
             phase_duration: 0.8,
             menu_index: 0,
             player_action: Some(PlayerAction::Attack),
+            spell_contact_secs: feel::BASIC_SPELL_CONTACT_SECS,
             intent: EnemyIntent::Special,
             guarding: false,
             boss_phase2: false,

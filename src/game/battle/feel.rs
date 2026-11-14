@@ -14,7 +14,7 @@ use crate::game::animation::AnimationHold;
 /// Fraction of the hero's sword action at which the blade reaches the enemy.
 pub(super) const ATTACK_CONTACT_FRACTION: f32 = 0.30;
 /// Spell choreographies land their main burst about this long after the cast.
-const SPELL_CONTACT_SECS: f32 = 0.38;
+pub(super) const BASIC_SPELL_CONTACT_SECS: f32 = 0.38;
 /// Fraction of an enemy action at which its lunge peaks on the hero.
 pub(super) const ENEMY_CONTACT_FRACTION: f32 = 0.5;
 
@@ -303,10 +303,10 @@ pub(super) struct Contact {
 }
 
 impl Contact {
-    pub fn of(action: PlayerAction, hit: Hit) -> Self {
+    pub fn of(state: &BattleState, action: PlayerAction) -> Self {
         Self {
-            delay: contact_delay(action),
-            crit: is_crit(hit),
+            delay: contact_delay(state, action),
+            crit: is_crit(state.tactics.last_hit),
         }
     }
 
@@ -321,12 +321,12 @@ impl Contact {
 }
 
 /// The player's contact moment, measured from the confirmed command.
-pub(super) fn contact_delay(action: PlayerAction) -> f32 {
+pub(super) fn contact_delay(state: &BattleState, action: PlayerAction) -> f32 {
     match action {
         PlayerAction::Attack | PlayerAction::Combo => {
             action_duration(action) * ATTACK_CONTACT_FRACTION
         }
-        PlayerAction::Spell => SPELL_CONTACT_SECS,
+        PlayerAction::Spell => state.spell_contact_secs,
         PlayerAction::Guard | PlayerAction::Item | PlayerAction::Flee => 0.0,
     }
 }
@@ -378,7 +378,11 @@ fn cues_for(
     // Impact effects spawned this frame have already aged by this frame's
     // step, so the cue starts from the same point and fires with them.
     let elapsed = frame_dt;
-    let player_delay = (state.player_action.map_or(0.0, contact_delay) - elapsed).max(0.0);
+    let player_delay = (state
+        .player_action
+        .map_or(0.0, |action| contact_delay(state, action))
+        - elapsed)
+        .max(0.0);
     let enemy_cue = (enemy_lost > 0).then(|| {
         let (weight, delay) = if player_strike {
             (

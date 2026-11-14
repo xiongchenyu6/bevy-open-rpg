@@ -296,7 +296,7 @@ grid in `RunSceneState` and draw `RunFogTile` overlays from `scene.rs`.
   the `rogue` preset walks title → card → maps on a cadence script and
   auto-paths through walkable scenes via `RunSceneState.flow`;
   `rogue-inventory` opens the Esc inventory for a still. `rogue-skill` plays all
-  20 curated effects in catalog order; `rogue-status` uses the real battle menu
+  20 curated effects in catalog order; `rogue-contact` casts eight differently timed skills through the real battle menu to check that damage lands with the visible hit; `rogue-status` uses the real battle menu
   and turn loop to prove poison, burn, freeze and stun. Legacy presets still
   work (capture sets `Explore` for them).
 - Terrain regression: `scripts/terrain_harness.sh <out>` runs UV/category unit

@@ -68,6 +68,7 @@
 //!   rogue-party-battle start directly in a late run-mode battle with full party
 //!   rogue-skill   play all 20 curated skill VFX in a durable battle
 //!   rogue-status  cast poison, burn, freeze and stun through the real battle menu
+//!   rogue-contact cast eight differently timed skills to check hit timing
 //!   rogue-polish-inventory full 22-relic/14-hex/20-skill scroll proof
 //!   rogue-polish-ending complete ending with all seals, vows and chain echoes
 //!   rogue-polish-skills browse all spell pages and Return via real menu inputs
@@ -129,6 +130,10 @@ struct CaptureSkillProof(bool);
 struct CaptureStatusProof {
     enabled: bool,
     step: usize,
+    /// Contact proof: move to the next skill after every cast instead of
+    /// waiting for a status to stick.
+    advance_per_cast: bool,
+    cast_confirmed: bool,
 }
 
 #[derive(Component)]
@@ -616,6 +621,27 @@ fn main() {
                     SkillId::ThunderPrison,
                 ],
                 0x57A7_0505,
+            );
+        }
+        "rogue-contact" => {
+            use love_rpg::game::roguelike::skill::SkillId;
+
+            let mut proof = app.world_mut().resource_mut::<CaptureStatusProof>();
+            proof.enabled = true;
+            proof.advance_per_cast = true;
+            prepare_skill_battle(
+                &mut app,
+                vec![
+                    SkillId::Starfall,
+                    SkillId::SwordArray,
+                    SkillId::SoulLantern,
+                    SkillId::BladeStorm,
+                    SkillId::SwordGleam,
+                    SkillId::CinderMeteor,
+                    SkillId::StormChain,
+                    SkillId::GlacierCrown,
+                ],
+                0xC0_47AC7,
             );
         }
         "rogue-market" => {
@@ -2849,34 +2875,48 @@ fn set_intent(app: &mut App, f: u32) {
         };
         let step = {
             let mut proof = app.world_mut().resource_mut::<CaptureStatusProof>();
-            if proof.step == 0 && poison > 0 {
-                proof.step = 1;
-            }
-            if proof.step == 1 && burn > 0 {
-                proof.step = 2;
-            }
-            if proof.step == 2 && frozen {
-                proof.step = 3;
-            }
-            if proof.step == 3 && stunned {
-                proof.step = 4;
+            if proof.advance_per_cast {
+                if proof.cast_confirmed && menu_open && !skill_menu_open {
+                    proof.cast_confirmed = false;
+                    proof.step += 1;
+                }
+            } else {
+                if proof.step == 0 && poison > 0 {
+                    proof.step = 1;
+                }
+                if proof.step == 1 && burn > 0 {
+                    proof.step = 2;
+                }
+                if proof.step == 2 && frozen {
+                    proof.step = 3;
+                }
+                if proof.step == 3 && stunned {
+                    proof.step = 4;
+                }
             }
             proof.step
         };
+        let skill_count = app
+            .world()
+            .resource::<love_rpg::game::roguelike::RunState>()
+            .skills
+            .len();
         let skill_total = app
             .world()
             .resource::<love_rpg::game::roguelike::RunState>()
             .skills
             .len()
             + 1;
+        let mut cast_confirmed = false;
         let mut intent = app.world_mut().resource_mut::<Intent>();
         intent.clear();
-        if !menu_open || step >= 4 {
+        if !menu_open || step >= skill_count {
             return;
         }
         if skill_menu_open {
             if skill_cursor == step {
                 intent.confirm = true;
+                cast_confirmed = true;
             } else {
                 let down = (step + skill_total - skill_cursor) % skill_total;
                 let up = (skill_cursor + skill_total - step) % skill_total;
@@ -2896,6 +2936,11 @@ fn set_intent(app: &mut App, f: u32) {
             } else {
                 intent.up = true;
             }
+        }
+        if cast_confirmed {
+            app.world_mut()
+                .resource_mut::<CaptureStatusProof>()
+                .cast_confirmed = true;
         }
         return;
     }

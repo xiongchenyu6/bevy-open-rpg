@@ -260,6 +260,36 @@ pub fn spawn_skill_vfx(
     }
 }
 
+/// Seconds from the cast to the moment each choreography visibly lands on its
+/// target. The battle shows damage, flash and hit-stop at this moment, and the
+/// choreography's own burst of light starts on it.
+pub fn contact_secs(style: VfxStyle) -> f32 {
+    match style {
+        VfxStyle::SwordGleam => 0.4,
+        VfxStyle::CinderMeteor => 0.48,
+        VfxStyle::FrostLance => 0.48,
+        VfxStyle::StormChain => 0.28,
+        VfxStyle::EarthRift => 0.34,
+        VfxStyle::TidalDragon => 0.38,
+        VfxStyle::ThornCage => 0.38,
+        // The souls are pulled out of the target, then drift back to the hero.
+        VfxStyle::SoulLantern => 0.24,
+        VfxStyle::KarmaLotus => 0.34,
+        VfxStyle::GlacierCrown => 0.46,
+        VfxStyle::ThunderPrison => 0.34,
+        VfxStyle::BladeStorm => 0.34,
+        VfxStyle::WhaleBreath => 0.36,
+        VfxStyle::Starfall => 1.02,
+        VfxStyle::Eclipse => 0.42,
+        VfxStyle::SwordArray => 0.88,
+        // Cast on the hero: nothing travels, so there is no later landing.
+        VfxStyle::WindSpiral
+        | VfxStyle::MoonHalo
+        | VfxStyle::MountainAegis
+        | VfxStyle::WorldTreeBloom => 0.0,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusBurstKind {
     Poison,
@@ -304,7 +334,7 @@ pub fn spawn_status_burst(
             }
         }
         StatusBurstKind::Burn => {
-            fx.flash(target, 260.0, rgba(1.0, 0.22, 0.04, 0.58), 0.42);
+            fx.flash(target, 260.0, rgba(1.0, 0.22, 0.04, 0.58), 0.0, 0.42);
             for i in 0..10 {
                 let x = (i as f32 - 4.5) * 18.0;
                 let start = target + Vec3::new(x, -46.0 + (i % 2) as f32 * 8.0, 0.0);
@@ -318,7 +348,7 @@ pub fn spawn_status_burst(
             }
         }
         StatusBurstKind::Freeze => {
-            fx.flash(target, 250.0, rgba(0.42, 0.88, 1.0, 0.58), 0.38);
+            fx.flash(target, 250.0, rgba(0.42, 0.88, 1.0, 0.58), 0.0, 0.38);
             for i in 0..12 {
                 let a = i as f32 * std::f32::consts::TAU / 12.0;
                 let start = target + Vec3::new(a.cos() * 38.0, a.sin() * 30.0, 0.0);
@@ -347,7 +377,7 @@ pub fn spawn_status_burst(
                     0.7,
                 );
             }
-            fx.flash(target, 235.0, rgba(0.58, 0.42, 1.0, 0.52), 0.34);
+            fx.flash(target, 235.0, rgba(0.58, 0.42, 1.0, 0.52), 0.0, 0.34);
         }
         StatusBurstKind::Resist => {
             fx.hex_ring(
@@ -506,7 +536,8 @@ impl Emitter<'_, '_, '_> {
         );
     }
 
-    fn flash(&mut self, position: Vec3, size: f32, color: Color, duration: f32) {
+    /// A burst of light that starts `delay` seconds into the choreography.
+    fn flash(&mut self, position: Vec3, size: f32, color: Color, delay: f32, duration: f32) {
         let entity = lighting::spawn_light(
             self.commands,
             self.lights,
@@ -516,7 +547,9 @@ impl Emitter<'_, '_, '_> {
             AppState::Battle,
         );
         self.commands.entity(entity).insert((
-            VfxNode::new(0.0, duration, position, color)
+            // Scale zero keeps the orb out of sight until the delay has passed.
+            Transform::from_translation(position).with_scale(Vec3::ZERO),
+            VfxNode::new(delay, duration, position, color)
                 .scales(Vec2::splat(0.22), Vec2::splat(1.18))
                 .envelope(0.05, 0.62)
                 .lively(0.08, 0.22, 0.0),
@@ -565,7 +598,13 @@ fn sword_gleam(fx: &mut Emitter, caster: Vec3, target: Vec3) {
             .scales(Vec2::splat(28.0), Vec2::splat(150.0))
             .rotates(0.0, -0.45),
     );
-    fx.flash(target, 250.0, pale, 0.42);
+    fx.flash(
+        target,
+        250.0,
+        pale,
+        contact_secs(VfxStyle::SwordGleam),
+        0.42,
+    );
 }
 
 fn cinder_meteor(fx: &mut Emitter, _caster: Vec3, target: Vec3) {
@@ -609,7 +648,13 @@ fn cinder_meteor(fx: &mut Emitter, _caster: Vec3, target: Vec3) {
             .scales(Vec2::new(24.0, 10.0), Vec2::new(180.0, 72.0))
             .lively(0.08, 0.32, 0.0),
     );
-    fx.flash(target, 420.0, rgba(1.0, 0.22, 0.02, 0.64), 0.58);
+    fx.flash(
+        target,
+        420.0,
+        rgba(1.0, 0.22, 0.02, 0.64),
+        contact_secs(VfxStyle::CinderMeteor),
+        0.58,
+    );
 }
 
 fn frost_lance(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -650,7 +695,7 @@ fn frost_lance(fx: &mut Emitter, caster: Vec3, target: Vec3) {
             .scales(Vec2::splat(32.0), Vec2::splat(138.0))
             .rotates(0.0, 0.7),
     );
-    fx.flash(target, 310.0, ice, 0.48);
+    fx.flash(target, 310.0, ice, contact_secs(VfxStyle::FrostLance), 0.48);
 }
 
 fn storm_chain(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -696,7 +741,13 @@ fn storm_chain(fx: &mut Emitter, caster: Vec3, target: Vec3) {
                 .lively(0.0, 0.0, 0.55),
         );
     }
-    fx.flash(target, 330.0, violet, 0.56);
+    fx.flash(
+        target,
+        330.0,
+        violet,
+        contact_secs(VfxStyle::StormChain),
+        0.56,
+    );
 }
 
 fn wind_spiral(fx: &mut Emitter, caster: Vec3) {
@@ -730,7 +781,7 @@ fn wind_spiral(fx: &mut Emitter, caster: Vec3) {
             .lively(0.10, 0.25, 0.0),
         );
     }
-    fx.flash(center, 255.0, mint, 0.65);
+    fx.flash(center, 255.0, mint, 0.0, 0.65);
 }
 
 fn earth_rift(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -772,7 +823,13 @@ fn earth_rift(fx: &mut Emitter, caster: Vec3, target: Vec3) {
         ochre,
         VfxNode::new(0.34, 0.66, end, ochre).scales(Vec2::new(32.0, 12.0), Vec2::new(178.0, 58.0)),
     );
-    fx.flash(target, 270.0, ochre, 0.44);
+    fx.flash(
+        target,
+        270.0,
+        ochre,
+        contact_secs(VfxStyle::EarthRift),
+        0.44,
+    );
 }
 
 fn tidal_dragon(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -821,7 +878,13 @@ fn tidal_dragon(fx: &mut Emitter, caster: Vec3, target: Vec3) {
                 .rotates(a - std::f32::consts::FRAC_PI_2, 0.0),
         );
     }
-    fx.flash(target, 340.0, water, 0.58);
+    fx.flash(
+        target,
+        340.0,
+        water,
+        contact_secs(VfxStyle::TidalDragon),
+        0.58,
+    );
 }
 
 fn thorn_cage(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -857,7 +920,13 @@ fn thorn_cage(fx: &mut Emitter, caster: Vec3, target: Vec3) {
             .rotates(0.0, 0.9)
             .lively(0.10, 0.22, 0.0),
     );
-    fx.flash(target, 260.0, rgba(0.34, 0.94, 0.16, 0.46), 0.50);
+    fx.flash(
+        target,
+        260.0,
+        rgba(0.34, 0.94, 0.16, 0.46),
+        contact_secs(VfxStyle::ThornCage),
+        0.50,
+    );
 }
 
 fn moon_halo(fx: &mut Emitter, caster: Vec3) {
@@ -894,15 +963,17 @@ fn moon_halo(fx: &mut Emitter, caster: Vec3) {
                 .rotates(a, 1.2),
         );
     }
-    fx.flash(center, 290.0, moon, 0.62);
+    fx.flash(center, 290.0, moon, 0.0, 0.62);
 }
 
 fn soul_lantern(fx: &mut Emitter, caster: Vec3, target: Vec3) {
     let soul = rgba(0.74, 0.24, 1.0, 0.82);
     let ghost = rgba(0.52, 1.0, 0.86, 0.90);
+    // Thin enough that the target stays readable under the lantern's shade.
+    let shade = rgba(0.30, 0.06, 0.44, 0.30);
     fx.disc(
-        rgba(0.20, 0.02, 0.28, 0.62),
-        VfxNode::new(0.0, 0.92, target, soul)
+        shade,
+        VfxNode::new(0.0, 0.92, target, shade)
             .scales(Vec2::splat(22.0), Vec2::splat(112.0))
             .lively(0.18, 0.18, 0.12),
     );
@@ -931,7 +1002,7 @@ fn soul_lantern(fx: &mut Emitter, caster: Vec3, target: Vec3) {
             .scales(Vec2::splat(22.0), Vec2::splat(94.0))
             .lively(0.08, 0.24, 0.0),
     );
-    fx.flash(end, 220.0, ghost, 0.48);
+    fx.flash(end, 220.0, ghost, 0.62, 0.48);
 }
 
 fn karma_lotus(fx: &mut Emitter, target: Vec3) {
@@ -983,7 +1054,7 @@ fn karma_lotus(fx: &mut Emitter, target: Vec3) {
                 .lively(0.08, 0.22, 0.2),
         );
     }
-    fx.flash(target, 350.0, red, 0.62);
+    fx.flash(target, 350.0, red, contact_secs(VfxStyle::KarmaLotus), 0.62);
 }
 
 fn glacier_crown(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -1017,7 +1088,13 @@ fn glacier_crown(fx: &mut Emitter, caster: Vec3, target: Vec3) {
         VfxNode::new(0.46, 0.78, target - Vec3::Y * 52.0, white)
             .scales(Vec2::new(38.0, 12.0), Vec2::new(198.0, 66.0)),
     );
-    fx.flash(target, 380.0, blue, 0.60);
+    fx.flash(
+        target,
+        380.0,
+        blue,
+        contact_secs(VfxStyle::GlacierCrown),
+        0.60,
+    );
 }
 
 fn thunder_prison(fx: &mut Emitter, target: Vec3) {
@@ -1069,7 +1146,13 @@ fn thunder_prison(fx: &mut Emitter, target: Vec3) {
             0.92,
         );
     }
-    fx.flash(target, 390.0, violet, 0.68);
+    fx.flash(
+        target,
+        390.0,
+        violet,
+        contact_secs(VfxStyle::ThunderPrison),
+        0.68,
+    );
 }
 
 fn blade_storm(fx: &mut Emitter, target: Vec3) {
@@ -1104,7 +1187,13 @@ fn blade_storm(fx: &mut Emitter, target: Vec3) {
                 .rotates(0.0, if i % 2 == 0 { 1.6 } else { -1.9 }),
         );
     }
-    fx.flash(target, 310.0, mint, 0.52);
+    fx.flash(
+        target,
+        310.0,
+        mint,
+        contact_secs(VfxStyle::BladeStorm),
+        0.52,
+    );
 }
 
 fn mountain_aegis(fx: &mut Emitter, caster: Vec3) {
@@ -1143,7 +1232,7 @@ fn mountain_aegis(fx: &mut Emitter, caster: Vec3) {
         VfxNode::new(0.16, 0.88, center - Vec3::Y * 90.0, rune)
             .scales(Vec2::new(28.0, 8.0), Vec2::new(156.0, 38.0)),
     );
-    fx.flash(center, 300.0, stone, 0.58);
+    fx.flash(center, 300.0, stone, 0.0, 0.58);
 }
 
 fn whale_breath(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -1186,7 +1275,13 @@ fn whale_breath(fx: &mut Emitter, caster: Vec3, target: Vec3) {
                 .linear(start, 84.0, 12.0, 1.0),
         );
     }
-    fx.flash(target, 330.0, deep, 0.54);
+    fx.flash(
+        target,
+        330.0,
+        deep,
+        contact_secs(VfxStyle::WhaleBreath),
+        0.54,
+    );
 }
 
 fn world_tree_bloom(fx: &mut Emitter, caster: Vec3) {
@@ -1232,7 +1327,7 @@ fn world_tree_bloom(fx: &mut Emitter, caster: Vec3) {
             .scales(Vec2::splat(24.0), Vec2::splat(142.0))
             .lively(0.08, 0.32, 0.0),
     );
-    fx.flash(caster + Vec3::Y * 72.0, 310.0, green, 0.62);
+    fx.flash(caster + Vec3::Y * 72.0, 310.0, green, 0.0, 0.62);
 }
 
 fn starfall(fx: &mut Emitter, target: Vec3) {
@@ -1273,7 +1368,7 @@ fn starfall(fx: &mut Emitter, target: Vec3) {
             .rotates(0.0, 0.6)
             .lively(0.06, 0.30, 0.0),
     );
-    fx.flash(target, 470.0, gold, 0.78);
+    fx.flash(target, 470.0, gold, contact_secs(VfxStyle::Starfall), 0.78);
 }
 
 fn eclipse(fx: &mut Emitter, target: Vec3) {
@@ -1318,7 +1413,7 @@ fn eclipse(fx: &mut Emitter, target: Vec3) {
                 .linear(pos + Vec3::new(a.sin() * 34.0, 104.0, 0.0), 22.0, 12.0, 1.0),
         );
     }
-    fx.flash(target, 360.0, violet, 0.64);
+    fx.flash(target, 360.0, violet, contact_secs(VfxStyle::Eclipse), 0.64);
 }
 
 fn sword_array(fx: &mut Emitter, caster: Vec3, target: Vec3) {
@@ -1362,7 +1457,13 @@ fn sword_array(fx: &mut Emitter, caster: Vec3, target: Vec3) {
             .rotates(0.0, -1.2)
             .lively(0.04, 0.30, 0.0),
     );
-    fx.flash(center, 490.0, blue, 0.72);
+    fx.flash(
+        center,
+        490.0,
+        blue,
+        contact_secs(VfxStyle::SwordArray),
+        0.72,
+    );
 }
 
 fn sync_status_auras(
@@ -1511,6 +1612,9 @@ fn update_vfx_nodes(
         // Spell choreography shares the battle clock, so it holds on hit-stop.
         node.age += feel.dt();
         if node.age < node.delay {
+            if let Some(mut point_light) = point_light {
+                point_light.intensity = 0.0;
+            }
             continue;
         }
         let elapsed = node.age - node.delay;
@@ -1598,8 +1702,6 @@ fn update_vfx_nodes(
             material.color = color;
         }
         if let (Some(mut point_light), Some(light)) = (point_light, light) {
-            let srgba = node.color.to_srgba();
-            point_light.color = Color::srgb(srgba.red, srgba.green, srgba.blue);
             point_light.intensity = light.intensity * fade_in * fade_out * flicker;
         }
     }

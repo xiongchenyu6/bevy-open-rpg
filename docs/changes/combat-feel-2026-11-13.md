@@ -9,7 +9,7 @@ shook on a heavy blow. Feedback now waits for the visible contact.
   the HP that was actually lost and queues one contact cue per target. No HP
   loss means no cue: guards, heals, failed casts and skipped turns stay still.
 - Contact moments: sword and burst at 30% of the action (0.216s / 0.276s),
-  spells 0.38s after the cast, enemy blows at the peak of their lunge (50%).
+  the basic spell 0.38s after the cast (run skills: see below), enemy blows at the peak of their lunge (50%).
   Impact sprites, lights, damage numbers and the HP bars are hidden until then.
 - Weight: Light (status ticks, resisted or tiny hits) flashes only. Normal
   sword hits stop 45ms; spells, bursts and enemy heavy/signature blows 70ms;
@@ -28,8 +28,17 @@ shook on a heavy blow. Feedback now waits for the visible contact.
 
 Not included: audio (the project builds without `bevy_audio`), a reduced-motion
 option (there is no settings screen to put it in) and pause/load handling
-(the game has neither). Skill choreographies share one 0.38s contact time
-rather than a per-skill value.
+(the game has neither).
+
+## Per-skill contact (round 2)
+
+The twenty skill choreographies no longer share one 0.38s contact. Each style
+names the moment it visibly lands (`skill_vfx::contact_secs`): chain lightning
+0.28s, soul lantern 0.24s (the souls leave the target first), meteor and frost
+lance 0.48s, starfall 1.02s and sword array 0.88s on their finale. The
+choreography's own burst of light now starts on that moment instead of at the
+cast, and the spell turn lasts until 0.4s after the landing. Checked on
+captured frames of real casts (`capture ... rogue-contact`).
 
 ## Lighting
 
