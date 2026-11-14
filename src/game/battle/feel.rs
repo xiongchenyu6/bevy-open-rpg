@@ -18,6 +18,10 @@ const SPELL_CONTACT_SECS: f32 = 0.38;
 /// Fraction of an enemy action at which its lunge peaks on the hero.
 pub(super) const ENEMY_CONTACT_FRACTION: f32 = 0.5;
 
+/// A contact this close to due fires now: frame steps rarely sum to the exact
+/// delay, and a rounding error must not push the hit to the next frame.
+pub(super) const CONTACT_EPSILON_SECS: f32 = 1e-4;
+
 const MAX_HIT_STOP_SECS: f32 = 0.14;
 const KILL_EXTRA_STOP_SECS: f32 = 0.035;
 /// After a stop ends, the scene must run this long before it may stop again.
@@ -200,17 +204,19 @@ impl BattleFeel {
             self.hero.age += step;
             timeline += step;
             left -= step;
-            if next > step {
-                break;
-            }
+            let mut fired = false;
             let mut index = 0;
             while index < self.pending.len() {
-                if self.pending[index].delay <= 1e-6 {
+                if self.pending[index].delay <= CONTACT_EPSILON_SECS {
                     let cue = self.pending.swap_remove(index);
                     self.contact(cue);
+                    fired = true;
                 } else {
                     index += 1;
                 }
+            }
+            if !fired {
+                break;
             }
         }
         self.dt = timeline;
@@ -360,6 +366,7 @@ fn cues_for(
     hero_hp: i32,
     hero_max_hp: i32,
     seen: (i32, i32),
+    frame_dt: f32,
 ) -> [Option<HitCue>; 2] {
     let enemy_lost = seen.0 - state.enemy.hp;
     let hero_lost = seen.1 - hero_hp;
@@ -368,8 +375,9 @@ fn cues_for(
             state.player_action,
             Some(PlayerAction::Attack | PlayerAction::Spell | PlayerAction::Combo)
         );
-    // The phase clock may already have run this frame; count from its start.
-    let elapsed = (state.phase_duration - state.timer).max(0.0);
+    // Impact effects spawned this frame have already aged by this frame's
+    // step, so the cue starts from the same point and fires with them.
+    let elapsed = frame_dt;
     let player_delay = (state.player_action.map_or(0.0, contact_delay) - elapsed).max(0.0);
     let enemy_cue = (enemy_lost > 0).then(|| {
         let (weight, delay) = if player_strike {
@@ -428,7 +436,7 @@ pub(super) fn observe(
 ) {
     let now = (state.enemy.hp, stats.hp);
     if let Some(seen) = feel.seen_hp {
-        for cue in cues_for(&state, stats.hp, stats.max_hp, seen)
+        for cue in cues_for(&state, stats.hp, stats.max_hp, seen, feel.dt)
             .into_iter()
             .flatten()
         {
@@ -516,6 +524,19 @@ mod tests {
                 "{fps} fps showed contact at {contact_at}"
             );
         }
+    }
+
+    #[test]
+    fn a_contact_due_exactly_on_a_frame_boundary_fires_on_that_frame() {
+        // 0.3s is nine 30 FPS frames, but nine f32 steps do not sum to 0.3.
+        let mut feel = BattleFeel::default();
+        feel.queue(cue(Weight::Normal, 0.3));
+        for _ in 0..8 {
+            feel.advance(1.0 / 30.0);
+        }
+        assert_eq!(feel.pending_damage(Target::Enemy), 10);
+        feel.advance(1.0 / 30.0);
+        assert_eq!(feel.pending_damage(Target::Enemy), 0);
     }
 
     #[test]
@@ -622,18 +643,18 @@ mod tests {
         state.player_action = Some(PlayerAction::Attack);
         // Nothing changed, a heal, and a guard turn: no feedback at all.
         assert!(
-            cues_for(&state, 50, 100, (100, 50))
+            cues_for(&state, 50, 100, (100, 50), 0.0)
                 .iter()
                 .all(Option::is_none)
         );
         assert!(
-            cues_for(&state, 80, 100, (100, 50))
+            cues_for(&state, 80, 100, (100, 50), 0.0)
                 .iter()
                 .all(Option::is_none)
         );
         state.enemy.hp = 120;
         assert!(
-            cues_for(&state, 50, 100, (100, 50))
+            cues_for(&state, 50, 100, (100, 50), 0.0)
                 .iter()
                 .all(Option::is_none)
         );
@@ -654,7 +675,7 @@ mod tests {
         let mut state = status_test_state(EncounterKind::Random);
         super::super::start_player_acting(&mut state, PlayerAction::Attack);
         state.enemy.hp = 88;
-        let [enemy, hero] = cues_for(&state, 50, 100, (100, 50));
+        let [enemy, hero] = cues_for(&state, 50, 100, (100, 50), 0.0);
         let enemy = enemy.expect("enemy lost hp");
         assert!(hero.is_none());
         assert_eq!(enemy.damage, 12);
@@ -663,7 +684,7 @@ mod tests {
 
         state.tactics.last_hit.counter = true;
         state.enemy.hp = 0;
-        let [enemy, _] = cues_for(&state, 50, 100, (100, 50));
+        let [enemy, _] = cues_for(&state, 50, 100, (100, 50), 0.0);
         let enemy = enemy.unwrap();
         assert_eq!(enemy.weight, Weight::Crit);
         assert!(enemy.kill);
@@ -673,7 +694,7 @@ mod tests {
             ..Hit::default()
         };
         state.enemy.hp = 95;
-        let [enemy, _] = cues_for(&state, 50, 100, (100, 50));
+        let [enemy, _] = cues_for(&state, 50, 100, (100, 50), 0.0);
         assert_eq!(enemy.unwrap().weight, Weight::Light);
     }
 
@@ -685,20 +706,19 @@ mod tests {
         state.timer = 0.72;
         state.enemy_attacked = true;
         state.executing_intent = EnemyIntent::Heavy;
-        let [enemy, hero] = cues_for(&state, 70, 100, (100, 80));
+        let [enemy, hero] = cues_for(&state, 70, 100, (100, 80), 0.0);
         assert!(enemy.is_none());
         let hero = hero.expect("hero lost hp");
         assert_eq!(hero.weight, Weight::Heavy);
         assert!((hero.delay - 0.36).abs() < 1e-6);
-        // A frame of the phase already spent is not waited for twice.
-        state.timer = 0.72 - 0.1;
-        let [_, hero] = cues_for(&state, 70, 100, (100, 80));
+        // The frame that resolved the blow is not waited for twice.
+        let [_, hero] = cues_for(&state, 70, 100, (100, 80), 0.1);
         assert!((hero.unwrap().delay - 0.26).abs() < 1e-6);
 
         // Poison before the enemy acts: immediate, no stop, no shake.
         state.enemy_attacked = false;
         state.enemy.hp = 94;
-        let [enemy, _] = cues_for(&state, 80, 100, (100, 80));
+        let [enemy, _] = cues_for(&state, 80, 100, (100, 80), 0.0);
         let enemy = enemy.unwrap();
         assert_eq!((enemy.weight, enemy.delay), (Weight::Light, 0.0));
     }

@@ -4480,10 +4480,6 @@ fn enemy_primary_color(phase: Phase, pose: feel::Pose) -> Color {
     }
 }
 
-/// The clock stops exactly on the contact, so a delayed effect can sit a
-/// rounding error short of zero; it must still appear before the hit-stop.
-const CONTACT_EPSILON_SECS: f32 = 1e-4;
-
 fn update_battle_effects(
     feel: Res<BattleFeel>,
     mut commands: Commands,
@@ -4498,7 +4494,7 @@ fn update_battle_effects(
     let dt = feel.dt();
     for (entity, mut effect, mut sprite, mut transform, mut visibility) in &mut effects {
         effect.age += dt;
-        if effect.age < -CONTACT_EPSILON_SECS {
+        if effect.age < -feel::CONTACT_EPSILON_SECS {
             continue;
         }
         effect.age = effect.age.max(0.0);
@@ -4542,7 +4538,7 @@ fn update_floating_combat_text(
     let dt = feel.dt();
     for (entity, mut floating, mut transform, mut color, mut shadow, mut visibility) in &mut texts {
         floating.age += dt;
-        if floating.age < -CONTACT_EPSILON_SECS {
+        if floating.age < -feel::CONTACT_EPSILON_SECS {
             continue;
         }
         floating.age = floating.age.max(0.0);
