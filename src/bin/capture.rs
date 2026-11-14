@@ -311,6 +311,7 @@ fn main() {
                 RunState::new(&mut rng)
             };
             run.chapter = 5;
+            settle_first_meeting(&mut run);
             run.card_shown = true;
             run.accept_journey_task();
             app.world_mut().insert_resource(run);
@@ -395,6 +396,9 @@ fn main() {
                 RunState::new(&mut rng)
             };
             run.chapter = chapter;
+            if chapter > 0 {
+                settle_first_meeting(&mut run);
+            }
             run.card_shown = true;
             app.world_mut().insert_resource(run);
             app.world_mut()
@@ -673,6 +677,7 @@ fn main() {
             };
             run.chapter = 5;
             run.stage = 0;
+            settle_first_meeting(&mut run);
             run.card_shown = true;
             run.accept_journey_task();
             app.world_mut().insert_resource(run);
@@ -726,6 +731,7 @@ fn main() {
             };
             run.chapter = 1;
             run.stage = 1;
+            settle_first_meeting(&mut run);
             run.card_shown = true;
             run.accept_journey_task();
             app.world_mut().insert_resource(run);
@@ -786,6 +792,7 @@ fn main() {
             };
             run.chapter = 1;
             run.stage = 2;
+            settle_first_meeting(&mut run);
             run.card_shown = true;
             run.accept_journey_task();
             app.world_mut().insert_resource(run);
@@ -949,6 +956,7 @@ fn main() {
             };
             run.chapter = 3;
             run.stage = 0;
+            settle_first_meeting(&mut run);
             run.card_shown = true;
             run.current_fight = Some(FightRank::Elite);
             run.qingyuan = 6;
@@ -1650,6 +1658,9 @@ fn prepare_route_map_preset(app: &mut App, preset: &str) {
     };
     run.chapter = chapter;
     run.stage = stage;
+    if (chapter, stage) != (0, 0) {
+        settle_first_meeting(&mut run);
+    }
     run.card_shown = true;
     run.accept_journey_task();
     app.world_mut().insert_resource(run);
@@ -1679,6 +1690,9 @@ fn prepare_story_proof_preset(
     };
     run.chapter = chapter;
     run.stage = stage;
+    if (chapter, roll) != (0, 0) {
+        settle_first_meeting(&mut run);
+    }
     run.card_shown = true;
     run.accept_journey_task();
     run.seen_story_scenes.push((chapter, roll));
@@ -3365,4 +3379,17 @@ fn set_intent(app: &mut App, f: u32) {
             _ => intent.move_dir = Some(L),
         }
     }
+}
+
+/// Scenarios that start past the opening have already met Linger: companions
+/// join only once that story choice is settled, so settle it the real way.
+fn settle_first_meeting(run: &mut love_rpg::game::roguelike::RunState) {
+    love_rpg::game::roguelike::event::settle_story(
+        0,
+        0,
+        1,
+        &mut love_rpg::game::PlayerStats::default(),
+        run,
+        &mut love_rpg::game::Rng(1),
+    );
 }

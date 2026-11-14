@@ -445,8 +445,8 @@ pub const JOURNEY_BEATS: [&[JourneyBeat]; CHAPTER_COUNT] = [
         JourneyBeat {
             title: "客栈夜雨",
             place: "余杭客栈后院",
-            objective: "查清红衣剑姊留下的妖讯,带着灵儿的线索离开村口。",
-            gate_line: "客栈灯火还照着回廊,先压住院外妖气才敢出村。",
+            objective: "替婶婶照料客栈伤者，查清后院湿足迹从何处而来。",
+            gate_line: "先问清伤者遭遇，再沿后院足迹查出妖气来路。",
         },
         JourneyBeat {
             title: "十里坡旧道",
@@ -764,8 +764,8 @@ pub const JOURNEY_MARKER_PLANS: [&[&[NodeKind]]; CHAPTER_COUNT] = [
 pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
     &[
         JourneyIntro {
-            scene_line: "雨丝从客栈檐角垂下来,后院竹篱外有一串湿脚印停在灯影边。",
-            party_line: "李逍遥：这村口夜路我熟,可今晚连风都像在催人出门。",
+            scene_line: "余杭夜雨里，客栈帮工李逍遥刚收完碗。养他长大的婶婶正在照料一名跌进门的伤者，后院留下一串带黑泥的湿足迹。",
+            party_line: "李逍遥：我平日只跑堂送饭，没见过这样的伤。婶婶留在店里照应，我先问清来路，再去后院看看。",
         },
         JourneyIntro {
             scene_line: "十里坡的竹叶压得很低,旧路上每一截泥痕都像被妖爪翻过。",
@@ -821,7 +821,7 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
         },
         JourneyIntro {
             scene_line: "江心伏潮把船影揉成碎片,每一道浪纹都像黑鳞擦过。",
-            party_line: "林月衡：蛟巢就在前面,别让它把渡口拖进雾里。",
+            party_line: "李逍遥：蛟巢就在前面，先护住船工，别让它把渡口拖进雾里。",
         },
         JourneyIntro {
             scene_line: "黑鳞漩口轰然张开,江雾卷成一道直落水底的妖门。",
@@ -830,8 +830,8 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
     ],
     &[
         JourneyIntro {
-            scene_line: "白河村外药铃摇得急,病屋灯火隔着雾像快要熄灭。",
-            party_line: "李逍遥：先把药路护住,人还在等救命消息。",
+            scene_line: "苏州获救船工染着黑水疫，红衣剑客林月衡循同一股妖气来到白河。她熟悉护送药队的路，愿与你们一起查病源。",
+            party_line: "林月衡：我是追着害人妖气来的。你们问病，我替药队开路；先把还活着的人救下来。",
         },
         JourneyIntro {
             scene_line: "荒寺石阶覆着冷灰,佛火和妖火混在一起,分不出哪边更烫。",
@@ -874,8 +874,8 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
     ],
     &[
         JourneyIntro {
-            scene_line: "离京后的驿路忽然空旷,远山雷纹一跳,像有人在云底点鼓。",
-            party_line: "南瑶：那不是天雷,是族里的旧鼓在认路。",
+            scene_line: "镜阵密图把众人引向南疆。守鼓人南瑶认出图上的族印，为查清父亲背负的锁麟旧债，答应带你们沿鼓纹走过祭道。",
+            party_line: "南瑶：我守的是南疆路鼓。密图上的旧誓与我父亲有关，我要问清真相，也会把你们带到锁阵前。",
         },
         JourneyIntro {
             scene_line: "百越灵道两侧挂着旧符,每走一步,鼓声就从脚底往心口撞。",
@@ -904,7 +904,7 @@ pub const JOURNEY_INTROS: [&[JourneyIntro]; CHAPTER_COUNT] = [
             party_line: "李逍遥：道心也好,情缘也好,别在这水里散了。",
         },
         JourneyIntro {
-            scene_line: "回梦水道映出旧日岔路,白狐影、琴声和同伴脚步一层层浮上来。",
+            scene_line: "回梦水道映出许多岔路，狐影与断续琴声浮上水面；有的像旧日记忆，有的来自未曾走过的路。",
             party_line: "南瑶：听见回声也别回头,让它跟着我们去终门。",
         },
         JourneyIntro {
@@ -957,7 +957,7 @@ pub struct ChapterClearReward {
 pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     ChapterClearReward {
         seal: "余杭赤火印",
-        line: "赤鬼山妖退散,余杭夜路终于能听见人声。",
+        line: "赤鬼倒下，铜环内刻着“水月”，环边还沾着黑鳞水印。前往水月洞天查这枚环从何而来。",
         hp: 16,
         mp: 6,
         atk: 4,
@@ -965,7 +965,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "水月灵誓印",
-        line: "月魄妖退散,水月洞天重新映出同伴身影。",
+        line: "月影散去，阵盘背面露出苏州漕印。灵泉黑水随运船进城，下一站沿漕路查船。",
         hp: 18,
         mp: 8,
         atk: 4,
@@ -973,7 +973,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "苏州河灯印",
-        line: "河魇蛟沉入江心,倒流河灯顺水归城。",
+        line: "蛟巢里找到药船残页和白河医札；获救船工染上疫水。带医札去白河，先救人再问源头。",
         hp: 20,
         mp: 8,
         atk: 5,
@@ -981,7 +981,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "白河清瘴印",
-        line: "瘴母根断裂,白河雨声第一次像雨。",
+        line: "母根断裂，根匣中藏着国师署名的镇水符。疫水不是天灾，须赴京查符是谁送来的。",
         hp: 22,
         mp: 9,
         atk: 5,
@@ -989,7 +989,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "京华破镜印",
-        line: "照影国师镜阵碎裂,暗帖有了能见天日的路。",
+        line: "镜阵碎开，密图标出南疆引雷祭道。图上还留着守鼓族印，须先找到守鼓人问明锁麟旧债。",
         hp: 24,
         mp: 9,
         atk: 6,
@@ -997,7 +997,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "南疆雷誓印",
-        line: "雷麟收起天雷,南疆灵道承认队伍的誓印。",
+        line: "雷麟解开锁阵，黑水支流通向心渊。带着六地证物进终门，封住把妖祸送往人间的水路。",
         hp: 26,
         mp: 10,
         atk: 6,
@@ -1005,7 +1005,7 @@ pub const CHAPTER_CLEAR_REWARDS: [ChapterClearReward; CHAPTER_COUNT] = [
     },
     ChapterClearReward {
         seal: "心渊照影印",
-        line: "宿命水影散入终门,这一世的选择有了回声。",
+        line: "心渊水门封合，黑潮不再涌向六地。收好沿途证物，回余杭报平安；伤者与守候的人还在等。",
         hp: 0,
         mp: 0,
         atk: 0,
@@ -1798,10 +1798,13 @@ impl RunState {
     }
 
     pub fn party_companions(&self) -> &'static [Companion] {
-        match (self.chapter, self.stage) {
-            (0, 0) => &RUN_PARTY_SOLO,
-            (0..=2, _) => &RUN_PARTY_LINGER,
-            (3 | 4, _) => &RUN_PARTY_SWORD,
+        // A drawn or merely entered story is not a meeting: only a resolved choice joins her.
+        if !self.has_narrative_receipt(narrative::NarrativeKind::Story(0, 0)) {
+            return &RUN_PARTY_SOLO;
+        }
+        match self.chapter {
+            0..=2 => &RUN_PARTY_LINGER,
+            3 | 4 => &RUN_PARTY_SWORD,
             _ => &RUN_PARTY_FULL,
         }
     }
@@ -2145,12 +2148,20 @@ impl RunState {
 
     /// 情缘≥4:灵儿灵息缠身,敌人每回合行动后为你回血。
     pub fn bond_regen(&self) -> i32 {
-        if self.qingyuan >= 4 { 2 } else { 0 }
+        if self.qingyuan >= 4 && self.party_companions().contains(&Companion::Linger) {
+            2
+        } else {
+            0
+        }
     }
 
     /// 情缘≥7:开战灵儿先布灵息护罩(开战回血)。
     pub fn bond_shield(&self) -> i32 {
-        if self.qingyuan >= 7 { 8 } else { 0 }
+        if self.qingyuan >= 7 && self.party_companions().contains(&Companion::Linger) {
+            8
+        } else {
+            0
+        }
     }
 
     /// 道心≥4:绝技·剑气爆发威力 ×1.3。
@@ -2489,6 +2500,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn high_affinity_without_a_meeting_cannot_summon_linger_support() {
+        let mut rng = Rng(12345);
+        let mut run = RunState::new(&mut rng);
+        let mut stats = crate::game::core::PlayerStats::default();
+        run.qingyuan = 10;
+        run.stage = 1;
+        assert_eq!(run.bond_regen(), 0);
+        assert_eq!(run.bond_shield(), 0);
+        let mut dialogue = event::RunDialogue::default();
+        dialogue.open_story(0, 0);
+        event::resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
+        assert_eq!(run.bond_regen(), 2);
+        assert_eq!(run.bond_shield(), 8);
+    }
+
+    #[test]
+    fn party_requires_a_resolved_first_meeting_and_not_stage_or_story_draws() {
+        let mut rng = Rng(12345);
+        let mut run = RunState::new(&mut rng);
+        let mut stats = crate::game::core::PlayerStats::default();
+        run.seen_story_scenes.push((0, 0));
+        run.stage = 1;
+        assert!(run.party_companions().is_empty());
+        assert!(
+            !run.available_camp_tactics()
+                .contains(&RunCampTactic::LingerWard)
+        );
+        let mut dialogue = event::RunDialogue::default();
+        dialogue.open_story(0, 0);
+        assert!(run.party_companions().is_empty());
+        event::resolve_choice(&mut dialogue, 0, &mut stats, &mut run, &mut rng);
+        assert_eq!(run.party_companions(), &[Companion::Linger]);
+        assert!(
+            run.available_camp_tactics()
+                .contains(&RunCampTactic::LingerWard)
+        );
+        run.chapter = 3;
+        assert_eq!(run.party_companions(), &RUN_PARTY_SWORD);
+        run.chapter = 5;
+        assert_eq!(run.party_companions(), &RUN_PARTY_FULL);
+        assert!(JOURNEY_INTROS[3][0].scene_line.contains("剑客林月衡"));
+        assert!(JOURNEY_INTROS[5][0].scene_line.contains("守鼓人南瑶"));
+        assert!(
+            !JOURNEY_INTROS[2]
+                .iter()
+                .any(|intro| intro.party_line.starts_with("林月衡"))
+        );
+    }
+
+    #[test]
     fn journey_beats_match_chapter_depths() {
         assert_eq!(JOURNEY_BEATS.len(), CHAPTER_COUNT);
         assert_eq!(JOURNEY_MARKER_PLANS.len(), CHAPTER_COUNT);
@@ -2676,8 +2737,11 @@ mod tests {
             }
         }
         let final_scene = content::pick_story(6, content::story_count(6) - 1);
-        assert!(final_scene.lines[0].contains("第三声"));
-        assert!(content::pick_story(6, 4).lines[0].contains("灵台"));
+        // The third bell is the water shade's imitation, not a rule of fate.
+        assert!(final_scene.lines[0].contains("模仿寻路铃连响三声"));
+        // Scenes sit in the order of the stages they take place at.
+        assert!(content::pick_story(6, 2).lines[0].contains("灵台"));
+        assert!(content::pick_story(6, 4).lines[0].contains("回梦客栈"));
         assert!(content::pick_story(6, 5).lines[0].contains("断镜"));
     }
 
@@ -2742,7 +2806,7 @@ mod tests {
         );
         assert_eq!(run.party_companions(), &[]);
         assert_eq!(run.party_summary(), "李逍遥");
-        assert!(run.journey_intro().scene_line.contains("雨丝"));
+        assert!(run.journey_intro().scene_line.contains("余杭夜雨"));
         assert_eq!(
             run.journey_marker_plan(),
             &[NodeKind::Story, NodeKind::Market, NodeKind::Fight]
@@ -2809,6 +2873,14 @@ mod tests {
         assert_eq!(run.chapter_seal_summary(), "余杭赤火印");
         assert!(run.journey_summary().contains("章印：1/7"));
 
+        event::settle_story(
+            0,
+            0,
+            0,
+            &mut crate::game::core::PlayerStats::default(),
+            &mut run,
+            &mut rng,
+        );
         run.stage = 3;
         assert_eq!(run.journey_beat().title, "洞天灵誓");
         assert_eq!(run.journey_map(), MapKind::Cave);

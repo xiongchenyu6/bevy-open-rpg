@@ -8,8 +8,8 @@ use love_rpg::{
         AppState, PlayerStats, Rng,
         battle::PendingEncounter,
         roguelike::{
-            CHAPTER_CLEAR_REWARDS, FightRank, JOURNEY_MAPS, RunState, battle_mods_for, content,
-            encounter_kind_for, graph::NodeKind, narrative, skill::SkillId,
+            CHAPTER_CLEAR_REWARDS, FightRank, JOURNEY_MAPS, RunState, battle_mods_for,
+            encounter_kind_for, event, graph::NodeKind, skill::SkillId,
         },
     },
 };
@@ -51,12 +51,7 @@ fn main() {
         // excluding ordinary relic drops and extra optional quest rewards.
         for (act, clear) in CHAPTER_CLEAR_REWARDS.iter().enumerate().take(chapter) {
             run.chapter = act;
-            narrative::apply_outcome(
-                &content::pick_story(act, 0).options[act % 2].outcome,
-                &mut stats,
-                &mut run,
-                &mut rng,
-            );
+            event::settle_story(act, 0, act % 2, &mut stats, &mut run, &mut rng);
             stats.max_hp += clear.hp;
             stats.max_mp += clear.mp;
             stats.atk += clear.atk;
@@ -68,12 +63,7 @@ fn main() {
         run.fights_won = chapter as u32 * 4;
         run.card_shown = true;
         if preset == "final-battle" {
-            narrative::apply_outcome(
-                &content::pick_story(chapter, 0).options[0].outcome,
-                &mut stats,
-                &mut run,
-                &mut rng,
-            );
+            event::settle_story(chapter, 0, 0, &mut stats, &mut run, &mut rng);
             run.stage = JOURNEY_MAPS[chapter].len() - 1;
             run.current_fight = Some(FightRank::Boss);
             app.insert_resource(battle_mods_for(&run, FightRank::Boss));

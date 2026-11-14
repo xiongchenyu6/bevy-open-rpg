@@ -1363,35 +1363,42 @@ pub(crate) fn spawn_run_scene(
                 bottom: Val::Px(0.0),
                 ..default()
             },
-            ImageNode::new(asset_server.load(format!("ui/chapter{}_art.png", card + 1))),
+            ImageNode::new(asset_server.load(if card == 0 {
+                "backgrounds/battle-village.png".to_string()
+            } else {
+                format!("ui/chapter{}_art.png", card + 1)
+            })),
             GlobalZIndex(40),
         ));
-        // Wan2.2 i2v 生成的 32 帧过场动画(8×4 图集,640×352/帧,16fps 循环)。
-        let layout = layouts.add(TextureAtlasLayout::from_grid(
-            UVec2::new(640, 352),
-            8,
-            4,
-            None,
-            None,
-        ));
-        commands.spawn((
-            ChapterArt,
-            ChapterArtAnim::default(),
-            scope(),
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                top: Val::Px(0.0),
-                bottom: Val::Px(0.0),
-                ..default()
-            },
-            ImageNode::from_atlas_image(
-                asset_server.load(format!("ui/anim/chapter{}_sheet.png", card + 1)),
-                TextureAtlas { layout, index: 0 },
-            ),
-            GlobalZIndex(41),
-        ));
+        // The first card precedes the first meeting; its couple animation would reveal it.
+        if card > 0 {
+            // Wan2.2 i2v 生成的 32 帧过场动画(8×4 图集,640×352/帧,16fps 循环)。
+            let layout = layouts.add(TextureAtlasLayout::from_grid(
+                UVec2::new(640, 352),
+                8,
+                4,
+                None,
+                None,
+            ));
+            commands.spawn((
+                ChapterArt,
+                ChapterArtAnim::default(),
+                scope(),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    ..default()
+                },
+                ImageNode::from_atlas_image(
+                    asset_server.load(format!("ui/anim/chapter{}_sheet.png", card + 1)),
+                    TextureAtlas { layout, index: 0 },
+                ),
+                GlobalZIndex(41),
+            ));
+        }
     }
 
     commands.insert_resource(RunSceneMap(map));

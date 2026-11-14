@@ -57,6 +57,19 @@ fn simulation(def: &EnemyDef, kind: EncounterKind, chapter: usize, seed: u64) ->
     stats.mp = stats.max_mp;
     let mut rng = Rng(seed);
     let mut run = RunState::new(&mut rng);
+    // Chapter 0 simulates the solo opening. Later chapters are past the first
+    // meeting, so it is settled; its reward goes to scratch stats because the
+    // simulated hero is the chapter baseline.
+    if chapter > 0 {
+        crate::game::roguelike::event::settle_story(
+            0,
+            0,
+            1,
+            &mut PlayerStats::default(),
+            &mut run,
+            &mut Rng(seed),
+        );
+    }
     run.chapter = chapter;
     let rank = if matches!(kind, EncounterKind::Boss(_)) {
         FightRank::Boss

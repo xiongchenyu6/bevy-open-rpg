@@ -4938,6 +4938,14 @@ mod tests {
     fn run_party_companions_are_visible_in_run_battles() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
+        crate::game::roguelike::event::settle_story(
+            0,
+            0,
+            1,
+            &mut PlayerStats::default(),
+            &mut run,
+            &mut rng,
+        );
         run.stage = 3;
         let quest = QuestLog::default();
         assert!(battle_companion_visible(
@@ -4972,6 +4980,14 @@ mod tests {
         let mut rng = Rng::default();
         let quest = QuestLog::default();
         let mut run = RunState::new(&mut rng);
+        crate::game::roguelike::event::settle_story(
+            0,
+            0,
+            1,
+            &mut PlayerStats::default(),
+            &mut run,
+            &mut rng,
+        );
         run.stage = 3;
         run.qingyuan = 3;
 

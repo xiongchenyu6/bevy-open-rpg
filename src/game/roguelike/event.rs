@@ -323,6 +323,22 @@ pub fn run_dialogue_input(
     intent.clear();
 }
 
+/// Settles a story choice through the real resolver without the dialogue UI.
+/// Harnesses and tests that start a run mid-journey use it for the first
+/// meeting, because companions only join once that choice is resolved.
+pub fn settle_story(
+    chapter: usize,
+    roll: usize,
+    pick: usize,
+    stats: &mut PlayerStats,
+    run: &mut RunState,
+    rng: &mut Rng,
+) {
+    let mut dialogue = RunDialogue::default();
+    dialogue.open_story(chapter, roll);
+    resolve_choice(&mut dialogue, pick, stats, run, rng);
+}
+
 pub(crate) fn resolve_choice(
     dialogue: &mut RunDialogue,
     pick: usize,
@@ -614,6 +630,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn first_meeting_joins_linger_only_after_either_resolved_choice() {
+        for pick in 0..content::pick_story(0, 0).options.len() {
+            let mut rng = Rng::default();
+            let mut run = RunState::new(&mut rng);
+            let mut stats = PlayerStats::default();
+            let mut dialogue = RunDialogue::default();
+            assert!(run.party_companions().is_empty());
+            dialogue.open_story(0, 0);
+            assert!(
+                run.party_companions().is_empty(),
+                "Opening dialogue is not meeting her"
+            );
+            assert!(!run.has_narrative_receipt(NarrativeKind::Story(0, 0)));
+            resolve_choice(&mut dialogue, pick, &mut stats, &mut run, &mut rng);
+            assert!(dialogue.resolved);
+            assert!(run.has_narrative_receipt(NarrativeKind::Story(0, 0)));
+            assert_eq!(run.party_companions(), &[Companion::Linger]);
+        }
+    }
+
+    #[test]
+    fn cancellation_without_confirmation_does_not_resolve_first_meeting() {
+        let mut rng = Rng::default();
+        let run = RunState::new(&mut rng);
+        let mut dialogue = RunDialogue::default();
+        dialogue.open_story(0, 0);
+        dialogue.idx = dialogue.lines.len() - 1;
+        let mut app = App::new();
+        app.insert_resource(dialogue)
+            .insert_resource(run)
+            .insert_resource(rng)
+            .insert_resource(PlayerStats::default())
+            .insert_resource(Intent {
+                cancel: true,
+                ..default()
+            })
+            .add_systems(Update, run_dialogue_input);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<RunState>()
+                .party_companions()
+                .is_empty()
+        );
+        assert!(!app.world().resource::<RunDialogue>().resolved);
+        assert!(!app.world().resource::<Intent>().cancel);
+    }
+
+    #[test]
     fn route_commission_choice_tracks_local_errand_target() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
@@ -665,6 +730,7 @@ mod tests {
     fn rest_choice_records_camp_scene_and_next_battle_tactic() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
+        settle_story(0, 0, 1, &mut PlayerStats::default(), &mut run, &mut rng);
         run.stage = 3;
         let mut stats = PlayerStats {
             hp: 40,
@@ -699,6 +765,7 @@ mod tests {
     fn late_rest_unlocks_spirit_focus_tactic() {
         let mut rng = Rng::default();
         let mut run = RunState::new(&mut rng);
+        settle_story(0, 0, 0, &mut PlayerStats::default(), &mut run, &mut rng);
         run.chapter = 5;
         let mut stats = PlayerStats { mp: 1, ..default() };
         let mut dialogue = RunDialogue::default();
