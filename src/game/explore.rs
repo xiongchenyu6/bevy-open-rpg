@@ -8644,6 +8644,9 @@ fn terrain_tint(color: Color, scale: f32) -> Vec4 {
     )
 }
 
+/// Half-width, in cells, of the cross-fade between neighbouring surfaces.
+const TERRAIN_BLEND_HALF_WIDTH: f32 = 0.17;
+
 fn terrain_id_image(map: &MapData) -> Image {
     let mut data = Vec::with_capacity((MAP_W * MAP_H * 4) as usize);
     for row in 0..MAP_H {
@@ -8724,7 +8727,7 @@ pub(crate) fn spawn_terrain_map(
             grass_tint: terrain_tint(grass.color, 1.0),
             wall_tint,
             water_tint: terrain_tint(water.color, 1.0),
-            map: Vec4::new(MAP_W as f32, MAP_H as f32, TILE, 0.10),
+            map: Vec4::new(MAP_W as f32, MAP_H as f32, TILE, TERRAIN_BLEND_HALF_WIDTH),
             sample: Vec4::new(
                 TERRAIN_SOURCE_SIZE,
                 TERRAIN_SOURCE_INSET,

@@ -8,8 +8,12 @@
 //! the boss map: a single demon gate. Battles hop out to `AppState::Battle`
 //! and return here through the Reward screen.
 
+use bevy::asset::RenderAssetUsages;
 use bevy::camera::ScalingMode;
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::sprite::Text2dShadow;
 
 use super::super::animation::{self, AnimationAssets, AnimationClip, SpriteAnimation};
 use super::super::battle::{EncounterZone, PendingEncounter};
@@ -136,10 +140,13 @@ pub struct RunPartyFollower {
     companion: Companion,
 }
 
+/// The single fog-of-war layer: one small texture stretched over the map.
 #[derive(Component)]
-pub struct RunFogTile {
-    col: i32,
-    row: i32,
+pub struct RunFogOverlay {
+    image: Handle<Image>,
+    /// Where the clear area is centred, in cell units. It trails the hero so
+    /// the fog slides instead of jumping a whole cell per step.
+    eye: Vec2,
 }
 
 #[derive(Component)]
@@ -546,6 +553,13 @@ fn grant_route_puzzle_reward(stats: &mut PlayerStats, run: &mut RunState, map: M
 const RUN_VISIBLE_RADIUS: f32 = 4.25;
 const RUN_SEEN_FOG_ALPHA: f32 = 0.30;
 const RUN_UNSEEN_FOG_ALPHA: f32 = 0.60;
+/// Fog texels per map cell; linear filtering turns them into soft edges.
+const RUN_FOG_TEXELS: usize = 4;
+/// Width in cells of the fade between the clear area and the fog.
+const RUN_FOG_FEATHER: f32 = 1.9;
+/// How quickly the clear area catches up with the hero, per second.
+const RUN_FOG_FOLLOW_RATE: f32 = 9.0;
+const RUN_FOG_COLOR: [u8; 4] = [8, 12, 18, 0];
 
 fn ensure_run_fog(scene: &mut RunSceneState) {
     let valid = scene.revealed.len() == MAP_H as usize
@@ -576,13 +590,46 @@ fn run_fog_revealed(scene: &RunSceneState, col: i32, row: i32) -> bool {
         .unwrap_or(false)
 }
 
-fn run_fog_alpha(scene: &RunSceneState, col: i32, row: i32) -> f32 {
-    if run_fog_visible(scene, col, row) {
-        0.0
-    } else if run_fog_revealed(scene, col, row) {
-        RUN_SEEN_FOG_ALPHA
-    } else {
-        RUN_UNSEEN_FOG_ALPHA
+/// Fog opacity at a point given in cell units (cell centres are integers).
+/// Remembered and unseen cells are interpolated, and the clear area around
+/// `eye` fades out over more than a cell, so no edge follows the grid.
+fn run_fog_alpha_at(scene: &RunSceneState, point: Vec2, eye: Vec2) -> f32 {
+    let memory = |col: i32, row: i32| {
+        let col = col.clamp(0, MAP_W - 1);
+        let row = row.clamp(0, MAP_H - 1);
+        if run_fog_revealed(scene, col, row) {
+            RUN_SEEN_FOG_ALPHA
+        } else {
+            RUN_UNSEEN_FOG_ALPHA
+        }
+    };
+    let base = point.floor();
+    let blend = point - base;
+    let blend = blend * blend * (Vec2::splat(3.0) - 2.0 * blend);
+    let (col, row) = (base.x as i32, base.y as i32);
+    let top = memory(col, row).lerp(memory(col + 1, row), blend.x);
+    let bottom = memory(col, row + 1).lerp(memory(col + 1, row + 1), blend.x);
+    let remembered = top.lerp(bottom, blend.y);
+
+    // A slow ripple keeps the rim of the clear area from being a perfect circle.
+    let ripple =
+        0.22 * (point.x * 1.7 + point.y * 0.9).sin() * (point.y * 1.3 - point.x * 0.6).cos();
+    let distance = point.distance(eye) + ripple;
+    let outside = ((distance - (RUN_VISIBLE_RADIUS - RUN_FOG_FEATHER)) / (RUN_FOG_FEATHER + 0.35))
+        .clamp(0.0, 1.0);
+    remembered * outside * outside * (3.0 - 2.0 * outside)
+}
+
+fn paint_run_fog(image: &mut Image, scene: &RunSceneState, eye: Vec2) {
+    let width = MAP_W as usize * RUN_FOG_TEXELS;
+    let data = image
+        .data
+        .as_mut()
+        .expect("the fog texture is kept in the main world");
+    for (index, texel) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let point = Vec2::new((index % width) as f32, (index / width) as f32);
+        let cell = (point + Vec2::splat(0.5)) / RUN_FOG_TEXELS as f32 - Vec2::splat(0.5);
+        texel[3] = (run_fog_alpha_at(scene, cell, eye) * 255.0).round() as u8;
     }
 }
 
@@ -627,33 +674,62 @@ fn reveal_run_fog(scene: &mut RunSceneState) -> bool {
     changed
 }
 
-fn spawn_run_fog(commands: &mut Commands, scene: &RunSceneState) {
-    let scope = || DespawnOnExit(AppState::RunScene);
-    for row in 0..MAP_H {
-        for col in 0..MAP_W {
-            let p = tile_to_world(col, row);
-            commands.spawn((
-                RunFogTile { col, row },
-                Sprite::from_color(
-                    Color::srgba(0.01, 0.02, 0.035, run_fog_alpha(scene, col, row)),
-                    Vec2::splat(TILE),
-                ),
-                Transform::from_xyz(p.x, p.y, 18.0),
-                scope(),
-            ));
-        }
-    }
+fn spawn_run_fog(commands: &mut Commands, images: &mut Assets<Image>, scene: &RunSceneState) {
+    let eye = Vec2::new(scene.col as f32, scene.row as f32);
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: (MAP_W as usize * RUN_FOG_TEXELS) as u32,
+            height: (MAP_H as usize * RUN_FOG_TEXELS) as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &RUN_FOG_COLOR,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::linear();
+    paint_run_fog(&mut image, scene, eye);
+    let image = images.add(image);
+    commands.spawn((
+        RunFogOverlay {
+            image: image.clone(),
+            eye,
+        },
+        Sprite {
+            image,
+            custom_size: Some(Vec2::new(MAP_W as f32 * TILE, MAP_H as f32 * TILE)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 18.0),
+        DespawnOnExit(AppState::RunScene),
+    ));
 }
 
 pub fn update_run_fog(
+    time: Res<Time>,
     scene: Option<ResMut<RunSceneState>>,
-    mut tiles: Query<(&RunFogTile, &mut Sprite)>,
+    mut images: ResMut<Assets<Image>>,
+    mut overlays: Query<&mut RunFogOverlay>,
     mut fogged: Query<(&RunFoggedEntity, &mut Visibility)>,
 ) {
     let Some(mut scene) = scene else { return };
-    reveal_run_fog(&mut scene);
-    for (tile, mut sprite) in &mut tiles {
-        sprite.color = Color::srgba(0.01, 0.02, 0.035, run_fog_alpha(&scene, tile.col, tile.row));
+    let revealed = reveal_run_fog(&mut scene);
+    let hero = Vec2::new(scene.col as f32, scene.row as f32);
+    for mut overlay in &mut overlays {
+        let gap = hero - overlay.eye;
+        if !revealed && gap == Vec2::ZERO {
+            continue;
+        }
+        // Close most of the gap each frame; snap once it is imperceptible.
+        let step = 1.0 - (-time.delta_secs() * RUN_FOG_FOLLOW_RATE).exp();
+        overlay.eye = if gap.length() < 0.01 {
+            hero
+        } else {
+            overlay.eye + gap * step
+        };
+        if let Some(mut image) = images.get_mut(&overlay.image) {
+            paint_run_fog(&mut image, &scene, overlay.eye);
+        }
     }
     for (fogged, mut visibility) in &mut fogged {
         *visibility = run_fog_entity_visibility(&scene, fogged.col, fogged.row);
@@ -1171,7 +1247,7 @@ pub(crate) fn spawn_run_scene(
 
     // Fog of war: unknown cells sit above landmarks and props, while the
     // hero's local light keeps the playable area clear.
-    spawn_run_fog(&mut commands, &scene);
+    spawn_run_fog(&mut commands, &mut images, &scene);
 
     // Compact vitals, with one objective tracker; full receipts live in the inventory.
     commands
@@ -2005,8 +2081,13 @@ pub fn run_scene_movement(
         commands.spawn((
             SceneFloatText { age: 0.0 },
             Text2d::new(format!("瘴毒 -{hurt}")),
-            font.text_font(20.0),
-            TextColor(Color::srgb(0.85, 0.45, 1.0)),
+            font.text_font(28.0),
+            // Pale on a dark edge: purple on the dim map could not be read.
+            TextColor(Color::srgb(0.97, 0.86, 1.0)),
+            Text2dShadow {
+                offset: Vec2::new(2.0, -2.0),
+                color: Color::srgba(0.10, 0.0, 0.16, 0.95),
+            },
             Transform::from_xyz(p.x, p.y + 30.0, 30.0),
             DespawnOnExit(AppState::RunScene),
         ));
@@ -3180,8 +3261,21 @@ mod tests {
         assert!(reveal_run_fog(&mut scene));
         assert!(scene.revealed[5][5]);
         assert!(!scene.revealed[0][0]);
-        assert_eq!(run_fog_alpha(&scene, 5, 5), 0.0);
-        assert_eq!(run_fog_alpha(&scene, 0, 0), RUN_UNSEEN_FOG_ALPHA);
+        let eye = Vec2::new(5.0, 5.0);
+        assert_eq!(run_fog_alpha_at(&scene, eye, eye), 0.0);
+        assert_eq!(
+            run_fog_alpha_at(&scene, Vec2::ZERO, eye),
+            RUN_UNSEEN_FOG_ALPHA
+        );
+        // The rim fades: neighbouring texels never differ by a whole fog level
+        // (the square fog stepped by 0.30 and 0.60).
+        let mut previous = 0.0;
+        for texel in 0..=(12 * RUN_FOG_TEXELS) {
+            let x = 5.0 + texel as f32 / RUN_FOG_TEXELS as f32;
+            let alpha = run_fog_alpha_at(&scene, Vec2::new(x, 5.0), eye);
+            assert!((alpha - previous).abs() < 0.15, "fog steps at x={x}");
+            previous = alpha;
+        }
         assert!(matches!(
             run_fog_entity_visibility(&scene, 0, 0),
             Visibility::Hidden
@@ -3191,8 +3285,10 @@ mod tests {
         scene.row = 5;
         assert!(reveal_run_fog(&mut scene));
         assert!(scene.revealed[5][5]);
-        assert_eq!(run_fog_alpha(&scene, 5, 5), RUN_SEEN_FOG_ALPHA);
-        assert_eq!(run_fog_alpha(&scene, 10, 5), 0.0);
+        let eye = Vec2::new(10.0, 5.0);
+        let remembered = run_fog_alpha_at(&scene, Vec2::new(2.0, 5.0), eye);
+        assert!((remembered - RUN_SEEN_FOG_ALPHA).abs() < 0.02);
+        assert_eq!(run_fog_alpha_at(&scene, eye, eye), 0.0);
         assert!(matches!(
             run_fog_entity_visibility(&scene, 5, 5),
             Visibility::Inherited

@@ -91,8 +91,11 @@ flows — the presence of the `RunState` resource marks a roguelike battle.
   marker; boss stage = single demon gate); `spawn_run_scene` renders the whole
   logical map through explore's `TerrainMaterial` — a 30×16 terrain-id texture
   drives world-space sampling of floor/grass/wall/water sources, while the WGSL
-  shader selects one actual terrain surface per pixel and draws narrow contact
-  shadows/shore rims, rather than mixing several painted scenes. Water uses a
+  shader cross-fades neighbouring surfaces over a narrow band along a
+  wandering line near the collision edge (bank and cliff-foot shading live in
+  that band), so borders do not follow the square grid. Run-mode fog of war is
+  one small texture (`RunFogOverlay`, 4 texels per cell, linear filtering)
+  repainted as the clear area trails the hero. Water uses a
   dedicated ripple texture without islands or decorative land. Gameplay
   remains grid-based without rendering one opaque sprite per cell —
   hero, gold category icons for required objectives, a top journey banner with

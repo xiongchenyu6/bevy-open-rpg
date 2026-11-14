@@ -27,12 +27,24 @@ fn terrain_id(coord: vec2<i32>) -> u32 {
     return u32(round(textureLoad(tile_ids, sample_coord, 0).r * 255.0));
 }
 
-// Paths and encounter grass are walkable; cliffs and water are distinct obstacles.
-fn boundary_class(id: u32) -> u32 {
-    // Architecture blocks movement like a wall, but uses ground underneath.
-    let blocked = select(select(0u, id, id >= 2u), 2u, id == 4u);
-    // A bridge displays the same water but its deck is traversable.
-    return select(blocked, 0u, id == 5u);
+// Which painted surface a terrain id shows: 0 path, 1 grass, 2 cliff, 3 water.
+// Architecture stands on path ground and a bridge shows the water under it.
+fn surface_kind(id: u32) -> u32 {
+    if id == 1u { return 1u; }
+    if id == 2u { return 2u; }
+    if id == 3u || id == 5u { return 3u; }
+    return 0u;
+}
+
+// How much of each surface a corner cell contributes, as (path, grass, cliff, water).
+fn surface_weight(cell: vec2<i32>, weight: f32) -> vec4<f32> {
+    let kind = surface_kind(terrain_id(cell));
+    return vec4<f32>(
+        select(0.0, weight, kind == 0u),
+        select(0.0, weight, kind == 1u),
+        select(0.0, weight, kind == 2u),
+        select(0.0, weight, kind == 3u),
+    );
 }
 
 fn ping_pong(value: f32, span: f32) -> f32 {
@@ -49,26 +61,24 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         (material.map.y - 1.0) * 0.5 - mesh.world_position.y / tile_size,
     );
 
-    // Grid coordinates address tile centres. Ownership switches at the real
-    // collision edge, never through a four-way alpha blend of unrelated art.
-    let cell = vec2<i32>(floor(grid + vec2<f32>(0.5)));
-    let cell_uv = fract(grid + vec2<f32>(0.5));
-    let id = terrain_id(cell);
-    let surface_class = boundary_class(id);
-    let left_class = boundary_class(terrain_id(cell + vec2<i32>(-1, 0)));
-    let right_class = boundary_class(terrain_id(cell + vec2<i32>(1, 0)));
-    let top_class = boundary_class(terrain_id(cell + vec2<i32>(0, -1)));
-    let bottom_class = boundary_class(terrain_id(cell + vec2<i32>(0, 1)));
-    let edge_distance = min(min(
-        select(1.0, cell_uv.x, surface_class != left_class),
-        select(1.0, 1.0 - cell_uv.x, surface_class != right_class)), min(
-        select(1.0, cell_uv.y, surface_class != top_class),
-        select(1.0, 1.0 - cell_uv.y, surface_class != bottom_class)));
-    let wall_distance = min(min(
-        select(1.0, cell_uv.x, left_class == 2u),
-        select(1.0, 1.0 - cell_uv.x, right_class == 2u)), min(
-        select(1.0, cell_uv.y, top_class == 2u),
-        select(1.0, 1.0 - cell_uv.y, bottom_class == 2u)));
+    // Grid coordinates address tile centres. Borders between surfaces follow
+    // a wandering line near the collision edge and cross-fade over a narrow
+    // band, so the map reads as painted ground rather than as square cells.
+    let wander = vec2<f32>(
+        sin(grid.y * 2.3 + sin(grid.x * 1.1) * 1.9),
+        sin(grid.x * 2.7 + sin(grid.y * 1.3) * 1.7),
+    ) * 0.15 + vec2<f32>(
+        sin(grid.y * 7.1 + grid.x * 3.3),
+        sin(grid.x * 6.3 - grid.y * 2.9),
+    ) * 0.045;
+    let border = grid + wander;
+    let corner = vec2<i32>(floor(border));
+    let band = material.map.w;
+    let t = smoothstep(vec2<f32>(0.5 - band), vec2<f32>(0.5 + band), fract(border));
+    let weights = surface_weight(corner, (1.0 - t.x) * (1.0 - t.y))
+        + surface_weight(corner + vec2<i32>(1, 0), t.x * (1.0 - t.y))
+        + surface_weight(corner + vec2<i32>(0, 1), (1.0 - t.x) * t.y)
+        + surface_weight(corner + vec2<i32>(1, 1), t.x * t.y);
 
     let warp = vec2<f32>(
         sin((grid.y + material.phase.y) * 0.73),
@@ -95,22 +105,15 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let grass_color = textureSample(grass_texture, grass_sampler, ground_uv) * material.grass_tint;
     let wall_color = textureSample(wall_texture, wall_sampler, texture_uv) * material.wall_tint;
     let water_color = textureSample(water_texture, water_sampler, surface_uv) * material.water_tint;
-    var color = select(floor_color, grass_color, id == 1u);
-    color = select(color, wall_color, id == 2u);
-    color = select(color, water_color, id == 3u || id == 5u);
+    var color = floor_color.rgb * weights.x + grass_color.rgb * weights.y
+        + wall_color.rgb * weights.z + water_color.rgb * weights.w;
 
-    // Brush-like contact shading belongs to the existing surface; it cannot
-    // introduce a fake island, rock or walkway from the adjacent texture.
+    // Shading lives in the cross-fade itself: a damp, slightly foamy bank
+    // where land meets water and a soft shadow at the foot of a cliff.
     let grain = 0.85 + 0.15 * sin(grid.x * 29.3 + sin(grid.y * 17.1));
-    let contact = (1.0 - smoothstep(0.0, material.map.w, edge_distance)) * grain;
-    let wall_shadow = 1.0 - smoothstep(0.0, 0.18, wall_distance);
-    if surface_class == 0u {
-        color = vec4<f32>(color.rgb * (1.0 - wall_shadow * 0.25 - contact * 0.10), 1.0);
-    } else if surface_class == 2u {
-        color = vec4<f32>(color.rgb * (1.0 + contact * 0.18), 1.0);
-    } else {
-        color = vec4<f32>(color.rgb * (1.0 - contact * 0.38)
-            + vec3<f32>(0.10, 0.17, 0.16) * contact * 0.25, 1.0);
-    }
-    return vec4<f32>(color.rgb, 1.0);
+    let shore = 4.0 * weights.w * (1.0 - weights.w) * grain;
+    let foot = 4.0 * weights.z * (1.0 - weights.z);
+    color = color * (1.0 - shore * 0.30 - foot * 0.22)
+        + vec3<f32>(0.10, 0.17, 0.16) * shore * 0.22;
+    return vec4<f32>(color, 1.0);
 }
