@@ -1,0 +1,84 @@
+{
+  "url": "https://xiongchenyu6.github.io/bevy-open-rpg/",
+  "revision": "f60351405b7a060aedfe1547cb5a1980e7f17ec6",
+  "manifestVersion": "0ef00b3f55ba81cffdccdd423f54e1fe87d2d53e2c4bcaba1b772a1fd0be8d8f",
+  "engineInputsSha256": "3582cc428e1c46384db07bec0a036b55fe59f47a3bc1271501e6168910b56551",
+  "verifiedFiles": [
+    {
+      "path": "downloads.js",
+      "sha256": "feb0187f9aeb6e8484cbb29e287a1ccfb25e58337203d17a8c00d96fdd5aec5f",
+      "bytes": 9569
+    },
+    {
+      "path": "game-cache.js",
+      "sha256": "c2cfc4b1ccbb87e94501cb92c3ce90408900cd3875b2ce5f418e3db935ebfc3b",
+      "bytes": 9921
+    },
+    {
+      "path": "launcher.js",
+      "sha256": "2e9ed9ef3fc9c2091758935e13298aa7f8fa790fa05cf86b94321af49a2d2e81",
+      "bytes": 6160
+    },
+    {
+      "path": "pkg/love_rpg.js",
+      "sha256": "6cd396478dc1f1b05def03cfff2aa408151d0018453729677521d11d00ea0083",
+      "bytes": 102414
+    },
+    {
+      "path": "pkg/love_rpg_bg.wasm.gz",
+      "sha256": "e2184b8137b55d28e6b71d13f5ee807bf0a0951e1cb2fe7ded6a4e377e3c5344",
+      "bytes": 5473739
+    },
+    {
+      "path": "pwa.js",
+      "sha256": "761e013fb6f032cb3125d01f97445ffbd15322139a7bf2ab2e77b0530f84d132",
+      "bytes": 3931
+    },
+    {
+      "path": "assets/ui/anim/chapter2_sheet.png",
+      "sha256": "f39d13d5b58159d06619bb842c885d76acbc75582f697d576d0aff5735ad896f",
+      "bytes": 7985981
+    },
+    {
+      "path": "assets/ui/anim/chapter3_sheet.png",
+      "sha256": "65246aa389d2c0917c5ac353a9a7d4c7af0feb883f608ca4eaea2680cda206ea",
+      "bytes": 11140625
+    },
+    {
+      "path": "assets/ui/anim/chapter4_sheet.png",
+      "sha256": "36d1a4f771e08d9bbb99b7e1119e5ae21d948a7016d4f761df62f3ab404c18e4",
+      "bytes": 8676682
+    },
+    {
+      "path": "assets/ui/anim/chapter5_sheet.png",
+      "sha256": "6c3ff704b330dceb62772b347bf7507d18e066813f181e0c92a9a7fc73dc1f5d",
+      "bytes": 10482575
+    },
+    {
+      "path": "assets/ui/anim/chapter6_sheet.png",
+      "sha256": "219843ba4db77039109e695c8d0503e82be60ade88be86b2ac0374474b3f3e57",
+      "bytes": 12330043
+    },
+    {
+      "path": "assets/ui/anim/chapter7_sheet.png",
+      "sha256": "70985e56836525fb7e279dd502279b7b963df57933de06c3d5ff08caec463838",
+      "bytes": 11059148
+    },
+    {
+      "path": "assets/actors/hero-motion.png",
+      "sha256": "ed3620dbbdfac7369c2ccd5c591e8cec89e0d3c8b70151515eaf849f5524d1a4",
+      "bytes": 1912104
+    },
+    {
+      "path": "assets/fonts/NotoSansCJKsc-Regular.otf",
+      "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+      "bytes": 16437364
+    },
+    {
+      "path": "assets/fonts/OFL.txt",
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "bytes": 4301
+    }
+  ],
+  "passed": true
+}

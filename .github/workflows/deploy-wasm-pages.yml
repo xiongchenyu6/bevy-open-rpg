@@ -77,6 +77,13 @@ jobs:
       - name: Validate resource manifest tooling
         run: python3 -m unittest discover -s tools -p 'test_*.py'
 
+      - name: Verify canceled download ownership
+        run: |
+          npm install --prefix target/browser-check --no-save --package-lock=false playwright-core@1.55.0
+          export NODE_PATH="$PWD/target/browser-check/node_modules"
+          export CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
+          node tools/test_download_retry.cjs
+
       - name: Build web artifacts
         env:
           WASM_REUSE_BASE_URL: https://xiongchenyu6.github.io/bevy-open-rpg/

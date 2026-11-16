@@ -7,7 +7,7 @@
 - [x] Real Rust asset read gate and chapter transition preparation; no timer bypass.
 - [x] Touch movement and existing command/dialogue controls; safe area and stable viewport.
 - [x] Required Rust checks, web build, real browser desktop/mobile, cold offline and update tests.
-- [ ] Commit/deploy/public receipt and verified screenshots/video.
+- [x] Published gameplay acceptance at `f603514`; public receipts and screenshots retained.
 
 Keep existing .agents directory untouched. Preserve Bevy 0.19.1 and native behavior.
 
@@ -18,7 +18,7 @@ Keep existing .agents directory untouched. Preserve Bevy 0.19.1 and native behav
 - Python: 14 manifest/retention/source-fingerprint/engine-reuse scenarios pass.
 - Real Chromium SW: 10 integrity/update/offline scenarios; 12 demand/pinning/cancel/update scenarios.
 - Production launcher with isolated tiny engine: 5 scenarios; language/install screenshots reviewed at 844×390 and 390×844.
-- Final native check/build and release WASM build pass. Actual compiled WebGPU gameplay, cold offline restart, joystick release, inventory scrolling and both orientations pass. Landscape objective panel contains every line. Public deployment is pending.
+- Final native check/build and release WASM build pass. Actual compiled WebGPU gameplay, cold offline restart, joystick release, inventory scrolling and both orientations pass. Landscape objective panel contains every line. Published desktop/mobile/cold-offline acceptance also passed at `f603514` with zero browser errors.
 
 ## Actual runtime review
 
@@ -67,3 +67,9 @@ Keep existing .agents directory untouched. Preserve Bevy 0.19.1 and native behav
   page screenshots and the browser viewport recording show the actual rendered content.
 - Physical Android/iOS testing remains outstanding. No hardware support claim is inferred
   from emulation. Existing15 gameplay dead-code warnings remain unchanged.
+
+## Published acceptance
+
+`public/result.json` and `public/receipt.json` identify release `f603514` and verified hosted engine/JS/group-sample hashes. The public actual-game harness passed desktop chapter entry, full browser restart offline, mobile movement/release, finger scrolling and both inventory orientations with no browser errors. Public screenshots were visually reviewed. Workflow: https://github.com/xiongchenyu6/bevy-open-rpg/actions/runs/43880741236 .
+
+A subsequent UI-only correction allows immediate retry while canceled preparation settles. Its deterministic regression holds both preparations independently, proving an old completion cannot unlock or complete its successor, including between-chapter pause/retry. It does not change compiled engine inputs. Hardware Android/iOS remains untested.
