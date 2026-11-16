@@ -3,7 +3,7 @@
 const {chromium}=require('playwright');
 const fs=require('node:fs/promises'),path=require('node:path'),http=require('node:http'),os=require('node:os');
 const assert=require('node:assert/strict');
-const root=path.resolve(__dirname,'../web'),out=path.resolve('target/web-game-proof');
+const root=path.resolve(__dirname,'../web'),out=path.resolve(process.env.OUTPUT||'target/web-game-proof');
 async function finishDialogue(page) {
  for(let i=0;i<32;i++) {
   if(!await page.evaluate(()=>window.loveDialogue)) { await page.waitForTimeout(3000);if(!await page.evaluate(()=>window.loveDialogue))return; }
@@ -18,15 +18,18 @@ async function finishDialogue(page) {
 (async()=>{
  await fs.mkdir(out,{recursive:true});
  const requests=[],errors=[];
- const manifest=JSON.parse(await fs.readFile(path.join(root,'asset-manifest.json'),'utf8'));
+ const remote=process.env.GAME_URL;
+ const manifest=remote?await (await fetch(new URL('asset-manifest.json',remote))).json():JSON.parse(await fs.readFile(path.join(root,'asset-manifest.json'),'utf8'));
+ const build=remote?await (await fetch(new URL('build.json',remote))).json():JSON.parse(await fs.readFile(path.join(root,'build.json'),'utf8'));
+ if(process.env.EXPECT_REVISION)assert(manifest.revision.startsWith(process.env.EXPECT_REVISION),'Hosted source revision differs');
  const paths=new Map(manifest.files.map(f=>['/'+f.url,f.path]));
  const server=http.createServer(async(req,res)=>{let p=new URL(req.url,'http://local').pathname;requests.push(paths.get(p)||p);if(p==='/')p='/index.html';try{const data=await fs.readFile(path.join(root,p));res.setHeader('Content-Type',p.endsWith('.js')?'text/javascript':p.endsWith('.wasm')?'application/wasm':p.endsWith('.html')?'text/html':p.endsWith('.css')?'text/css':'application/octet-stream');res.end(data)}catch{res.writeHead(404).end()}});
- await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=remote||'http://127.0.0.1:'+server.address().port;
  const profile=await fs.mkdtemp(path.join(os.tmpdir(),'rpg-real-'));
  const launch=(mobile=false)=>chromium.launchPersistentContext(profile,{headless:process.env.HEADED!=='1',hasTouch:mobile,isMobile:mobile,executablePath:process.env.CHROMIUM_EXECUTABLE_PATH,viewport:mobile?{width:844,height:390}:{width:1280,height:720},recordVideo:mobile?{dir:path.join(out,'video'),size:{width:844,height:390}}:undefined,args:['--no-sandbox','--ozone-platform=x11','--disable-gpu-watchdog','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding','--disable-background-timer-throttling','--enable-unsafe-webgpu','--use-angle=vulkan','--use-vulkan=swiftshader','--enable-features=Vulkan','--disable-vulkan-surface']});
  let context;
  try{
- context=await launch();let page=await context.newPage();page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{console.log('BROWSER',m.text().slice(0,600))});
+ context=await launch();let page=await context.newPage();page.on('pageerror',e=>errors.push(String(e)));if(remote)page.on('request',r=>{const p=new URL(r.url()).pathname.replace(new URL(base).pathname,'');requests.push(paths.get('/'+p)||p);});page.on('console',m=>{console.log('BROWSER',m.text().slice(0,600))});
  await page.goto(base);await page.locator('[data-language="en"]').click();assert.equal(await page.locator('#start').textContent(),'Start game');await page.screenshot({timeout:90000,path:path.join(out,'desktop-launcher.png')});
  await page.locator('[data-language="zh-CN"]').click();await page.locator('#start').click();
  await page.waitForFunction(()=>window.loveUiReady===true,null,{timeout:180000});
@@ -60,6 +63,6 @@ async function finishDialogue(page) {
  await page.screenshot({timeout:90000,path:path.join(out,'mobile-offline-map.png')});
  const video=page.video();await context.close();context=null;await fs.writeFile(path.join(out,'video-path.txt'),await video.path());
 
- assert.equal(errors.length,0,errors.join('\n'));await fs.writeFile(path.join(out,'result.json'),JSON.stringify({passed:true,revision:manifest.revision,manifestVersion:manifest.version,engineInputsSha256:JSON.parse(await fs.readFile(path.join(root,'build.json'),'utf8')).engine_inputs_sha256,errors},null,2));
+ assert.equal(errors.length,0,errors.join('\n'));await fs.writeFile(path.join(out,'result.json'),JSON.stringify({passed:true,revision:manifest.revision,manifestVersion:manifest.version,engineInputsSha256:build.engine_inputs_sha256,errors},null,2));
  }finally{await context?.close();server.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
