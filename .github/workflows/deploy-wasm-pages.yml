@@ -74,8 +74,16 @@ jobs:
       - name: Verify paperdoll decoding without filesystem extraction
         run: cargo test --locked -p paperdoll-tar
 
+      - name: Validate resource manifest tooling
+        run: python3 -m unittest discover -s tools -p 'test_*.py'
+
       - name: Build web artifacts
+        env:
+          WASM_REUSE_BASE_URL: https://xiongchenyu6.github.io/bevy-open-rpg/
         run: bash scripts/build_web.sh
+
+      - name: Retain two verified releases for running games
+        run: python3 tools/retain_web_releases.py web --base-url https://xiongchenyu6.github.io/bevy-open-rpg/
 
       - name: Package web bundle
         run: |

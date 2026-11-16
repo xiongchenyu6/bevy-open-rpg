@@ -29,12 +29,16 @@ pub fn spawn(commands: &mut Commands, font: &GameFont, scope: impl Bundle) {
     commands
         .spawn((
             DialogueRoot,
+            crate::game::ui_scroll::ScrollPanel,
+            ScrollPosition::default(),
             scope,
             theme::panel(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(8.0),
                 right: Val::Percent(8.0),
                 bottom: Val::Px(28.0),
+                max_height: Val::Percent(88.0),
+                overflow: Overflow::scroll_y(),
                 column_gap: Val::Px(16.0),
                 align_items: AlignItems::FlexStart,
                 padding: UiRect::axes(Val::Px(26.0), Val::Px(20.0)),
@@ -160,10 +164,10 @@ pub fn pointer_input(
     }
 }
 
-/// Portrait windows have ample vertical room but must not inherit the tiny
-/// landscape design scale. Keep local sizes in physical pixels, including DPI.
-fn portrait_units(viewport: UVec2, ui_scale: f32, dpi: f32) -> Option<f32> {
-    (viewport.y > viewport.x).then(|| 1.0 / (ui_scale * dpi).max(0.1))
+/// Small screens need readable CSS-sized type and 44px touch targets.
+/// Cap and scroll the card so tall choices remain reachable in landscape.
+fn compact_units(viewport: UVec2, ui_scale: f32, dpi: f32) -> Option<f32> {
+    (viewport.y > viewport.x || viewport.x as f32 / dpi <= 900.0).then(|| 1.0 / ui_scale.max(0.1))
 }
 
 fn label_size(label: Label, portrait: Option<f32>) -> f32 {
@@ -195,25 +199,25 @@ pub fn update(
     >,
     mut labels: Query<(&Label, &mut Text, &mut TextColor, &mut TextFont)>,
 ) {
-    let portrait_units = cameras.iter().find_map(|camera| {
+    let compact_units = cameras.iter().find_map(|camera| {
         let size = camera.physical_viewport_size()?;
-        portrait_units(size, scale.0, camera.target_scaling_factor().unwrap_or(1.0))
+        compact_units(size, scale.0, camera.target_scaling_factor().unwrap_or(1.0))
     });
     if let Ok(mut node) = root.single_mut() {
-        let units = portrait_units.unwrap_or(1.0);
-        node.left = Val::Percent(if portrait_units.is_some() { 4.0 } else { 8.0 });
+        let units = compact_units.unwrap_or(1.0);
+        node.left = Val::Percent(if compact_units.is_some() { 4.0 } else { 8.0 });
         node.right = node.left;
-        node.bottom = Val::Px(if portrait_units.is_some() {
+        node.bottom = Val::Px(if compact_units.is_some() {
             20.0 * units
         } else {
             28.0
         });
-        node.padding = if portrait_units.is_some() {
+        node.padding = if compact_units.is_some() {
             UiRect::axes(Val::Px(18.0 * units), Val::Px(16.0 * units))
         } else {
             UiRect::axes(Val::Px(26.0), Val::Px(20.0))
         };
-        node.column_gap = Val::Px(if portrait_units.is_some() {
+        node.column_gap = Val::Px(if compact_units.is_some() {
             12.0 * units
         } else {
             16.0
@@ -225,8 +229,8 @@ pub fn update(
         };
     }
     if let Ok((mut image, mut node)) = portrait.single_mut() {
-        node.width = Val::Px(portrait_units.map_or(120.0, |units| 72.0 * units));
-        node.height = Val::Px(portrait_units.map_or(132.0, |units| 80.0 * units));
+        node.width = Val::Px(compact_units.map_or(120.0, |units| 72.0 * units));
+        node.height = Val::Px(compact_units.map_or(132.0, |units| 80.0 * units));
         node.display = if dialogue.portrait.is_some() {
             Display::Flex
         } else {
@@ -247,9 +251,9 @@ pub fn update(
             ),
             Action::Continue => (dialogue.active && !choosing, false),
         };
-        let units = portrait_units.unwrap_or(1.0);
+        let units = compact_units.unwrap_or(1.0);
         node.min_height = match action {
-            Action::Option(_) => Val::Px(if portrait_units.is_some() {
+            Action::Option(_) => Val::Px(if compact_units.is_some() {
                 44.0 * units
             } else {
                 32.0
@@ -259,7 +263,7 @@ pub fn update(
         node.padding = match action {
             Action::Option(_) => UiRect::axes(
                 Val::Px(12.0 * units),
-                Val::Px(if portrait_units.is_some() {
+                Val::Px(if compact_units.is_some() {
                     8.0 * units
                 } else {
                     5.0
@@ -280,7 +284,7 @@ pub fn update(
         *border = BorderColor::all(if selected { theme::GOLD } else { theme::EDGE });
     }
     for (label, mut text, mut color, mut font) in &mut labels {
-        font.font_size = label_size(*label, portrait_units).into();
+        font.font_size = label_size(*label, compact_units).into();
         text.0 = match *label {
             Label::Title => dialogue.title.clone(),
             Label::Line => dialogue
@@ -300,8 +304,18 @@ pub fn update(
             ),
             Label::Preview => String::new(),
             Label::Continue => "继续".into(),
-            Label::Hint if choosing => "↑ ↓ 选择 · 空格 / 回车确认 · 点击选项".into(),
-            Label::Hint => "空格 / 回车继续 · 点击继续".into(),
+            Label::Hint if choosing => if compact_units.is_some() {
+                "点击选项确认"
+            } else {
+                "↑ ↓ 选择 · 空格 / 回车确认 · 点击选项"
+            }
+            .into(),
+            Label::Hint => if compact_units.is_some() {
+                "点击继续"
+            } else {
+                "空格 / 回车继续 · 点击继续"
+            }
+            .into(),
             Label::Option(index) => {
                 color.0 = if index == dialogue.selected {
                     theme::GOLD
@@ -323,8 +337,9 @@ mod tests {
             (UVec2::new(720, 1280), 0.5625, 1.0),
             (UVec2::new(360, 800), 0.28125, 1.0),
             (UVec2::new(720, 1280), 0.28125, 2.0),
+            (UVec2::new(1688, 780), 0.54, 2.0),
         ] {
-            let units = portrait_units(size, scale, dpi);
+            let units = compact_units(size, scale, dpi);
             for label in [
                 Label::Title,
                 Label::Line,
@@ -335,10 +350,10 @@ mod tests {
             ] {
                 assert!(label_size(label, units) * scale * dpi >= 16.0);
             }
-            // A 44px pointer target retains its physical extent at either DPI.
-            assert!((44.0 * units.unwrap() * scale * dpi - 44.0).abs() < 0.01);
+            // A 44px touch target retains its logical extent at either DPI.
+            assert!((44.0 * units.unwrap() * scale - 44.0).abs() < 0.01);
         }
-        let landscape = portrait_units(UVec2::new(960, 540), 0.75, 1.0);
+        let landscape = compact_units(UVec2::new(960, 540), 0.75, 1.0);
         assert!(landscape.is_none());
         assert_eq!(label_size(Label::Line, landscape), 21.0);
         assert_eq!(label_size(Label::Hint, landscape), 13.0);

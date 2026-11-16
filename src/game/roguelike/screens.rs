@@ -139,6 +139,10 @@ pub fn title_input(
         return;
     }
     intent.clear();
+    #[cfg(target_arch = "wasm32")]
+    if !crate::game::web_runtime::chapter_ready(0, false) {
+        return;
+    }
 
     // Fresh hero, fresh fate. Mix wall-clock entropy into the RNG so each
     // desktop launch rolls a different world (capture presets re-seed after

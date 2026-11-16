@@ -1,0 +1,5 @@
+PASS fresh production launcher installs worker, caches core and starts without waiting-worker race
+PASS later keeps the active version and language survives reload
+PASS accepted launcher-only update reuses engine and starts the confirmed new version
+PASS unsupported graphics stays on actionable launcher
+PASS slow engine never bypasses first-scene readiness after22seconds

@@ -49,6 +49,10 @@ bevy_fog_of_war = { version = "0.4.0", default-features = false, features = [
   "format-json",
 ] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window"] }
+
 [features]
 # Build the web target with the WebGPU backend:
 #   cargo build --target wasm32-unknown-unknown --release --features webgpu --bin love-rpg

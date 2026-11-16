@@ -31,8 +31,7 @@ for legacy capture presets but is no longer the main loop.
 
 ## States (`src/game/state.rs`)
 
-`AppState`: `Title` (default) | `NodeMap` (zero-frame hop that rolls the next
-stage) | `RunScene` (the walkable map — the run's main state) | `Battle` |
+`AppState`: `Title` (default) | `NodeMap` (stage transition; web waits here for required chapter resources) | `RunScene` (the walkable map — the run's main state) | `Battle` |
 `Reward` | `Ending` | `Explore` (legacy). Run-mode dialogue/events are an
 overlay resource inside `RunScene`, not a state. `Battle` is shared by both
 flows — the presence of the `RunState` resource marks a roguelike battle.
@@ -514,3 +513,43 @@ keeping the player visible without changing collision/depth. Persistent native
 input uses `tools/native_wayland_keyboard.sh` and `native_wayland_pointer.sh`;
 `native_play_input.py` wraps the fixed-US keyboard, replacing the unreliable
 one-key wtype mapping strategy. These tools never inspect/mutate game state.
+
+## Browser content, install, and mobile contract
+
+- `web/launcher.js` owns the pre-engine Chinese/English shell, WebGPU capability
+  feedback, explicit Start, settings, and contextual movement/interact/inventory
+  controls. Shell language changes before loading; the authored game stays Chinese.
+  Pointer cancellation, focus loss and dialogue transitions clear movement input.
+- `web/pwa.js` and `manifest.webmanifest` offer native install where supported and
+  platform-specific instructions otherwise. Installation never bypasses WebGPU support.
+- `web/game-cache.js`, `downloads.js`, `tools/sw-template.js` implement SHA256
+  immutable-resource storage, explicit updates, old-session pinning, resumable
+  preparation, offline management and fail-closed integrity checks. The generated
+  `web/sw.js` embeds the sealed manifest; it is not a source file.
+- `src/game/web_runtime.rs` installs a web-only real AssetReader gate before
+  DefaultPlugins. Fonts/title can load immediately; shared-world reads wait for
+  explicit chapter preparation. `NodeMap` advances in Update after the requested
+  group is ready, before charging tolls/RNG or changing the stage. Native behavior
+  does not depend on browser globals. The launcher waits for loaded title/font
+  handles; failed loads report an error. There is no timer that hides loading.
+- Groups follow actual loading: core (engine/font/title/shell), common (maps,
+  actors, effects, portraits and other shared world resources), chapter2–chapter7
+  (individual chapter still + animation sheets), optional (legacy chapter1 art,
+  license/support files). Chapter1 uses the common village background; its unused
+  legacy cinematic is not fetched. `assets/generated` contains generation inputs,
+  not runtime assets, and is excluded from the web bundle.
+- `scripts/build_web.sh` fingerprints Rust/Cargo/vendor/build inputs. With
+  `WASM_REUSE_BASE_URL`, an exact verified published engine is reused for shell/art
+  updates; changed compiled inputs rebuild normally. `tools/retain_web_releases.py`
+  retains two previous immutable releases before the existing release→Pages flow.
+- Mobile cards keep logical 44px targets and scroll when tall; short landscape
+  map cameras show a closer view. Existing native dialogue/battle/reward buttons
+  remain the decision controls. `ui_scroll.rs` handles touch dragging as well as
+  desktop wheels/page keys. No parallel map-entry toolbar is added.
+- Verification: `python3 -m unittest discover -s tools -p 'test_*.py'`,
+  `tools/test_pwa_cache.cjs` (real Chromium worker/update/offline tests), and
+  `tools/test_web_game.cjs` (actual compiled WebGPU title/chapter/offline screenshots).
+  Use `NODE_PATH` for Playwright and `CHROMIUM_EXECUTABLE_PATH` on Nix.
+- `roguelike/inventory_ui.rs` adapts inventory typography and panel bounds to
+  short landscape/portrait screens on resize. The touch overlay exposes only
+  Return while inventory is open; movement and interaction are suppressed.

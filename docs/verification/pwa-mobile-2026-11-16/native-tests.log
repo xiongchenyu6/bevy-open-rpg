@@ -1,0 +1,482 @@
+warning: Git tree '/home/freeman.xiong/Documents/github/xiongchenyu6/bevy-open-rpg' is dirty
+warning: call to `.clone()` on a reference in this situation does nothing
+   --> vendor/paperdoll-tar/src/lib.rs:131:39
+    |
+131 |         let img_path = temp_dir.path().clone().join(&filename);
+    |                                       ^^^^^^^^
+    |
+    = note: the type `Path` does not implement `Clone`, so calling `clone` on `&Path` copies the reference, which does not do anything and can be removed
+    = note: `#[warn(noop_method_call)]` on by default
+help: remove this redundant call
+    |
+131 -         let img_path = temp_dir.path().clone().join(&filename);
+131 +         let img_path = temp_dir.path().join(&filename);
+    |
+
+warning: call to `.clone()` on a reference in this situation does nothing
+   --> vendor/paperdoll-tar/src/lib.rs:168:39
+    |
+168 |         let img_path = temp_dir.path().clone().join(&filename);
+    |                                       ^^^^^^^^
+    |
+    = note: the type `Path` does not implement `Clone`, so calling `clone` on `&Path` copies the reference, which does not do anything and can be removed
+help: remove this redundant call
+    |
+168 -         let img_path = temp_dir.path().clone().join(&filename);
+168 +         let img_path = temp_dir.path().join(&filename);
+    |
+
+warning: call to `.clone()` on a reference in this situation does nothing
+   --> vendor/paperdoll-tar/src/lib.rs:183:40
+    |
+183 |     let manifest_path = temp_dir.path().clone().join(FILE_NAME_MANIFEST);
+    |                                        ^^^^^^^^
+    |
+    = note: the type `Path` does not implement `Clone`, so calling `clone` on `&Path` copies the reference, which does not do anything and can be removed
+help: remove this redundant call
+    |
+183 -     let manifest_path = temp_dir.path().clone().join(FILE_NAME_MANIFEST);
+183 +     let manifest_path = temp_dir.path().join(FILE_NAME_MANIFEST);
+    |
+
+warning: unused import: `prelude::*`
+ --> vendor/bevy_firefly/src/app.rs:8:5
+  |
+8 |     prelude::*,
+  |     ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `change_detection::Tick`
+ --> vendor/bevy_firefly/src/lights.rs:6:9
+  |
+6 |         change_detection::Tick,
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `TextureFormat` and `query::QueryItem`
+  --> vendor/bevy_firefly/src/nodes.rs:4:11
+   |
+ 4 |     ecs::{query::QueryItem, system::lifetimeless::Read},
+   |           ^^^^^^^^^^^^^^^^
+...
+10 |             TextureAspect, TextureFormat, TextureUsages, TextureViewDescriptor,
+   |                            ^^^^^^^^^^^^^
+
+warning: unused import: `ViewTarget`
+  --> vendor/bevy_firefly/src/pipelines.rs:25:44
+   |
+25 |             COLOR_TARGET_FORMAT_MASK_BITS, ViewTarget, ViewUniform, texture_format_from_code,
+   |                                            ^^^^^^^^^^
+
+warning: use of deprecated method `bevy::bevy_asset::AssetServer::load_with_settings`: Use `asset_server.load_builder().with_settings(settings).load(path)` instead
+   --> vendor/bevy_firefly/src/sprites.rs:220:26
+    |
+220 |             asset_server.load_with_settings(path, |x: &mut ImageLoaderSettings| x.is_srgb = false);
+    |                          ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `paperdoll-tar` (lib) generated 3 warnings (run `cargo fix --lib -p paperdoll-tar` to apply 3 suggestions)
+warning: `bevy_firefly` (lib) generated 5 warnings (run `cargo fix --lib -p bevy_firefly` to apply 4 suggestions)
+   Compiling love-rpg v0.1.0 (/home/freeman.xiong/Documents/github/xiongchenyu6/bevy-open-rpg)
+warning: type `dialogue_ui::Action` is more private than the item `dialogue_ui::pointer_input`
+   --> src/game/roguelike/dialogue_ui.rs:137:1
+    |
+137 | / pub fn pointer_input(
+138 | |     mut dialogue: ResMut<RunDialogue>,
+139 | |     mut intent: ResMut<Intent>,
+140 | |     buttons: Query<(&Action, &Interaction), Changed<Interaction>>,
+141 | | ) {
+    | |_^ function `dialogue_ui::pointer_input` is reachable at visibility `pub`
+    |
+note: but type `dialogue_ui::Action` is only usable at visibility `pub(in crate::game::roguelike)`
+   --> src/game/roguelike/dialogue_ui.rs:23:1
+    |
+ 23 | pub(super) enum Action {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `dialogue_ui::Action` is more private than the item `dialogue_ui::update`
+   --> src/game/roguelike/dialogue_ui.rs:184:1
+    |
+184 | / pub fn update(
+185 | |     dialogue: Res<RunDialogue>,
+186 | |     run: Option<Res<RunState>>,
+187 | |     stats: Res<PlayerStats>,
+...   |
+200 | |     mut labels: Query<(&Label, &mut Text, &mut TextColor, &mut TextFont)>,
+201 | | ) {
+    | |_^ function `dialogue_ui::update` is reachable at visibility `pub`
+    |
+note: but type `dialogue_ui::Action` is only usable at visibility `pub(in crate::game::roguelike)`
+   --> src/game/roguelike/dialogue_ui.rs:23:1
+    |
+ 23 | pub(super) enum Action {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `Portrait` is more private than the item `dialogue_ui::update`
+   --> src/game/roguelike/dialogue_ui.rs:184:1
+    |
+184 | / pub fn update(
+185 | |     dialogue: Res<RunDialogue>,
+186 | |     run: Option<Res<RunState>>,
+187 | |     stats: Res<PlayerStats>,
+...   |
+200 | |     mut labels: Query<(&Label, &mut Text, &mut TextColor, &mut TextFont)>,
+201 | | ) {
+    | |_^ function `dialogue_ui::update` is reachable at visibility `pub`
+    |
+note: but type `Portrait` is only usable at visibility `pub(in crate::game::roguelike)`
+   --> src/game/roguelike/dialogue_ui.rs:12:1
+    |
+ 12 | pub(super) struct Portrait;
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `dialogue_ui::Label` is more private than the item `dialogue_ui::update`
+   --> src/game/roguelike/dialogue_ui.rs:184:1
+    |
+184 | / pub fn update(
+185 | |     dialogue: Res<RunDialogue>,
+186 | |     run: Option<Res<RunState>>,
+187 | |     stats: Res<PlayerStats>,
+...   |
+200 | |     mut labels: Query<(&Label, &mut Text, &mut TextColor, &mut TextFont)>,
+201 | | ) {
+    | |_^ function `dialogue_ui::update` is reachable at visibility `pub`
+    |
+note: but type `dialogue_ui::Label` is only usable at visibility `pub(in crate::game::roguelike)`
+   --> src/game/roguelike/dialogue_ui.rs:14:1
+    |
+ 14 | pub(super) enum Label {
+    | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `screens::StartButton` is more private than the item `screens::title_pointer_input`
+  --> src/game/roguelike/screens.rs:23:1
+   |
+23 | / pub fn title_pointer_input(
+24 | |     mut intent: ResMut<Intent>,
+25 | |     mut buttons: Query<
+26 | |         (&Interaction, &mut BackgroundColor, &mut BorderColor),
+27 | |         (With<StartButton>, Changed<Interaction>),
+28 | |     >,
+29 | | ) {
+   | |_^ function `screens::title_pointer_input` is reachable at visibility `pub`
+   |
+note: but type `screens::StartButton` is only usable at visibility `pub(in crate::game::roguelike)`
+  --> src/game/roguelike/screens.rs:21:1
+   |
+21 | pub(super) struct StartButton;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `name` is never used
+   --> src/game/explore.rs:858:19
+    |
+819 | impl MapData {
+    | ------------ method in this implementation
+...
+858 |     pub(crate) fn name(&self) -> &'static str {
+    |                   ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `side_board_summary` is never used
+    --> src/game/explore.rs:4354:4
+     |
+4354 | fn side_board_summary(kind: MapKind, quest: &QuestLog) -> String {
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `DemandReader` is never constructed
+  --> src/game/web_runtime.rs:54:8
+   |
+54 | struct DemandReader<R> {
+   |        ^^^^^^^^^^^^
+
+warning: `love-rpg` (lib test) generated 8 warnings
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 32s
+     Running unittests src/lib.rs (target/debug/deps/love_rpg-b06f42890ea3a0d1)
+
+running 282 tests
+test game::battle::enemy_animation::tests::motion_catalog_preserves_all_other_enemy_identities ... ok
+test game::battle::feel::tests::recoil_holds_through_hit_stop_while_the_flash_keeps_playing ... ok
+test game::battle::feel::tests::enemy_blows_land_at_the_lunge_peak_and_status_ticks_stay_light ... ok
+test game::battle::feel::tests::heavier_hits_stop_shake_and_push_harder ... ok
+test game::battle::feel::tests::hit_stop_costs_the_same_time_at_30_60_and_144_fps ... ok
+test game::battle::feel::tests::one_long_frame_fires_the_contact_once_and_keeps_the_exact_stop ... ok
+test game::battle::feel::tests::stacked_impacts_never_exceed_the_stop_or_shake_caps ... ok
+test game::battle::feel::tests::sword_damage_waits_for_the_blade_and_counters_hit_hardest ... ok
+test game::battle::feel::tests::only_lost_hp_produces_a_cue ... ok
+test game::battle::feel::tests::pending_damage_is_hidden_until_contact_and_clear_drops_everything ... ok
+test game::battle::feel::tests::shake_and_reaction_return_to_rest ... ok
+test game::battle::sim_tests::combat_policy_sweep ... ignored, exhaustive real-system combat balance sweep; writes COMBAT_SWEEP_OUT
+test game::battle::enemy_animation::tests::charge_gather_brace_and_cancelled_turns_never_play_a_bite ... ok
+test game::battle::feel::tests::a_contact_due_exactly_on_a_frame_boundary_fires_on_that_frame ... ok
+test game::battle::sim_tests::narrative_reward_combat_sweep ... ignored, real-system boss sweep of actual narrative rewards; writes NARRATIVE_COMBAT_OUT
+test game::battle::sim_tests::playtest::imperfect_player_journey_sweep ... ignored, continuous imperfect-player real input/reward sweep; writes PLAYER_COMBAT_OUT
+test game::battle::sim_tests::playtest::imperfect_player_story_reward_sweep ... ignored, continuous imperfect-player journeys with actual main-story route rewards; writes PLAYER_ROUTE_COMBAT_OUT
+test game::battle::sim_tests::mastery_preserves_first_three_chapters_and_grows_damage_and_support_later ... ok
+test game::battle::enemy_animation::tests::true_attack_tracks_its_phase_clock_and_recovers_without_looping ... ok
+test game::battle::sim_tests::normal_enemy_selection_does_not_repeat_and_boss_selection_is_stable ... ok
+test game::battle::feel::tests::a_second_impact_inside_the_gap_cannot_restart_the_shake ... ok
+test game::battle::enemy_animation::tests::confirmed_hits_recoil_from_contact_but_unhurt_turns_do_not ... ok
+test game::battle::enemy_animation::tests::idle_moves_while_player_decides_and_action_rows_never_overlap ... ok
+test game::battle::sim_tests::real_input_rejects_unaffordable_spell_without_consuming_turn ... ok
+test game::battle::sim_tests::narrative_choices_unlock_distinct_real_builds_without_repeat_rewards ... ok
+test game::battle::sim_tests::fallback_spell_view_matches_moon_bite_rejection_and_actual_mana_charge ... ok
+test game::battle::sim_tests::learned_spell_uses_real_menu_and_applies_break_pressure ... ok
+test game::battle::sim_tests::real_support_spell_neither_damages_nor_builds_pressure ... ok
+test game::battle::sim_tests::actual_full_mana_guard_reports_zero_with_or_without_camp_bonus ... ok
+test game::battle::sim_tests::real_actions_without_a_hit_produce_no_stop_or_shake ... ok
+test game::battle::sim_tests::side_story_reward_combat_sweep ... ignored, real-system wounded boss sweep of actual fox/qin chain rewards; writes NARRATIVE_SIDE_COMBAT_OUT
+test game::battle::tactics::tests::brace_resists_swords_but_not_breaking_magic ... ok
+test game::battle::tactics::tests::break_cancels_once_and_followup_cannot_chain_breaks ... ok
+test game::battle::tactics::tests::enemy_styles_have_different_repeatable_rhythms ... ok
+test game::battle::tactics::tests::heavy_guard_creates_one_counter_and_waiting_expires_it ... ok
+test game::battle::tests::advertised_boss_signature_uses_its_signature_move ... ok
+test game::battle::sim_tests::real_boss_opening_charge_previews_special_without_attacking ... ok
+test game::battle::tests::battle_environments_are_distinct_and_shipped_for_every_encounter_zone ... ok
+test game::battle::sim_tests::guarding_real_shielded_special_earns_single_next_attack_counter ... ok
+test game::battle::sim_tests::real_pendant_skill_charge_and_view_both_reduce_by_two ... ok
+test game::battle::tests::battle_gold_reward_scales_for_bosses ... ok
+test game::battle::tests::bond_bonuses_adjust_next_battle_numbers ... ok
+test game::battle::tests::boss_encounter_uses_fixed_boss_def ... ok
+test game::battle::tests::boss_gains_one_turn_of_freeze_immunity_after_thawing ... ok
+test game::battle::tests::burn_resolves_after_the_enemy_action ... ok
+test game::battle::tests::camp_bonuses_adjust_next_battle_numbers ... ok
+test game::battle::tests::chapter_bosses_use_distinct_generated_cutouts ... ok
+test game::battle::tests::chapter_vow_weakens_matching_run_boss_opening ... ok
+test game::battle::tests::dream_eclipse_special_heals_boss ... ok
+test game::battle::tests::combo_damage_uses_bond_and_party_stats ... ok
+test game::battle::tests::courage_bond_response_improves_combo_damage ... ok
+test game::battle::tests::generated_enemy_cutouts_are_primary_battle_visuals ... ok
+test game::battle::tests::enemy_turn_reports_damage_for_visual_feedback ... ok
+test game::battle::tests::guard_blessing_reduces_enemy_turn_damage ... ok
+test game::battle::tests::combo_unlock_requires_two_companions_and_bond ... ok
+test game::battle::tests::legacy_boss_breakthrough_grants_chapter_growth ... ok
+test game::battle::tests::linger_support_heals_after_joining_party ... ok
+test game::battle::tests::legacy_boss_opening_reflects_chapter_preparation ... ok
+test game::battle::tests::linger_support_scales_with_bond_level ... ok
+test game::battle::tests::poison_stacks_to_three_and_refreshes_duration ... ok
+test game::battle::tests::run_camp_tactics_adjust_next_battle_numbers ... ok
+test game::battle::tests::run_party_companions_are_visible_in_run_battles ... ok
+test game::battle::tests::run_party_companions_drive_support_and_followups ... ok
+test game::battle::tests::run_route_guidance_prepares_chapter_boss_opening ... ok
+test game::battle::tests::shrine_blessings_adjust_next_battle_numbers ... ok
+test game::battle::tests::spell_impact_theme_tracks_story_chapter ... ok
+test game::battle::tests::spell_impacts_have_multihit_visual_layers ... ok
+test game::battle::tests::spell_turn_outlasts_the_landing_of_a_long_choreography ... ok
+test game::battle::tests::spirit_witch_extends_late_party_combo ... ok
+test game::battle::tests::spirit_witch_motion_joins_spell_and_combo_casts ... ok
+test game::battle::tests::sword_sister_followup_requires_joining_party ... ok
+test game::battle::tests::sword_sister_followup_scales_with_bond_level ... ok
+test game::battle::tests::sword_sister_motion_lunges_for_followup_window ... ok
+test game::battle::tests::tender_bond_response_improves_linger_support ... ok
+test game::battle::tests::spirit_witch_support_restores_mp_after_southern_join ... ok
+test game::battle::ui::tests::battle_notice_keeps_main_result_and_key_consequence_and_bounds_lines ... ok
+test game::battle::ui::tests::fallback_command_text_includes_hex_and_relic_price_modifiers ... ok
+test game::battle::tests::lethal_poison_prevents_the_enemy_action_and_burn_tick ... ok
+test game::battle::tests::linger_motion_joins_combo_cast ... ok
+test game::battle::ui::tests::hovering_return_with_exactly_five_skills_retains_visible_page ... ok
+test game::battle::ui::tests::pointer_next_and_previous_reach_other_skill_pages_and_clamp ... ok
+test game::cutout::tests::companion_cutouts_are_distinct_generated_assets ... ok
+test game::battle::ui::tests::hovering_return_retains_first_and_last_skill_pages ... ok
+test game::cutout::tests::cutout_part_motion_separates_body_segments ... ok
+test game::battle::sim_tests::fourth_chapter_mastery_changes_real_damage_and_shield_by_two ... ok
+test game::battle::ui::tests::pointer_ignores_unavailable_slots_and_nonmenu_combat_phase ... ok
+test game::cutout::tests::cutout_specs_cover_a_full_body_with_overlap ... ok
+test game::battle::sim_tests::actual_enemy_damage_result_remains_visible_after_both_party_supports ... ok
+test game::battle::ui::tests::pressing_skill_selects_page_relative_index_and_confirms ... ok
+test game::explore::tests::accepted_commissions_surface_current_target_area ... ok
+test game::explore::tests::all_maps_have_valid_rows_and_spawns ... ok
+test game::explore::tests::accepting_commission_grants_advance_supplies_once ... ok
+test game::explore::tests::authored_maps_keep_distinct_layouts ... ok
+test game::explore::tests::camp_tactic_choice_supports_three_party_plans ... ok
+test game::explore::tests::area_banner_names_region_chapter_route_and_goal ... ok
+test game::explore::tests::care_aftermath_reward_updates_stats_once ... ok
+test game::explore::tests::chapter_arts_cover_all_story_chapters ... ok
+test game::explore::tests::character_shadow_and_afterimage_frames_are_animated ... ok
+test game::explore::tests::character_body_motions_keep_explore_sprites_alive ... ok
+test game::explore::tests::commission_aftermath_reward_updates_stats_once ... ok
+test game::explore::tests::commission_field_choices_feed_route_pressure_and_street_talk ... ok
+test game::explore::tests::commission_resolution_changes_route_pressure_and_npc_echo ... ok
+test game::explore::tests::commission_trace_nodes_cover_every_side_quest_on_walkable_tiles ... ok
+test game::explore::tests::commission_trace_prompt_marker_and_progress_update_once ... ok
+test game::explore::tests::companion_revisit_givers_do_not_replace_existing_npc_roles_or_services ... ok
+test game::explore::tests::companion_scene_followup_rewards_when_returning_to_local_npc ... ok
+test game::explore::tests::companion_scenes_reduce_matching_route_pressure_and_checkpoint_lines ... ok
+test game::explore::tests::completed_local_commissions_unlock_service_favor ... ok
+test game::explore::tests::completed_commissions_reduce_matching_route_pressure ... ok
+test game::explore::tests::dialogue_chapter_art_only_shows_during_chapter_card_lines ... ok
+test game::explore::tests::dialogue_portraits_use_ai_cutouts_when_available ... ok
+test game::explore::tests::confirmed_task_choices_raise_quest_notices ... ok
+test game::battle::sim_tests::real_skill_camp_bonus_and_hunter_multiplier_affect_total_damage ... ok
+test game::explore::tests::dream_waterway_lanterns_map_to_unique_final_lamps ... ok
+test game::desktop_input_tests::press_and_release_in_one_frame_retains_confirm_edge ... ok
+test game::explore::tests::facing_task_board_shows_claim_or_turn_in_action ... ok
+test game::explore::tests::field_supply_nodes_cover_every_authored_map_on_walkable_tiles ... ok
+test game::desktop_input_tests::virtual_space_on_unrelated_physical_escape_confirms_without_cancelling_same_frame ... ok
+test game::explore::tests::late_story_npcs_use_distinct_generated_cutouts ... ok
+test game::explore::tests::field_supply_prompt_marker_and_reward_update_stats_once ... ok
+test game::explore::tests::follower_position_stays_behind_player_facing ... ok
+test game::explore::tests::late_npc_errand_contacts_are_mapped_to_existing_npcs ... ok
+test game::desktop_input_tests::logical_enter_escape_and_arrows_work_with_arbitrary_virtual_keycodes ... ok
+test game::explore::tests::main_quest_accept_result_carries_chapter_art ... ok
+test game::explore::tests::main_quest_choice_confirms_pickup_and_boss_handoff ... ok
+test game::explore::tests::maps_have_chapter_specific_ambient_profiles ... ok
+test game::explore::tests::missed_companion_revisit_runs_from_npc_pickup_to_field_and_turn_in ... ok
+test game::explore::tests::npc_contacts_can_offer_and_turn_in_local_commissions ... ok
+test game::explore::tests::moon_cave_crystals_map_to_unique_switches ... ok
+test game::explore::tests::npc_reactions_reflect_companion_personal_scene_status ... ok
+test game::explore::tests::npc_reactions_reflect_local_care_scenes ... ok
+test game::battle::sim_tests::real_attack_break_interrupts_advertised_special_and_exposes_one_followup ... ok
+test game::explore::tests::npc_errands_are_discovered_accepted_and_delivered_across_maps ... ok
+test game::explore::tests::npc_errand_deliveries_reduce_matching_route_pressure_and_echo_locally ... ok
+test game::explore::tests::npc_reactions_reflect_local_side_quest_status ... ok
+test game::explore::tests::npc_reactions_reflect_opened_treasure_caches ... ok
+test game::explore::tests::mansion_mirror_props_unlock_capital_boss_handoff ... ok
+test game::explore::tests::portal_transition_lines_name_destination_and_active_objective ... ok
+test game::explore::tests::npc_reactions_reflect_route_branch_choices ... ok
+test game::explore::tests::puzzle_props_can_advance_matching_commissions_once ... ok
+test game::explore::tests::npc_services_buy_potions_and_restore_at_inn ... ok
+test game::explore::tests::plague_ward_props_gate_shrine_ash_turn_in ... ok
+test game::explore::tests::quest_marker_visuals_hide_inactive_targets ... ok
+test game::explore::tests::party_followers_activate_in_story_order ... ok
+test game::explore::tests::quest_boards_map_to_side_quests ... ok
+test game::explore::tests::river_lantern_props_form_ordered_reed_bed_puzzle ... ok
+test game::explore::tests::route_detour_reports_reward_when_returning_to_local_npc ... ok
+test game::explore::tests::route_detours_adjust_route_encounter_rate_by_choice ... ok
+test game::explore::tests::route_marks_and_detours_advance_follow_up_commissions_once ... ok
+test game::explore::tests::shrine_blessings_adjust_route_encounter_rate ... ok
+test game::explore::tests::shrine_offering_spends_gold_and_blocks_duplicate_blessings ... ok
+test game::explore::tests::shop_service_buys_chapter_gear_once_before_potions ... ok
+test game::explore::tests::route_care_changes_route_pressure_after_party_scenes ... ok
+test game::explore::tests::scene_motion_profiles_cover_static_props_and_lights ... ok
+test game::explore::tests::route_marks_adjust_route_encounter_rate ... ok
+test game::explore::tests::route_mark_props_add_optional_route_memory ... ok
+test game::explore::tests::story_gates_later_maps ... ok
+test game::explore::tests::task_board_choice_confirms_accept_and_turn_in ... ok
+test game::explore::tests::shrine_props_map_to_battle_blessings ... ok
+test game::explore::tests::task_board_menu_lists_all_local_commissions_before_confirming ... ok
+test game::explore::tests::task_tracker_guides_active_npc_errand_to_delivery_map ... ok
+test game::explore::tests::task_tracker_surfaces_local_pickup_before_acceptance ... ok
+test game::explore::tests::terrain_samples_keep_all_shared_edges_continuous ... ok
+test game::explore::tests::terrain_samples_flip_only_on_reverse_sweeps ... ok
+test game::explore::tests::treasure_reward_updates_stats_once ... ok
+test game::quest::tests::bond_scenes_are_chapter_specific_one_time_rewards ... ok
+test game::explore::tests::terrain_id_texture_preserves_every_gameplay_wall_and_water_cell ... ok
+test game::quest::tests::capital_intrigue_act_has_entry_infiltration_and_boss ... ok
+test game::explore::tests::terrain_material_ids_match_visual_layers ... ok
+test game::explore::tests::thunder_drum_props_gate_southern_boss_handoff ... ok
+test game::quest::tests::chapter_cards_cover_every_story_chapter_with_visual_direction ... ok
+test game::quest::tests::care_aftermath_reward_requires_bond_and_camp_once ... ok
+test game::explore::tests::task_tracker_guides_main_and_side_tasks_by_current_map ... ok
+test game::quest::tests::chapter_seals_archive_main_chapter_closures ... ok
+test game::explore::tests::treasure_props_map_to_one_time_reward_caches ... ok
+test game::quest::tests::commission_traces_advance_active_side_tasks_once ... ok
+test game::quest::tests::chapter_cards_are_one_time_story_beats ... ok
+test game::quest::tests::companion_aftermath_requires_personal_scene_and_claims_once ... ok
+test game::quest::tests::field_supplies_are_one_time_route_pickups ... ok
+test game::quest::tests::companion_scenes_unlock_after_bond_and_record_personal_routes ... ok
+test game::quest::tests::finale_act_has_lamp_puzzle_relationship_scene_and_final_boss ... ok
+test game::quest::tests::inventory_and_party_summary_are_story_driven ... ok
+test game::quest::tests::commission_aftermath_reward_requires_local_chain_once ... ok
+test game::quest::tests::finale_side_quest_chain_has_board_unlock_and_rewards ... ok
+test game::quest::tests::main_task_ledger_tracks_route_book_across_chapters ... ok
+test game::quest::tests::camp_scenes_are_chapter_specific_one_time_bonuses ... ok
+test game::quest::tests::finale_epilogue_reflects_bond_side_and_camp_progress ... ok
+test game::quest::tests::missed_companion_scene_can_be_recovered_through_revisit_contract ... ok
+test game::quest::tests::npc_errands_are_accepted_delivered_and_tracked_once ... ok
+test game::quest::tests::river_town_act_advances_to_second_boss ... ok
+test game::quest::tests::route_detour_reports_are_claimed_once_after_branch ... ok
+test game::quest::tests::quest_flow_advances_from_pickup_to_turn_in ... ok
+test game::quest::tests::shop_gear_records_one_time_growth_purchases ... ok
+test game::battle::sim_tests::real_sutra_adds_nine_once_per_single_or_flurry_cast_and_not_to_ward ... ok
+test game::quest::tests::shrine_blessing_can_be_set_and_consumed ... ok
+test game::quest::tests::side_quest_objective_progress_targets_one_active_commission ... ok
+test game::quest::tests::side_quest_interactions_include_party_echoes_by_companion ... ok
+test game::quest::tests::side_quest_board_has_accept_progress_turn_in_and_reward ... ok
+test game::quest::tests::npc_errands_cover_late_chapter_cross_map_deliveries ... ok
+test game::quest::tests::side_quest_turn_in_records_resolution_branch ... ok
+test game::quest::tests::southern_spirit_act_has_pickup_turn_in_boss_and_spell_upgrade ... ok
+test game::quest::tests::plague_village_act_has_investigation_cleanse_and_boss ... ok
+test game::quest::tests::route_marks_are_one_time_route_memory ... ok
+test game::quest::tests::route_detours_record_branch_choice_once ... ok
+test game::quest::tests::route_detours_turn_party_advice_into_next_battle_tactics ... ok
+test game::battle::sim_tests::real_opening_teaches_charge_guard_and_counter_once_without_forcing_inputs ... ok
+test game::quest::tests::sword_sister_joins_after_village_turn_in ... ok
+test game::quest::tests::side_quest_step_plans_cover_every_commission_goal ... ok
+test game::quest::tests::treasure_cache_is_one_time_reward ... ok
+test game::roguelike::event::narrative_tests::narrative_fox_second_chance_changes_final_encounter_and_receipt ... ok
+test game::roguelike::event::narrative_tests::narrative_local_commission_waits_for_affordable_resolved_choice ... ok
+test game::roguelike::event::narrative_tests::narrative_market_commission_completes_only_after_goodbye ... ok
+test game::roguelike::dialogue_ui::tests::portrait_text_remains_readable_across_small_viewports_and_dpi_without_changing_landscape ... ok
+test game::roguelike::event::narrative_tests::narrative_blood_cost_requires_health_and_never_grants_free_attack ... ok
+test game::roguelike::event::narrative_tests::narrative_reward_audit ... ignored, writes every authored choice contract and real receipt for review
+test game::roguelike::event::narrative_tests::narrative_receipts_report_real_capped_recovery_and_duplicate_fallbacks ... ok
+test game::roguelike::event::narrative_tests::narrative_unaffordable_choices_do_not_change_progress_or_rng ... ok
+test game::roguelike::event::narrative_tests::narrative_qin_patron_and_listener_receive_different_reunion_skills ... ok
+test game::roguelike::event::narrative_tests::narrative_replayed_scene_and_event_never_pay_twice_or_charge_twice ... ok
+test game::desktop_input_tests::uppercase_logical_wasd_moves_and_physical_layout_fallback_still_works ... ok
+test game::roguelike::event::tests::first_meeting_joins_linger_only_after_either_resolved_choice ... ok
+test game::roguelike::event::tests::late_rest_unlocks_spirit_focus_tactic ... ok
+test game::roguelike::event::tests::rest_choice_records_camp_scene_and_next_battle_tactic ... ok
+test game::roguelike::puzzle::tests::wrong_choice_and_retreat_never_claim_completion ... ok
+test game::roguelike::puzzle::tests::clues_and_solutions_work_for_all_maps_and_rotated_choices ... ok
+test game::roguelike::event::tests::story_choice_records_current_chapter_vow ... ok
+test game::roguelike::event::tests::route_commission_choice_tracks_local_errand_target ... ok
+test game::roguelike::event::narrative_tests::narrative_paid_options_charge_on_success_and_failure ... ok
+test game::roguelike::dialogue_ui::tests::reading_and_closed_dialogues_ignore_hidden_option_presses ... ok
+test game::roguelike::event::tests::cancellation_without_confirmation_does_not_resolve_first_meeting ... ok
+test game::battle::sim_tests::actual_boss_healing_depletes_one_shared_pool_and_stops_regeneration ... ok
+test game::roguelike::scene::tests::commission_waits_for_resolution_and_settles_only_once ... ok
+test game::roguelike::scene::tests::guide_explains_work_payment_and_existing_contract_status ... ok
+test game::roguelike::scene::architecture_visibility_tests::known_building_edge_reveals_architecture_and_preserves_correct_depth ... ok
+test game::roguelike::scene::tests::journey_task_condition_tracks_only_required_markers ... ok
+test game::roguelike::scene::tests::commission_recovery_receipts_report_actual_capped_gain ... ok
+test game::roguelike::scene::tests::journey_task_condition_reports_gate_ready_and_boss_stage ... ok
+test game::roguelike::scene::layout::location_tests::all_journey_landmarks_have_matching_collision_and_reachable_approaches ... ok
+test game::roguelike::scene::tests::map_topology_repeated_finale_biomes_get_distinct_variants ... ok
+test game::roguelike::scene::tests::route_contact_dialogue_tracks_optional_errand_until_target_clears ... ok
+test game::roguelike::scene::tests::run_fog_reveals_current_vision_and_keeps_memory ... ok
+test game::roguelike::scene::tests::route_puzzle_dialogue_records_required_mechanism_rewards ... ok
+test game::roguelike::scene::tests::map_topology_all_biomes_are_connected_spacious_and_distinct ... ok
+test game::roguelike::dialogue_ui::tests::continue_button_works_while_reading_but_cannot_commit_a_choice ... ok
+test game::roguelike::screens::ui_tests::ending_recap_uses_only_actual_records_and_keeps_three ... ok
+test game::roguelike::scene::tests::visited_guide_remains_talkable_without_trapping_flow_or_portal_navigation ... ok
+test game::roguelike::skill::tests::roll_skill_is_unique_until_exhausted ... ok
+test game::roguelike::scene::tests::wrong_target_does_not_pay_or_complete_accepted_commission ... ok
+test game::roguelike::dialogue_ui::tests::hover_previews_press_confirms_and_pointer_leave_preserves_keyboard_selection ... ok
+test game::roguelike::tests::chapter_vows_record_story_choices_and_archive_counts ... ok
+test game::roguelike::scene::tests::map_topology_all_route_stages_fit_required_and_optional_objectives ... ok
+test game::roguelike::tests::chapter_clear_archives_unclaimed_boss_task_once ... ok
+test game::roguelike::tests::fox_chain_cold_branch ... ok
+test game::roguelike::skill::tests::twenty_curated_skills_are_distinct_and_sane ... ok
+test game::roguelike::tests::high_affinity_without_a_meeting_cannot_summon_linger_support ... ok
+test game::roguelike::tests::hexes_roll_unique_and_aggregate ... ok
+test game::roguelike::tests::journey_summary_tracks_current_stage ... ok
+test game::roguelike::tests::journey_beats_match_chapter_depths ... ok
+test game::roguelike::tests::fox_chain_advances_only_after_resolved_choices ... ok
+test game::roguelike::tests::run_play_time_tracks_total_and_chapter_ledgers ... ok
+test game::roguelike::tests::party_requires_a_resolved_first_meeting_and_not_stage_or_story_draws ... ok
+test game::roguelike::tests::route_commission_receipts_prepare_chapter_boss_opening ... ok
+test game::roguelike::tests::route_commission_receipts_reduce_current_chapter_grass_pressure ... ok
+test game::roguelike::tests::story_content_all_scenes_have_choices_and_resolved_outcomes ... ok
+test game::skill_vfx::tests::every_curated_skill_has_a_unique_vfx_script ... ok
+test game::web_runtime::tests::only_title_and_fonts_bypass_world_download ... ok
+test game::roguelike::tests::story_content_portraits_match_scene_speakers ... ok
+test game::roguelike::tests::story_content_chronology_is_independent_of_seed_and_preserves_finale_setup ... ok
+test game::roguelike::tests::story_content_capacity_covers_required_story_nodes ... ok
+test game::roguelike::tests::story_content_draws_do_not_repeat_before_chapter_pool_exhausts ... ok
+test game::web_runtime::tests::pending_asset_reads_wake_only_after_preparation_and_future_reads_pass ... ok
+test game::roguelike::screens::ui_tests::actual_start_button_hover_does_not_start_but_press_confirms ... ok
+test game::roguelike::scene::input_tests::portal_moves_directly_to_next_stage_without_dialogue_and_ignores_optional_guide ... ok
+test game::roguelike::scene::input_tests::wrong_puzzle_retreat_and_retry_settle_marker_and_commission_once_only_on_correct_answer ... ok
+test game::roguelike::scene::input_tests::portal_refuses_unfinished_mandatory_story_without_advancing_or_opening_paperwork ... ok
+test game::roguelike::scene::input_tests::walking_over_story_does_not_trigger_until_confirm_then_real_choice_records_reward ... ok
+test game::battle::sim_tests::real_death_revives_once_then_requests_ending_and_cleans_encounter ... ok
+test game::roguelike::event::narrative_tests::narrative_chapter_seeds_keep_random_events_in_their_geography ... ok
+test game::battle::sim_tests::real_escape_success_returns_to_scene_and_failure_spends_enemy_turn ... ok
+test game::battle::sim_tests::real_sword_hit_lands_on_contact_and_costs_equal_time_at_any_frame_rate ... ok
+test game::battle::sim_tests::real_turn_simulation_is_deterministic_and_finishes ... ok
+test game::battle::sim_tests::playtest::beginner_spell_loops_against_miasma_finish_in_fewer_than_sixty_rounds ... ok
+
+test result: ok. 276 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 17.68s

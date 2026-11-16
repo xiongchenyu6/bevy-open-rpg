@@ -15,6 +15,10 @@ if [ -n "$sixteen_bit_pngs" ]; then
   exit 1
 fi
 
+engine_inputs_sha256="$(python3 tools/web_engine_inputs.py)"
+if [ -n "${WASM_REUSE_BASE_URL:-}" ] && python3 tools/reuse_web_engine.py --base-url "$WASM_REUSE_BASE_URL" --output web --fingerprint "$engine_inputs_sha256"; then
+  echo "Reusing verified published engine bytes."
+else
 # The wasm-bindgen CLI MUST match the wasm-bindgen crate version from Cargo.lock.
 WASM_BINDGEN_VERSION="${WASM_BINDGEN_VERSION:-$(
   awk '/^name = "wasm-bindgen"$/ {getline; print; exit}' Cargo.lock |
@@ -27,23 +31,27 @@ wasm_bindgen_version_ok() {
 }
 
 resolve_wasm_bindgen() {
-  local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-  local cargo_bin="$cargo_home/bin/wasm-bindgen"
-  if [ -x "$cargo_bin" ] && wasm_bindgen_version_ok "$cargo_bin"; then
-    printf '%s\n' "$cargo_bin"
+  local tool_root="$ROOT/target/web-tools/wasm-bindgen-${WASM_BINDGEN_VERSION}"
+  local isolated="$tool_root/bin/wasm-bindgen"
+  if [ -x "$isolated" ] && wasm_bindgen_version_ok "$isolated"; then
+    printf '%s\n' "$isolated"
     return
   fi
-  if command -v wasm-bindgen >/dev/null 2>&1; then
-    local path_bin
-    path_bin="$(command -v wasm-bindgen)"
-    if wasm_bindgen_version_ok "$path_bin"; then
-      printf '%s\n' "$path_bin"
-      return
+  local candidate
+  for candidate in "${CARGO_HOME:-$HOME/.cargo}/bin/wasm-bindgen" "$(command -v wasm-bindgen 2>/dev/null || true)"; do
+    if [ -x "$candidate" ] && wasm_bindgen_version_ok "$candidate"; then
+      mkdir -p "$tool_root/bin"
+      cp "$candidate" "$isolated"
+      if wasm_bindgen_version_ok "$isolated"; then
+        printf '%s\n' "$isolated"
+        return
+      fi
     fi
-  fi
-  echo ">> installing wasm-bindgen-cli ${WASM_BINDGEN_VERSION}" >&2
-  cargo install -q --locked wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}"
-  printf '%s\n' "$cargo_bin"
+  done
+  echo ">> installing isolated wasm-bindgen-cli ${WASM_BINDGEN_VERSION}" >&2
+  cargo install -q --locked wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --root "$tool_root"
+  wasm_bindgen_version_ok "$isolated" || return 1
+  printf '%s\n' "$isolated"
 }
 
 WASM_BINDGEN_BIN="$(resolve_wasm_bindgen)"
@@ -86,7 +94,7 @@ WASM_OPT_BIN="$(resolve_wasm_opt || true)"
 # Only the game bin — the capture bin is a native-only offscreen recorder.
 cargo build --release --target wasm32-unknown-unknown --features webgpu --bin love-rpg
 
-rm -rf web/pkg web/assets
+rm -rf web/pkg
 mkdir -p web/pkg
 "$WASM_BINDGEN_BIN" \
   --target web \
@@ -123,12 +131,20 @@ if [ -n "$WASM_OPT_BIN" ]; then
 fi
 
 # Precompressed copy the loader streams with a real progress bar.
-gzip -9 -kf web/pkg/love_rpg_bg.wasm
+gzip -n -9 -kf web/pkg/love_rpg_bg.wasm
 
-BUILD_ID="$(scripts/stamp_web_build_id.py \
-  web/index.html \
-  web/pkg/love_rpg.js \
-  web/pkg/love_rpg_bg.wasm)"
-echo "Stamped web build id: ${BUILD_ID}"
+fi
 
-cp -R assets web/assets
+python3 - "$engine_inputs_sha256" <<'PYBUILD'
+import hashlib, json, pathlib, shutil, subprocess, sys
+sys.path.insert(0, 'tools')
+from web_engine_inputs import fingerprint
+if fingerprint(pathlib.Path.cwd())[0] != sys.argv[1]:
+    raise SystemExit('Compiled inputs changed during build; rebuild before publishing.')
+root=pathlib.Path('web')
+shutil.rmtree(root/'assets', ignore_errors=True)
+shutil.copytree('assets',root/'assets',ignore=lambda directory,names: ['generated'] if pathlib.Path(directory)==pathlib.Path('assets') else [])
+wasm=root/'pkg/love_rpg_bg.wasm'
+(root/'build.json').write_text(json.dumps({'revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'engine_inputs_sha256':sys.argv[1],'wasm_sha256':hashlib.sha256(wasm.read_bytes()).hexdigest(),'wasm_bytes':wasm.stat().st_size},indent=2)+'\n')
+PYBUILD
+python3 tools/generate_web_manifest.py web --revision "$(git rev-parse HEAD)" --template tools/sw-template.js

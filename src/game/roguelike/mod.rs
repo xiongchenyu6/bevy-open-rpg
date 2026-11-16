@@ -15,6 +15,7 @@ pub mod dialogue_ui;
 pub mod event;
 pub mod graph;
 pub mod hex;
+mod inventory_ui;
 pub mod narrative;
 pub mod puzzle;
 pub mod scene;
@@ -2452,7 +2453,10 @@ impl Plugin for RoguelikePlugin {
             )
             // `NodeMap` is a zero-frame hop: it rolls the next stage's map
             // and markers into `RunSceneState`, then enters the scene.
-            .add_systems(OnEnter(AppState::NodeMap), scene::advance_stage)
+            .add_systems(
+                Update,
+                scene::advance_stage.run_if(in_state(AppState::NodeMap)),
+            )
             .add_systems(
                 OnEnter(AppState::RunScene),
                 (scene::zoom_camera_in, scene::spawn_run_scene).chain(),
@@ -2466,6 +2470,7 @@ impl Plugin for RoguelikePlugin {
                     scene::clear_chapter_art,
                     scene::open_journey_intro,
                     scene::inventory_toggle,
+                    inventory_ui::layout,
                     scene::run_scene_movement,
                     scene::update_run_fog,
                     scene::animate_chapter_art,

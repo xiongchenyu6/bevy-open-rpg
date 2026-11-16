@@ -15,6 +15,7 @@ pub mod skill_vfx;
 pub mod state;
 pub mod ui;
 pub mod ui_scroll;
+pub mod web_runtime;
 
 pub use core::{EncounterRate, Intent, PlayerStats, Rng};
 pub use state::AppState;

@@ -18,9 +18,14 @@ impl Plugin for UiScrollPlugin {
 fn scroll_panels(
     mut wheel: MessageReader<MouseWheel>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
+    scale: Res<UiScale>,
     mut panels: Query<(&mut ScrollPosition, &ComputedNode), With<ScrollPanel>>,
 ) {
-    let mut delta = 0.0;
+    let mut delta = touches
+        .iter()
+        .map(|touch| -touch.delta().y / scale.0.max(0.1))
+        .sum::<f32>();
     for event in wheel.read() {
         delta -= event.y
             * match event.unit {

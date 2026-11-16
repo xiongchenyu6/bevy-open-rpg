@@ -946,6 +946,10 @@ pub fn advance_stage(
         next.set(AppState::Title);
         return;
     };
+    #[cfg(target_arch = "wasm32")]
+    if !crate::game::web_runtime::chapter_ready(run.chapter, true) {
+        return;
+    }
     // 贪泉纹的代价:每程入图先失血。
     let toll = run.hex_stage_hp_loss();
     if toll > 0 {
@@ -2346,7 +2350,7 @@ pub(super) fn update_run_hud(
     mut fonts: Query<(&HudFont, &mut TextFont)>,
     inventory: Res<InventoryOpen>,
     dialogue: Res<RunDialogue>,
-    mut roots: Query<&mut Visibility, With<MapHudRoot>>,
+    mut roots: Query<(&mut Visibility, Option<&HudPanel>), With<MapHudRoot>>,
     run: Option<Res<RunState>>,
     scene: Option<Res<RunSceneState>>,
     mut fills: ParamSet<(
@@ -2363,14 +2367,20 @@ pub(super) fn update_run_hud(
         (size.y > size.x)
             .then(|| 1.0 / (scale.0 * camera.target_scaling_factor().unwrap_or(1.0)).max(0.1))
     });
+    let compact_units = cameras.iter().find_map(|camera| {
+        let size = camera.logical_viewport_size()?;
+        (size.x <= 900.0).then(|| 1.0 / scale.0.max(0.1))
+    });
     for (style, mut font) in &mut fonts {
-        font.font_size = portrait_units
+        font.font_size = compact_units
+            .or(portrait_units)
             .map_or(style.base, |units| {
                 style.base.max(if style.hint { 12.0 } else { 15.0 }) * units
             })
             .into();
     }
     for (panel, mut node) in &mut fills.p2() {
+        node.min_height = Val::Px(0.0);
         if let Some(units) = portrait_units {
             let pad = if matches!(panel, HudPanel::Controls) {
                 8.0
@@ -2440,13 +2450,37 @@ pub(super) fn update_run_hud(
             }
         }
     }
+    if let Some(units) = compact_units {
+        for (panel, mut node) in &mut fills.p2() {
+            match panel {
+                HudPanel::Chapter => {
+                    node.right = Val::Px(if portrait_units.is_some() {
+                        14.0 * units
+                    } else {
+                        64.0 * units
+                    })
+                }
+                HudPanel::Objective => {
+                    node.bottom = Val::Px(105.0 * units);
+                    if portrait_units.is_none() {
+                        node.min_height = Val::Px(100.0 * units);
+                    }
+                    node.max_width = Val::Percent(42.0);
+                }
+                _ => {}
+            }
+        }
+    }
     if let Ok(mut node) = fills.p3().single_mut() {
         let size = portrait_units.map_or(56.0, |units| 40.0 * units);
         node.width = Val::Px(size);
         node.height = Val::Px(size);
     }
-    for mut visibility in &mut roots {
-        *visibility = if inventory.0 || dialogue.active {
+    for (mut visibility, panel) in &mut roots {
+        *visibility = if inventory.0
+            || dialogue.active
+            || (compact_units.is_some() && matches!(panel, Some(HudPanel::Controls)))
+        {
             Visibility::Hidden
         } else {
             Visibility::Inherited
@@ -2518,7 +2552,7 @@ pub fn zoom_camera_out(mut cameras: Query<(&mut Projection, &mut Transform), Wit
 
 pub fn camera_follow(
     scene: Option<Res<RunSceneState>>,
-    mut cameras: Query<(&Camera, &mut Transform), With<Camera2d>>,
+    mut cameras: Query<(&Camera, &mut Transform, &mut Projection), With<Camera2d>>,
 ) {
     let Some(scene) = scene else { return };
     if scene.col < 0 {
@@ -2526,12 +2560,20 @@ pub fn camera_follow(
     }
     let target = tile_to_world(scene.col, scene.row);
     // Use the real viewport so tall windows keep the hero in view.
-    for (camera, mut transform) in &mut cameras {
+    for (camera, mut transform, mut projection) in &mut cameras {
+        let view_height = camera
+            .logical_viewport_size()
+            .map_or(VIEW_HEIGHT, |size| size.y.clamp(360.0, VIEW_HEIGHT));
+        if let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scaling_mode = ScalingMode::FixedVertical {
+                viewport_height: view_height,
+            };
+        }
         let aspect = camera
             .logical_viewport_size()
             .map_or(16.0 / 9.0, |size| size.x / size.y.max(1.0));
-        let range_x = (MAP_W as f32 * TILE * 0.5 - VIEW_HEIGHT * aspect * 0.5).max(0.0);
-        let range_y = (MAP_H as f32 * TILE * 0.5 - VIEW_HEIGHT * 0.5).max(0.0);
+        let range_x = (MAP_W as f32 * TILE * 0.5 - view_height * aspect * 0.5).max(0.0);
+        let range_y = (MAP_H as f32 * TILE * 0.5 - view_height * 0.5).max(0.0);
         let cx = target.x.clamp(-range_x, range_x);
         let cy = target.y.clamp(-range_y, range_y);
         transform.translation.x += (cx - transform.translation.x) * 0.12;
@@ -2598,7 +2640,7 @@ pub fn inventory_toggle(
     commands.spawn((
         InventoryUi,
         Text2d::new(stats.name.clone()),
-        font.text_font(24.0),
+        super::inventory_ui::text_font(&font, 24.0),
         TextColor(Color::srgb(0.95, 0.88, 0.65)),
         Transform::from_xyz(cam.x - 235.0, cam.y - 160.0, 50.0),
         DespawnOnExit(AppState::RunScene),
@@ -2613,6 +2655,7 @@ pub fn inventory_toggle(
         .spawn((
             InventoryUi,
             crate::game::ui_scroll::ScrollPanel,
+            super::inventory_ui::Panel,
             ScrollPosition::default(),
             DespawnOnExit(AppState::RunScene),
             theme::panel(Node {
@@ -2641,7 +2684,7 @@ pub fn inventory_toggle(
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new("行囊 · 修行录"),
-                        font.text_font(28.0),
+                        super::inventory_ui::text_font(&font, 28.0),
                         TextColor(Color::srgb(0.95, 0.85, 0.55)),
                     ));
                     panel.spawn((
@@ -2651,7 +2694,7 @@ pub fn inventory_toggle(
                             run.journey_beat().place,
                             run.journey_beat().objective
                         )),
-                        font.text_font(16.0),
+                        super::inventory_ui::text_font(&font, 16.0),
                         TextColor(theme::TEXT),
                     ));
                     panel.spawn((
@@ -2671,23 +2714,23 @@ pub fn inventory_toggle(
                             run.daoxin,
                             run.qingyuan,
                         )),
-                        font.text_font(20.0),
+                        super::inventory_ui::text_font(&font, 20.0),
                         TextColor(Color::srgb(0.9, 0.92, 0.95)),
                     ));
                     panel.spawn((
                         Text::new(run.milestone_summary()),
-                        font.text_font(16.0),
+                        super::inventory_ui::text_font(&font, 16.0),
                         TextColor(Color::srgb(0.85, 0.78, 0.95)),
                     ));
                     panel.spawn((
                         Text::new(format!("法宝({}):", run.relics.len())),
-                        font.text_font(20.0),
+                        super::inventory_ui::text_font(&font, 20.0),
                         TextColor(Color::srgb(0.95, 0.85, 0.55)),
                     ));
                     if run.relics.is_empty() {
                         panel.spawn((
                             Text::new("(尚未寻得法宝)"),
-                            font.text_font(17.0),
+                            super::inventory_ui::text_font(&font, 17.0),
                             TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
                         ));
                     } else {
@@ -2702,7 +2745,7 @@ pub fn inventory_toggle(
                                     r.name(),
                                     r.desc()
                                 )),
-                                font.text_font(17.0),
+                                super::inventory_ui::text_font(&font, 17.0),
                                 TextColor(r.grade().color()),
                             ));
                         }
@@ -2713,13 +2756,13 @@ pub fn inventory_toggle(
                             run.skills.len(),
                             super::skill::SKILL_COUNT
                         )),
-                        font.text_font(20.0),
+                        super::inventory_ui::text_font(&font, 20.0),
                         TextColor(Color::srgb(0.62, 0.85, 1.0)),
                     ));
                     if run.skills.is_empty() {
                         panel.spawn((
                             Text::new("(尚未习得仙术)"),
-                            font.text_font(16.0),
+                            super::inventory_ui::text_font(&font, 16.0),
                             TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
                         ));
                     } else {
@@ -2735,20 +2778,20 @@ pub fn inventory_toggle(
                                     crate::game::battle::skill_cost(id, &run),
                                     def.desc()
                                 )),
-                                font.text_font(16.0),
+                                super::inventory_ui::text_font(&font, 16.0),
                                 TextColor(def.grade.color()),
                             ));
                         }
                     }
                     panel.spawn((
                         Text::new(format!("妖纹({}):", run.hexes.len())),
-                        font.text_font(20.0),
+                        super::inventory_ui::text_font(&font, 20.0),
                         TextColor(Color::srgb(0.90, 0.62, 1.0)),
                     ));
                     if run.hexes.is_empty() {
                         panel.spawn((
                             Text::new("(尚未染上妖纹)"),
-                            font.text_font(16.0),
+                            super::inventory_ui::text_font(&font, 16.0),
                             TextColor(Color::srgba(0.75, 0.78, 0.85, 0.8)),
                         ));
                     } else {
@@ -2762,19 +2805,19 @@ pub fn inventory_toggle(
                                     h.name(),
                                     h.desc()
                                 )),
-                                font.text_font(16.0),
+                                super::inventory_ui::text_font(&font, 16.0),
                                 TextColor(h.grade().color()),
                             ));
                         }
                     }
                     panel.spawn((
                         Text::new(run.narrative_summary()),
-                        font.text_font(15.0),
+                        super::inventory_ui::text_font(&font, 15.0),
                         TextColor(theme::TEXT),
                     ));
                     panel.spawn((
                         Text::new("旅程记录"),
-                        font.text_font(20.0),
+                        super::inventory_ui::text_font(&font, 20.0),
                         TextColor(theme::GOLD),
                     ));
                     panel.spawn((
@@ -2783,7 +2826,7 @@ pub fn inventory_toggle(
                             run.journey_summary().replace("实测用时", "此世历时"),
                             task_status
                         )),
-                        font.text_font(15.0),
+                        super::inventory_ui::text_font(&font, 15.0),
                         TextColor(theme::MUTED),
                     ));
                 });
@@ -2791,8 +2834,9 @@ pub fn inventory_toggle(
     commands.spawn((
         InventoryUi,
         DespawnOnExit(AppState::RunScene),
+        super::inventory_ui::DesktopHint,
         Text::new("滚轮或翻页键翻阅 · 退出键关闭"),
-        font.text_font(14.0),
+        super::inventory_ui::text_font(&font, 14.0),
         TextColor(theme::MUTED),
         theme::panel(Node {
             position_type: PositionType::Absolute,

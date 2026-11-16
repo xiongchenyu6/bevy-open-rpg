@@ -9,3 +9,11 @@ CLAUDE.md
 /web/pkg/
 /web/assets/
 web-dist.zip
+/web/_resources/
+/web/_releases/
+/web/asset-manifest.json
+/web/release-index.json
+/web/build.json
+
+/web/sw.js
+/tools/__pycache__/

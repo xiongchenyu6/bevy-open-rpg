@@ -3086,6 +3086,8 @@ dependencies = [
  "bevy-paperdoll",
  "bevy_firefly",
  "bevy_fog_of_war",
+ "js-sys",
+ "web-sys",
 ]
 
 [[package]]

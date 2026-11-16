@@ -97,3 +97,16 @@ Key discoveries and decisions for resuming work.
   mastery:0 in the same96 journeys. HP-only0/32, Notice70 18/32, Fumble20 32/32:
   these exclude overworld rewards and do not establish human novice difficulty.
 - Review diary and limitations: docs/playtests/player-review-2026-10-07.md.
+
+## 2026-11-16 browser rollout
+- Follow `docs/verification/pwa-mobile-2026-11-16/PLAN.md` for current proof/deployment status.
+- Unlike the legacy Explore flow, roguelike chapter1 deliberately uses
+  `backgrounds/battle-village.png`, NOT chapter1_art/sheet; keep those old assets
+  optional. Later chapter art loads in `roguelike/scene.rs` at chapter entry.
+- `web/sw.js`, manifests, `_resources`, `_releases`, pkg/assets are build outputs.
+  Edit `tools/sw-template.js`, then seal with `generate_web_manifest.py`.
+- The wasm release uses fat LTO and can take several minutes. Cargo test/check
+  also serialize on the target lock. Do not mistake silent linking for a hang.
+- Browser install is not a graphics compatibility layer: actual Android WebGPU
+  support still depends on browser/device. Chinese story UI remains unchanged;
+  English selection affects the launcher/install/download/settings shell.
