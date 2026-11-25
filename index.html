@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#120d1f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="御剑行">
+<title>御剑行 · 轮回</title>
+<link rel="icon" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="game-cache.css"><link rel="stylesheet" href="pwa.css">
+</head>
+<body>
+<canvas id="bevy-canvas" tabindex="0"></canvas>
+<main id="loading">
+<nav id="language-switch" aria-label="语言"><button data-language="zh-CN">简中</button><button data-language="en">EN</button></nav>
+<div class="mark" aria-hidden="true">◇</div><h1 id="game-title">御剑行 · 轮回</h1>
+<p id="tagline"></p><p id="status" role="status"></p>
+<button id="start" type="button"></button>
+<section id="cache-card"><p id="cache-status" role="status"></p><progress id="cache-progress" hidden></progress><div id="cache-actions"><button id="cache-update" hidden></button><button id="cache-later" hidden></button></div></section>
+<section id="install-card" hidden><p id="install-summary"></p><button id="install-button"><span id="install-label"></span></button></section>
+</main>
+<dialog id="install-dialog"><h2 id="install-title"></h2><ol id="install-steps"></ol><p id="install-note"></p><button id="install-close"></button></dialog>
+<button id="settings-entry" title="设置" aria-label="设置" hidden>⚙</button>
+<dialog id="settings-dialog"><h2 data-copy="settings"></h2><p data-copy="gameLanguage"></p><button id="manage-downloads" data-copy="downloads"></button><button id="settings-close" data-copy="back"></button></dialog>
+<div id="touch-controls" hidden><div id="move-zone" aria-label="移动"><div id="stick" hidden><i></i></div></div><div id="touch-actions"><button id="interact" title="交互" aria-label="交互">交互</button><button id="inventory" title="行囊" aria-label="行囊">行囊</button></div></div>
+<script type="module" src="launcher.js"></script>
+</body></html>
