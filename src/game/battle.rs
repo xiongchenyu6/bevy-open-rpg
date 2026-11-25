@@ -598,8 +598,13 @@ impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattleAutomationView>()
             .init_resource::<BattleFeel>()
+            .init_resource::<feel::BattleStreakState>()
+            .insert_resource(feel::BattleLanguage::detect_runtime())
             .add_systems(OnEnter(AppState::Battle), (feel::reset, spawn_battle))
-            .add_systems(OnExit(AppState::Battle), feel::reset)
+            .add_systems(
+                OnExit(AppState::Battle),
+                (feel::reset, feel::clear_sprite_hit_flashes),
+            )
             .add_systems(
                 Update,
                 (
@@ -612,11 +617,13 @@ impl Plugin for BattlePlugin {
                     sync_status_vfx_state,
                     update_tactical_feedback,
                     update_battle_animations,
+                    feel::tick_sprite_hit_flashes,
                     update_battle_effects,
                     update_floating_combat_text,
                     feel::shake_camera,
                     battle_lessons,
                     ui::update,
+                    ui::update_sensory_hud,
                     sync_battle_automation_view,
                 )
                     .chain()
@@ -4260,10 +4267,34 @@ fn update_tactical_feedback(
 }
 
 /// Spawns directional 2D razor hit-sparks, impact flash star, tapered slash arc
-/// smears, crit cross-glint, kill finisher ring, and knockback dust on exact
-/// contact frames drained from `BattleFeel`.
-fn spawn_contact_impact_juice(mut commands: Commands, mut feel: ResMut<BattleFeel>) {
+/// smears, crit cross-glint, kill finisher ring, knockback dust, 75ms sprite
+/// hit-flash, and pitch-escalated contact audio on exact contact frames drained
+/// from `BattleFeel`.
+fn spawn_contact_impact_juice(
+    mut commands: Commands,
+    mut feel: ResMut<BattleFeel>,
+    mut streak: ResMut<feel::BattleStreakState>,
+    enemy_q: Query<Entity, With<BattleEnemy>>,
+    hero_q: Query<Entity, With<BattleHero>>,
+) {
     for impact in feel.take_fired_impacts() {
+        let is_crit = impact.weight == feel::Weight::Crit;
+        let is_heavy = impact.weight >= feel::Weight::Heavy;
+        match impact.target {
+            Target::Enemy => {
+                let (_hits, pitch_speed) = streak.register_hit();
+                feel::dispatch_contact_sfx(impact, pitch_speed);
+                if let Ok(enemy_entity) = enemy_q.single() {
+                    feel::queue_sprite_hit_flash(&mut commands, enemy_entity, is_crit);
+                }
+            }
+            Target::Hero => {
+                feel::dispatch_contact_sfx(impact, 1.0);
+                if let Ok(hero_entity) = hero_q.single() {
+                    feel::queue_sprite_hit_flash(&mut commands, hero_entity, is_crit);
+                }
+            }
+        }
         let (origin, feet, dir, facing, accent) = match impact.target {
             Target::Enemy => (
                 ENEMY_POS + Vec3::new(-14.0, 20.0, 0.0),
@@ -4287,8 +4318,6 @@ fn spawn_contact_impact_juice(mut commands: Commands, mut feel: ResMut<BattleFee
                 },
             ),
         };
-        let is_crit = impact.weight == feel::Weight::Crit;
-        let is_heavy = impact.weight >= feel::Weight::Heavy;
         let spark_count = match impact.weight {
             feel::Weight::Light => 5,
             feel::Weight::Normal => 8,

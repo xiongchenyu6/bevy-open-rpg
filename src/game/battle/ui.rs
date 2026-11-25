@@ -24,6 +24,18 @@ pub(super) struct PageButton(bool);
 pub(super) struct PageText;
 #[derive(Component)]
 pub(super) struct MotionBadgePanel;
+#[derive(Component)]
+pub(super) struct DamageVignetteOverlay;
+#[derive(Component)]
+pub(super) struct DamageVignetteEdge;
+#[derive(Component)]
+pub(super) struct ChromaticOverlayRoot;
+#[derive(Component)]
+pub(super) struct ChromaticEdge(bool);
+#[derive(Component)]
+pub(super) struct HitStreakBadgeRoot;
+#[derive(Component)]
+pub(super) struct HitStreakBadgeText;
 type MotionBadgeNodeQuery<'w, 's> = Query<
     'w,
     's,
@@ -311,6 +323,135 @@ pub(super) fn spawn(commands: &mut Commands, font: &GameFont, assets: &AssetServ
                     }
                 });
             });
+        });
+
+    // Full-screen crimson damage flash & low-HP (<35%) heartbeat vignette overlay.
+    // Hidden by default and despawned on battle exit; never blocks pointer input.
+    commands
+        .spawn((
+            DamageVignetteOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                border: UiRect::all(Val::Px(10.0)),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            BorderColor::all(Color::NONE),
+            GlobalZIndex(40),
+            Visibility::Hidden,
+            scope(),
+        ))
+        .with_children(|root| {
+            let edges = [
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    height: Val::Px(28.0),
+                    ..default()
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    height: Val::Px(28.0),
+                    ..default()
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    width: Val::Px(32.0),
+                    ..default()
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    width: Val::Px(32.0),
+                    ..default()
+                },
+            ];
+            for edge_node in edges {
+                root.spawn((DamageVignetteEdge, edge_node, BackgroundColor(Color::NONE)));
+            }
+        });
+
+    // Brief chromatic RGB split fringe & impact screen flash overlay.
+    commands
+        .spawn((
+            ChromaticOverlayRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            GlobalZIndex(45),
+            Visibility::Hidden,
+            scope(),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                ChromaticEdge(false),
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    width: Val::Px(6.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ));
+            root.spawn((
+                ChromaticEdge(true),
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    width: Val::Px(6.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ));
+        });
+
+    // Auto-hiding right-side bilingual Hit-Streak HUD badge (`Visibility::Hidden` below 3 hits).
+    commands
+        .spawn((
+            HitStreakBadgeRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(24.0),
+                top: Val::Px(108.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
+                border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.03, 0.03, 0.88)),
+            BorderColor::all(Color::srgba(0.86, 0.68, 0.32, 0.80)),
+            UiTransform::default(),
+            GlobalZIndex(35),
+            Visibility::Hidden,
+            scope(),
+        ))
+        .with_children(|badge| {
+            badge.spawn((
+                HitStreakBadgeText,
+                Text::new(""),
+                font.text_font(20.0),
+                TextColor(Color::srgb(0.98, 0.92, 0.74)),
+            ));
         });
 }
 
@@ -781,6 +922,197 @@ pub(super) fn update(
     }
 }
 
+/// Formats bilingual Hit-Streak HUD label and tier colors (`3+` / `10+` / `20+`).
+pub(super) fn format_hit_streak_badge(
+    streak_hits: u32,
+    language: feel::BattleLanguage,
+) -> (String, Color, Color) {
+    let zh = language == feel::BattleLanguage::Chinese;
+    if streak_hits >= 20 {
+        (
+            if zh {
+                format!("连击 x{streak_hits} · 狂潮!")
+            } else {
+                format!("STREAK x{streak_hits} · UNSTOPPABLE!")
+            },
+            Color::srgb(1.0, 0.36, 0.16),
+            Color::srgba(1.0, 0.30, 0.12, 0.94),
+        )
+    } else if streak_hits >= 10 {
+        (
+            if zh {
+                format!("连击 x{streak_hits} · 狂热!")
+            } else {
+                format!("STREAK x{streak_hits} · FRENZY!")
+            },
+            Color::srgb(1.0, 0.74, 0.22),
+            Color::srgba(1.0, 0.66, 0.18, 0.90),
+        )
+    } else {
+        (
+            if zh {
+                format!("连击 x{streak_hits}")
+            } else {
+                format!("STREAK x{streak_hits}")
+            },
+            Color::srgb(0.98, 0.92, 0.74),
+            Color::srgba(0.86, 0.68, 0.32, 0.80),
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(super) fn update_sensory_hud(
+    feel: Res<BattleFeel>,
+    streak: Res<feel::BattleStreakState>,
+    language: Res<feel::BattleLanguage>,
+    stats: Res<PlayerStats>,
+    mut vignette_root: Query<
+        (&mut Visibility, &mut BackgroundColor, &mut BorderColor),
+        (
+            With<DamageVignetteOverlay>,
+            Without<DamageVignetteEdge>,
+            Without<ChromaticOverlayRoot>,
+            Without<ChromaticEdge>,
+            Without<HitStreakBadgeRoot>,
+        ),
+    >,
+    mut vignette_edges: Query<
+        &mut BackgroundColor,
+        (
+            With<DamageVignetteEdge>,
+            Without<DamageVignetteOverlay>,
+            Without<ChromaticOverlayRoot>,
+            Without<ChromaticEdge>,
+            Without<HitStreakBadgeRoot>,
+        ),
+    >,
+    mut chroma_root: Query<
+        (&mut Visibility, &mut BackgroundColor),
+        (
+            With<ChromaticOverlayRoot>,
+            Without<DamageVignetteOverlay>,
+            Without<DamageVignetteEdge>,
+            Without<ChromaticEdge>,
+            Without<HitStreakBadgeRoot>,
+        ),
+    >,
+    mut chroma_edges: Query<
+        (&ChromaticEdge, &mut Node, &mut BackgroundColor),
+        (
+            With<ChromaticEdge>,
+            Without<DamageVignetteOverlay>,
+            Without<DamageVignetteEdge>,
+            Without<ChromaticOverlayRoot>,
+            Without<HitStreakBadgeRoot>,
+        ),
+    >,
+    mut streak_root: Query<
+        (&mut Visibility, &mut BorderColor, &mut UiTransform),
+        (
+            With<HitStreakBadgeRoot>,
+            Without<DamageVignetteOverlay>,
+            Without<ChromaticOverlayRoot>,
+        ),
+    >,
+    mut streak_text: Query<(&mut Text, &mut TextColor), With<HitStreakBadgeText>>,
+) {
+    let displayed_hp = (stats.hp + feel.pending_damage(Target::Hero)).min(stats.max_hp);
+    let low_hp = feel::low_hp_ratio(displayed_hp, stats.max_hp);
+    let (crimson, tint) =
+        feel::damage_vignette_params(feel.damage_vignette(), low_hp, feel.clock());
+    let vig_visible = crimson > 0.005;
+    let tint_srgba = tint.to_srgba();
+    for (mut vis, mut bg, mut border) in &mut vignette_root {
+        *vis = if vig_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        bg.0 = if vig_visible {
+            Color::srgba(
+                tint_srgba.red,
+                tint_srgba.green,
+                tint_srgba.blue,
+                (crimson * 0.14).clamp(0.0, 0.16),
+            )
+        } else {
+            Color::NONE
+        };
+        *border = BorderColor::all(if vig_visible {
+            Color::srgba(
+                tint_srgba.red,
+                tint_srgba.green,
+                tint_srgba.blue,
+                (crimson * 0.68).clamp(0.0, 0.72),
+            )
+        } else {
+            Color::NONE
+        });
+    }
+    for mut edge_bg in &mut vignette_edges {
+        edge_bg.0 = if vig_visible {
+            Color::srgba(
+                tint_srgba.red,
+                tint_srgba.green,
+                tint_srgba.blue,
+                (crimson * 0.34).clamp(0.0, 0.38),
+            )
+        } else {
+            Color::NONE
+        };
+    }
+
+    let chroma_norm = (feel::impact_chroma_intensity(feel.chroma_pulse()) / 0.032).clamp(0.0, 1.0);
+    let chroma_visible = chroma_norm > 0.005;
+    for (mut vis, mut bg) in &mut chroma_root {
+        *vis = if chroma_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        bg.0 = if chroma_visible {
+            Color::srgba(1.0, 0.96, 0.92, chroma_norm * 0.12)
+        } else {
+            Color::NONE
+        };
+    }
+    let fringe_px = 4.0 + chroma_norm * 14.0;
+    for (edge, mut node, mut bg) in &mut chroma_edges {
+        node.width = Val::Px(fringe_px);
+        bg.0 = if chroma_visible {
+            if edge.0 {
+                Color::srgba(1.0, 0.18, 0.38, chroma_norm * 0.42)
+            } else {
+                Color::srgba(0.14, 0.88, 1.0, chroma_norm * 0.42)
+            }
+        } else {
+            Color::NONE
+        };
+    }
+
+    let show_streak = streak.streak_hits >= 3;
+    let pop = feel::streak_badge_pop_scale(streak.pop_secs);
+    let (label, fg, border_color) = format_hit_streak_badge(streak.streak_hits, *language);
+    for (mut vis, mut border, mut ui_tf) in &mut streak_root {
+        *vis = if show_streak {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        *border = BorderColor::all(border_color);
+        ui_tf.scale = Vec2::splat(pop);
+    }
+    if show_streak {
+        for (mut text, mut color) in &mut streak_text {
+            if text.0 != label {
+                text.0 = label.clone();
+            }
+            color.0 = fg;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,5 +1269,125 @@ mod tests {
         assert_eq!(app.world().resource::<BattleState>().skill_cursor, 5);
         assert_eq!(app.world().resource::<SkillPage>().0, 1);
         assert!(!app.world().resource::<Intent>().confirm);
+    }
+
+    #[test]
+    fn hit_streak_badge_hides_below_three_respects_language_tiers_and_overlays_clear() {
+        let mut app = App::new();
+        app.insert_resource(BattleFeel::default())
+            .insert_resource(feel::BattleStreakState::default())
+            .insert_resource(feel::BattleLanguage::Chinese)
+            .insert_resource(PlayerStats::default())
+            .add_systems(Update, update_sensory_hud);
+
+        let vig = app
+            .world_mut()
+            .spawn((
+                DamageVignetteOverlay,
+                Visibility::Visible,
+                BackgroundColor(Color::NONE),
+                BorderColor::all(Color::NONE),
+            ))
+            .id();
+        let chroma = app
+            .world_mut()
+            .spawn((
+                ChromaticOverlayRoot,
+                Visibility::Visible,
+                BackgroundColor(Color::NONE),
+            ))
+            .id();
+        let badge = app
+            .world_mut()
+            .spawn((
+                HitStreakBadgeRoot,
+                Visibility::Visible,
+                BorderColor::all(Color::NONE),
+                UiTransform::default(),
+            ))
+            .id();
+        let badge_text = app
+            .world_mut()
+            .spawn((HitStreakBadgeText, Text::new(""), TextColor(Color::WHITE)))
+            .id();
+
+        // At rest (0 hits, full HP): overlays and streak badge all hide cleanly.
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(vig).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(chroma).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(badge).unwrap(),
+            Visibility::Hidden
+        );
+
+        // 2 hits still stays hidden; 3rd hit reveals Chinese badge with overshoot pop scale.
+        app.world_mut()
+            .resource_mut::<feel::BattleStreakState>()
+            .register_hit();
+        app.world_mut()
+            .resource_mut::<feel::BattleStreakState>()
+            .register_hit();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(badge).unwrap(),
+            Visibility::Hidden
+        );
+
+        app.world_mut()
+            .resource_mut::<feel::BattleStreakState>()
+            .register_hit();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(badge).unwrap(),
+            Visibility::Visible
+        );
+        assert_eq!(app.world().get::<Text>(badge_text).unwrap().0, "连击 x3");
+        assert!(app.world().get::<UiTransform>(badge).unwrap().scale.x > 1.2);
+        let tier1_color = app.world().get::<TextColor>(badge_text).unwrap().0;
+
+        // Switching language to English and reaching 10+ and 20+ hits updates copy & tier colors.
+        *app.world_mut().resource_mut::<feel::BattleLanguage>() = feel::BattleLanguage::English;
+        app.world_mut()
+            .resource_mut::<feel::BattleStreakState>()
+            .streak_hits = 12;
+        app.update();
+        assert_eq!(
+            app.world().get::<Text>(badge_text).unwrap().0,
+            "STREAK x12 · FRENZY!"
+        );
+        let tier2_color = app.world().get::<TextColor>(badge_text).unwrap().0;
+        assert_ne!(tier1_color, tier2_color);
+
+        app.world_mut()
+            .resource_mut::<feel::BattleStreakState>()
+            .streak_hits = 22;
+        app.update();
+        assert_eq!(
+            app.world().get::<Text>(badge_text).unwrap().0,
+            "STREAK x22 · UNSTOPPABLE!"
+        );
+        let tier3_color = app.world().get::<TextColor>(badge_text).unwrap().0;
+        assert_ne!(tier2_color, tier3_color);
+
+        // Low HP (< 35%) + chromatic pulse show both full-screen overlays.
+        app.world_mut().resource_mut::<PlayerStats>().hp = 16;
+        app.world_mut()
+            .resource_mut::<BattleFeel>()
+            .spike_chroma(0.025);
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(vig).unwrap(),
+            Visibility::Visible
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(chroma).unwrap(),
+            Visibility::Visible
+        );
     }
 }

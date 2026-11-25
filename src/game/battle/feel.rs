@@ -33,7 +33,13 @@ pub(super) const SHAKE_MAX_PX: f32 = 9.0;
 const SHAKE_DECAY_SECS: f32 = 0.30;
 /// A second impact inside this window cannot restart the shake.
 const SHAKE_MIN_GAP_SECS: f32 = 0.09;
-const FLASH_SECS: f32 = 0.085;
+const FLASH_SECS: f32 = 0.075;
+pub(super) const HIT_FLASH_SECS: f32 = 0.075;
+const CHROMA_DECAY_PER_SEC: f32 = 0.24;
+const DAMAGE_VIGNETTE_DECAY_PER_SEC: f32 = 2.6;
+pub(super) const LOW_HP_THRESHOLD: f32 = 0.35;
+pub(super) const STREAK_TIMEOUT_SECS: f32 = 6.5;
+pub(super) const STREAK_POP_SECS: f32 = 0.16;
 const ZOOM_RECOVERY_SECS: f32 = 0.28;
 const ZOOM_PUNCH_MAX: f32 = 0.088;
 const FOLLOWUP_GAP_SECS: f32 = 0.14;
@@ -84,6 +90,15 @@ impl Weight {
             Self::Normal => 0.018,
             Self::Heavy => 0.036,
             Self::Crit => 0.058,
+        }
+    }
+
+    fn chroma_pulse(self) -> f32 {
+        match self {
+            Self::Light => 0.0,
+            Self::Normal => 0.012,
+            Self::Heavy => 0.022,
+            Self::Crit => 0.032,
         }
     }
 }
@@ -170,10 +185,270 @@ pub(crate) struct BattleFeel {
     zoom_peak: f32,
     zoom_age: f32,
     zoom_punch: f32,
+    chroma_pulse: f32,
+    damage_vignette: f32,
     enemy: Reaction,
     hero: Reaction,
     /// Enemy and hero HP seen last frame; `None` until the first battle frame.
     seen_hp: Option<(i32, i32)>,
+}
+
+/// Active language for bilingual battle HUD callouts (defaults to Simplified Chinese).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum BattleLanguage {
+    #[default]
+    Chinese,
+    English,
+}
+
+impl BattleLanguage {
+    pub(crate) fn detect_runtime() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(window) = web_sys::window()
+                && let Ok(doc) = js_sys::Reflect::get(window.as_ref(), &"document".into())
+                && let Ok(root) = js_sys::Reflect::get(&doc, &"documentElement".into())
+                && let Ok(lang) = js_sys::Reflect::get(&root, &"lang".into())
+                && lang
+                    .as_string()
+                    .is_some_and(|s| s.to_ascii_lowercase().starts_with("en"))
+            {
+                return Self::English;
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if std::env::var("LOVE_RPG_LANG")
+                .ok()
+                .is_some_and(|s| s.to_ascii_lowercase().starts_with("en"))
+            {
+                return Self::English;
+            }
+        }
+        Self::Chinese
+    }
+}
+
+/// Tracks consecutive battle hits for pitch-escalating contact SFX and the
+/// auto-hiding right-side hit-streak HUD badge. Reset on battle enter/exit.
+#[derive(Resource, Debug, Clone, PartialEq)]
+pub(crate) struct BattleStreakState {
+    pub streak_hits: u32,
+    pub streak_timer: f32,
+    pub pop_secs: f32,
+    pub last_contact_pitch: f32,
+}
+
+impl Default for BattleStreakState {
+    fn default() -> Self {
+        Self {
+            streak_hits: 0,
+            streak_timer: 0.0,
+            pop_secs: 0.0,
+            last_contact_pitch: 1.0,
+        }
+    }
+}
+
+impl BattleStreakState {
+    pub(super) fn register_hit(&mut self) -> (u32, f32) {
+        self.streak_hits = self.streak_hits.saturating_add(1);
+        self.streak_timer = STREAK_TIMEOUT_SECS;
+        self.pop_secs = STREAK_POP_SECS;
+        let pitch = streak_pitch_multiplier(self.streak_hits);
+        self.last_contact_pitch = pitch;
+        (self.streak_hits, pitch)
+    }
+
+    pub(super) fn tick(&mut self, real_dt: f32) {
+        let dt = real_dt.max(0.0);
+        if self.streak_timer > 0.0 {
+            self.streak_timer = (self.streak_timer - dt).max(0.0);
+            if self.streak_timer <= 0.0 {
+                self.streak_hits = 0;
+                self.last_contact_pitch = 1.0;
+            }
+        }
+        self.pop_secs = (self.pop_secs - dt).max(0.0);
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Escalates contact SFX playback speed by +3% per consecutive hit up to +24%.
+pub(super) fn streak_pitch_multiplier(streak_hits: u32) -> f32 {
+    1.0 + (streak_hits.saturating_sub(1).min(8) as f32) * 0.03
+}
+
+/// Normalized low-HP urgency in `[0.0, 1.0]` once party HP falls below 35%.
+pub(super) fn low_hp_ratio(hp: i32, max_hp: i32) -> f32 {
+    if max_hp <= 0 {
+        return 0.0;
+    }
+    let frac = (hp.max(0) as f32 / max_hp as f32).clamp(0.0, 1.0);
+    if frac < LOW_HP_THRESHOLD {
+        ((LOW_HP_THRESHOLD - frac) / LOW_HP_THRESHOLD).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Computes `(crimson_strength, border_tint)` for the full-screen crimson damage
+/// flash and low-HP heartbeat vignette overlay. Returns `(0.0, alpha 0)` at rest.
+pub(super) fn damage_vignette_params(
+    damage_flash: f32,
+    low_hp_urgency: f32,
+    elapsed_secs: f32,
+) -> (f32, Color) {
+    let low_hp_pulse = if low_hp_urgency > 0.0 {
+        low_hp_urgency.clamp(0.0, 1.0) * (0.45 + 0.55 * (elapsed_secs * 5.2).sin().abs())
+    } else {
+        0.0
+    };
+    let crimson = (damage_flash.clamp(0.0, 1.0) * 0.85 + low_hp_pulse * 0.65).clamp(0.0, 1.0);
+    let alpha = (crimson * 0.54).clamp(0.0, 0.56);
+    let color = Color::srgba(
+        0.62_f32.lerp(0.94, crimson),
+        0.04_f32.lerp(0.02, crimson),
+        0.06_f32.lerp(0.03, crimson),
+        alpha,
+    );
+    (crimson, color)
+}
+
+/// Bounded chromatic impact pulse intensity in `[0.0, 0.038]` (`0.0` at rest).
+pub(super) fn impact_chroma_intensity(chroma_pulse: f32) -> f32 {
+    chroma_pulse.clamp(0.0, 0.038)
+}
+
+/// Overshoot pop scale for the Hit-Streak badge (`1.28x` at impact -> `1.0x`).
+pub(super) fn streak_badge_pop_scale(pop_secs: f32) -> f32 {
+    if pop_secs > 0.0 {
+        1.0 + (pop_secs / STREAK_POP_SECS).clamp(0.0, 1.0) * 0.28
+    } else {
+        1.0
+    }
+}
+
+/// Dispatches pitch-escalated contact SFX to the runtime audio bridge when
+/// available (e.g. WebAudio hook on `wasm32`); zero-overhead no-op on native
+/// headless/silent builds where `bevy_audio` is intentionally disabled.
+pub(super) fn dispatch_contact_sfx(impact: FiredImpact, pitch_speed: f32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use js_sys::wasm_bindgen::JsCast;
+        if let Some(window) = web_sys::window()
+            && let Ok(val) = js_sys::Reflect::get(window.as_ref(), &"lovePlayContactSfx".into())
+            && let Some(func) = val.dyn_ref::<js_sys::Function>()
+        {
+            let weight_code = match impact.weight {
+                Weight::Light => 0u32,
+                Weight::Normal => 1u32,
+                Weight::Heavy => 2u32,
+                Weight::Crit => 3u32,
+            };
+            let args = js_sys::Array::new();
+            args.push(&weight_code.into());
+            args.push(&pitch_speed.clamp(0.75, 1.45).into());
+            args.push(&impact.kill.into());
+            let _ = func.apply(window.as_ref(), &args);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (impact, pitch_speed);
+    }
+}
+
+/// Temporary 75ms bright-white emissive-style hit-flash applied directly to a
+/// struck actor's `Sprite` (and any sprite descendants), saving and restoring
+/// the exact original `Sprite::color` with zero permanent tint drift.
+#[derive(Component, Debug, Clone)]
+pub(super) struct SpriteHitFlash {
+    pub timer: Timer,
+    pub original_color: Color,
+    pub flash_color: Color,
+}
+
+pub(super) fn hit_flash_color(original: Color, critical: bool) -> Color {
+    let alpha = original.alpha();
+    if critical {
+        Color::srgba(3.2, 3.05, 2.75, alpha)
+    } else {
+        Color::srgba(2.75, 2.72, 2.65, alpha)
+    }
+}
+
+pub(super) fn queue_sprite_hit_flash(commands: &mut Commands, target: Entity, critical: bool) {
+    commands.queue(move |world: &mut World| {
+        if world.get_entity(target).is_err() {
+            return;
+        }
+        let mut stack = vec![(target, 0_u8)];
+        let mut sprite_entities = Vec::new();
+        while let Some((node, depth)) = stack.pop() {
+            if world.get::<Sprite>(node).is_some() {
+                sprite_entities.push(node);
+            }
+            if depth < 4
+                && let Some(children) = world.get::<Children>(node)
+            {
+                for child in children.iter() {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        for entity in sprite_entities {
+            // Preserve the true original color if already mid-flash (zero drift on rapid multi-hits).
+            let original_color = if let Some(existing) = world.get::<SpriteHitFlash>(entity) {
+                existing.original_color
+            } else if let Some(sprite) = world.get::<Sprite>(entity) {
+                sprite.color
+            } else {
+                continue;
+            };
+            let flash_color = hit_flash_color(original_color, critical);
+            if let Some(mut sprite) = world.get_mut::<Sprite>(entity) {
+                sprite.color = flash_color;
+            }
+            if let Ok(mut em) = world.get_entity_mut(entity) {
+                em.insert(SpriteHitFlash {
+                    timer: Timer::from_seconds(HIT_FLASH_SECS, TimerMode::Once),
+                    original_color,
+                    flash_color,
+                });
+            }
+        }
+    });
+}
+
+pub(super) fn tick_sprite_hit_flashes(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut flashes: Query<(Entity, &mut SpriteHitFlash, &mut Sprite)>,
+) {
+    let delta = time.delta();
+    for (entity, mut flash, mut sprite) in &mut flashes {
+        flash.timer.tick(delta);
+        if flash.timer.is_finished() {
+            sprite.color = flash.original_color;
+            commands.entity(entity).try_remove::<SpriteHitFlash>();
+        } else {
+            sprite.color = flash.flash_color;
+        }
+    }
+}
+
+pub(super) fn clear_sprite_hit_flashes(
+    mut commands: Commands,
+    mut flashes: Query<(Entity, &SpriteHitFlash, &mut Sprite)>,
+) {
+    for (entity, flash, mut sprite) in &mut flashes {
+        sprite.color = flash.original_color;
+        commands.entity(entity).try_remove::<SpriteHitFlash>();
+    }
 }
 
 impl BattleFeel {
@@ -192,6 +467,28 @@ impl BattleFeel {
 
     pub(super) fn camera_zoom_scale(&self) -> f32 {
         (1.0 - self.zoom_punch).clamp(1.0 - ZOOM_PUNCH_MAX, 1.0)
+    }
+
+    pub(super) fn chroma_pulse(&self) -> f32 {
+        self.chroma_pulse
+    }
+
+    pub(super) fn damage_vignette(&self) -> f32 {
+        self.damage_vignette
+    }
+
+    pub(super) fn clock(&self) -> f32 {
+        self.shake_clock
+    }
+
+    pub(super) fn spike_chroma(&mut self, amount: f32) {
+        if amount > 0.0 {
+            self.chroma_pulse = self.chroma_pulse.max(amount).min(0.036);
+        }
+    }
+
+    pub(super) fn spike_damage_vignette(&mut self) {
+        self.damage_vignette = 1.0;
     }
 
     pub(super) fn queue(&mut self, cue: HitCue) {
@@ -217,6 +514,9 @@ impl BattleFeel {
         self.shake_gap = (self.shake_gap - real_dt).max(0.0);
         self.stop_gap = (self.stop_gap - real_dt).max(0.0);
         self.trauma = (self.trauma - real_dt / SHAKE_DECAY_SECS).max(0.0);
+        self.chroma_pulse = (self.chroma_pulse - real_dt * CHROMA_DECAY_PER_SEC).max(0.0);
+        self.damage_vignette =
+            (self.damage_vignette - real_dt * DAMAGE_VIGNETTE_DECAY_PER_SEC).max(0.0);
         if self.zoom_peak > 0.0 {
             self.zoom_age += real_dt;
             let u = (self.zoom_age / ZOOM_RECOVERY_SECS).clamp(0.0, 1.0);
@@ -277,10 +577,12 @@ impl BattleFeel {
         let mut stop = cue.weight.hit_stop();
         let mut trauma = cue.weight.trauma();
         let mut zoom = cue.weight.zoom_punch();
+        let mut chroma = cue.weight.chroma_pulse();
         if cue.kill && cue.weight > Weight::Light {
             stop += KILL_EXTRA_STOP_SECS;
             trauma = trauma.max(KILL_TRAUMA);
             zoom = zoom.max(0.082);
+            chroma = chroma.max(0.032);
         }
         // Overlapping impacts take the strongest value instead of adding up,
         // and a burst of hits cannot keep re-freezing the scene.
@@ -296,6 +598,13 @@ impl BattleFeel {
             self.zoom_peak = self.zoom_peak.max(zoom).min(ZOOM_PUNCH_MAX);
             self.zoom_age = 0.0;
             self.zoom_punch = self.zoom_peak;
+        }
+        if chroma > 0.0 {
+            self.spike_chroma(chroma);
+        }
+        if cue.target == Target::Hero {
+            self.spike_damage_vignette();
+            self.spike_chroma(0.018);
         }
         self.fired_impacts.push(FiredImpact {
             target: cue.target,
@@ -508,10 +817,14 @@ pub(super) fn advance(
     time: Res<Time>,
     mut feel: ResMut<BattleFeel>,
     mut hold: ResMut<AnimationHold>,
+    mut streak: Option<ResMut<BattleStreakState>>,
 ) {
     let real_dt = time.delta_secs();
     feel.advance(real_dt);
     hold.0 = real_dt - feel.dt;
+    if let Some(streak) = streak.as_deref_mut() {
+        streak.tick(real_dt);
+    }
 }
 
 pub(super) fn observe(
@@ -547,14 +860,23 @@ pub(super) fn shake_camera(
 }
 
 /// Battle entry and exit both start from a clean slate: no queued contact,
-/// frozen clock or camera offset/zoom may leak into another battle or screen.
+/// frozen clock, hit-streak, or camera offset/zoom may leak into another battle or screen.
 pub(super) fn reset(
     mut feel: ResMut<BattleFeel>,
     mut hold: ResMut<AnimationHold>,
+    mut streak: Option<ResMut<BattleStreakState>>,
+    #[cfg(target_arch = "wasm32")] mut language: Option<ResMut<BattleLanguage>>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
     feel.clear();
     hold.0 = 0.0;
+    if let Some(streak) = streak.as_deref_mut() {
+        streak.clear();
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(lang) = language.as_deref_mut() {
+        *lang = BattleLanguage::detect_runtime();
+    }
     for (mut transform, mut projection) in &mut cameras {
         transform.translation.x = 0.0;
         transform.translation.y = 0.0;
@@ -884,5 +1206,153 @@ mod tests {
         }
         assert_eq!(feel.pose(Target::Enemy).tremor, Vec2::ZERO);
         assert_eq!(feel.pose(Target::Enemy), Pose::REST);
+    }
+
+    #[test]
+    fn streak_pitch_escalates_by_3_percent_per_hit_and_clamps_at_24_percent() {
+        assert!((streak_pitch_multiplier(0) - 1.0).abs() < 1e-6);
+        assert!((streak_pitch_multiplier(1) - 1.0).abs() < 1e-6);
+        assert!((streak_pitch_multiplier(2) - 1.03).abs() < 1e-6);
+        assert!((streak_pitch_multiplier(5) - 1.12).abs() < 1e-6);
+        assert!((streak_pitch_multiplier(9) - 1.24).abs() < 1e-6);
+        assert_eq!(streak_pitch_multiplier(25), streak_pitch_multiplier(9));
+
+        let mut streak = BattleStreakState::default();
+        for expected_hits in 1..=10 {
+            let (hits, pitch) = streak.register_hit();
+            assert_eq!(hits, expected_hits);
+            assert!((pitch - streak_pitch_multiplier(expected_hits)).abs() < 1e-6);
+            assert!((streak.last_contact_pitch - pitch).abs() < 1e-6);
+            assert!(streak.pop_secs > 0.0);
+        }
+        assert!((streak_badge_pop_scale(streak.pop_secs) - 1.28).abs() < 1e-4);
+        streak.tick(STREAK_POP_SECS + 0.05);
+        assert_eq!(streak_badge_pop_scale(streak.pop_secs), 1.0);
+        assert_eq!(streak.streak_hits, 10);
+
+        // Expiring the streak timer resets streak hits and contact pitch cleanly.
+        streak.tick(STREAK_TIMEOUT_SECS);
+        assert_eq!(streak.streak_hits, 0);
+        assert_eq!(streak.last_contact_pitch, 1.0);
+    }
+
+    #[test]
+    fn damage_and_low_hp_heartbeat_vignette_curve_responds_and_clears() {
+        // Above 35% HP with no damage flash -> completely invisible at rest.
+        assert_eq!(low_hp_ratio(80, 100), 0.0);
+        assert_eq!(low_hp_ratio(35, 100), 0.0);
+        let (rest_strength, rest_color) = damage_vignette_params(0.0, 0.0, 0.0);
+        assert_eq!(rest_strength, 0.0);
+        assert_eq!(rest_color.alpha(), 0.0);
+
+        // Below 35% HP -> urgency rises linearly and heartbeat oscillates over time.
+        let urgency = low_hp_ratio(14, 100);
+        assert!((urgency - 0.6).abs() < 1e-5, "urgency={urgency}");
+        let (trough, _) = damage_vignette_params(0.0, urgency, 0.0);
+        let (peak, peak_color) =
+            damage_vignette_params(0.0, urgency, std::f32::consts::FRAC_PI_2 / 5.2);
+        assert!(trough > 0.0 && peak > trough);
+        assert!(peak_color.alpha() > 0.1);
+
+        // Hero damage triggers both damage vignette and chromatic pulse, then decays cleanly to 0.
+        let mut feel = BattleFeel::default();
+        feel.queue(HitCue {
+            target: Target::Hero,
+            weight: Weight::Heavy,
+            damage: 18,
+            kill: false,
+            delay: 0.0,
+        });
+        feel.advance(0.004);
+        assert!(feel.damage_vignette() > 0.9);
+        assert!(impact_chroma_intensity(feel.chroma_pulse()) > 0.015);
+        let (hurt_strength, hurt_color) =
+            damage_vignette_params(feel.damage_vignette(), 0.0, feel.clock());
+        assert!(hurt_strength > 0.7 && hurt_color.alpha() > 0.35);
+
+        for _ in 0..45 {
+            feel.advance(1.0 / 60.0);
+        }
+        assert_eq!(feel.damage_vignette(), 0.0);
+        assert_eq!(impact_chroma_intensity(feel.chroma_pulse()), 0.0);
+    }
+
+    #[test]
+    fn sprite_hit_flash_75ms_applies_white_and_restores_exact_original_color() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .add_systems(Update, tick_sprite_hit_flashes);
+
+        let body_original = Color::srgba(0.92, 0.86, 0.98, 0.95);
+        let child_original = Color::srgba(0.64, 0.80, 1.0, 0.88);
+        let target = app
+            .world_mut()
+            .spawn(Sprite {
+                color: body_original,
+                ..default()
+            })
+            .id();
+        let child = app
+            .world_mut()
+            .spawn((
+                Sprite {
+                    color: child_original,
+                    ..default()
+                },
+                ChildOf(target),
+            ))
+            .id();
+
+        {
+            let mut cmds = app.world_mut().commands();
+            queue_sprite_hit_flash(&mut cmds, target, false);
+        }
+        app.world_mut().flush();
+        app.update();
+
+        // Both parent and child sprites flash bright white while preserving original alpha.
+        let flashed_body = app.world().get::<Sprite>(target).unwrap().color;
+        let flashed_child = app.world().get::<Sprite>(child).unwrap().color;
+        assert_ne!(flashed_body, body_original);
+        assert_ne!(flashed_child, child_original);
+        assert!(flashed_body.to_srgba().red > 2.0);
+        assert!((flashed_body.alpha() - body_original.alpha()).abs() < 1e-6);
+        assert!((flashed_child.alpha() - child_original.alpha()).abs() < 1e-6);
+
+        // Advance 40ms (still inside 75ms window) and re-trigger a crit flash mid-flash.
+        app.world_mut()
+            .resource_mut::<Time<()>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.040));
+        app.update();
+        assert!(app.world().get::<SpriteHitFlash>(target).is_some());
+        {
+            let mut cmds = app.world_mut().commands();
+            queue_sprite_hit_flash(&mut cmds, target, true);
+        }
+        app.world_mut().flush();
+        // Original color must remain the true pre-flash color (zero permanent tint drift!).
+        assert_eq!(
+            app.world()
+                .get::<SpriteHitFlash>(target)
+                .unwrap()
+                .original_color,
+            body_original
+        );
+
+        // Advance 80ms (> 75ms) -> exact original colors restored and component removed.
+        app.world_mut()
+            .resource_mut::<Time<()>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.080));
+        app.update();
+        assert_eq!(
+            app.world().get::<Sprite>(target).unwrap().color,
+            body_original
+        );
+        assert_eq!(
+            app.world().get::<Sprite>(child).unwrap().color,
+            child_original
+        );
+        assert!(app.world().get::<SpriteHitFlash>(target).is_none());
+        assert!(app.world().get::<SpriteHitFlash>(child).is_none());
     }
 }
