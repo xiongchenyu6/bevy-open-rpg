@@ -21,6 +21,7 @@ use super::cutout::{
 };
 use super::fog;
 use super::lighting::{self, LightingAssets};
+use super::motion::{self, MotionId, MotionState2d};
 use super::paperdoll::{self, PaperdollAssets, PaperdollStyle};
 use super::quest::{
     BondResponse, BondReward, BondScene, BossKind, CampBonus, CampScene, CareAftermathReward,
@@ -8134,7 +8135,11 @@ fn spawn_map_content(
         Vec2::splat(82.0),
         AppState::Explore,
     );
-    commands.entity(player).insert((MapContent, PlayerSprite));
+    commands.entity(player).insert((
+        MapContent,
+        PlayerSprite,
+        MotionState2d::new(MotionId::IdleCalm, 1.0),
+    ));
     spawn_owned_character_shadow(
         commands,
         lights,
@@ -9950,6 +9955,7 @@ fn explore_input(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_player_transform(
     mut commands: Commands,
     intent: Res<Intent>,
@@ -9957,14 +9963,26 @@ fn sync_player_transform(
     pos: Res<PlayerPos>,
     time: Res<Time>,
     mut trail_timer: Local<f32>,
-    mut q: Query<(&mut Transform, &mut Sprite, &mut SpriteAnimation), With<PlayerSprite>>,
+    mut dust_timer: Local<f32>,
+    mut q: Query<
+        (
+            &mut Transform,
+            &mut Sprite,
+            &mut SpriteAnimation,
+            Option<&mut MotionState2d>,
+        ),
+        With<PlayerSprite>,
+    >,
     mut lights: Query<&mut Transform, (With<PlayerLight>, Without<PlayerSprite>)>,
 ) {
     let p = tile_to_world(pos.col, pos.row);
-    if let Ok((mut t, mut sprite, mut animation)) = q.single_mut() {
-        t.translation.x = p.x;
-        t.translation.y = p.y;
+    let dt = time.delta_secs();
+    if let Ok((mut t, mut sprite, mut animation, mut motion_state)) = q.single_mut() {
         let moving = intent.move_dir.is_some();
+        let move_dir = intent
+            .move_dir
+            .map(|d| Vec2::new(d.x as f32, -d.y as f32))
+            .unwrap_or(Vec2::ZERO);
         let clip = if moving {
             AnimationClip::HeroWalk
         } else {
@@ -9974,8 +9992,29 @@ fn sync_player_transform(
         if pos.facing.x != 0 {
             sprite.flip_x = pos.facing.x < 0;
         }
+        let pose = if let Some(ms) = motion_state.as_deref_mut() {
+            let pose = ms.step_locomotion(moving, move_dir, dt);
+            if ms.skid_triggered {
+                motion::spawn_dust_puffs(
+                    &mut commands,
+                    Vec3::new(p.x, p.y - 30.0, 9.2),
+                    ms.last_move_dir,
+                    5,
+                    Color::srgba(0.86, 0.82, 0.72, 0.56),
+                    AppState::Explore,
+                );
+            }
+            pose
+        } else {
+            motion::Pose2d::IDENTITY
+        };
+        t.translation.x = p.x + pose.offset.x * 0.35;
+        t.translation.y = p.y + pose.offset.y * 0.35;
+        t.rotation = Quat::from_rotation_z(pose.rotation * 0.7);
+        t.scale = Vec3::new(pose.scale.x, pose.scale.y, 1.0);
         if moving {
-            *trail_timer += time.delta_secs();
+            *trail_timer += dt;
+            *dust_timer += dt;
             if *trail_timer >= 0.075 {
                 *trail_timer = 0.0;
                 let facing = if sprite.flip_x { -1.0 } else { 1.0 };
@@ -9988,8 +10027,20 @@ fn sync_player_transform(
                     Vec2::new(-facing * 46.0, -9.0),
                 );
             }
+            if *dust_timer >= 0.16 {
+                *dust_timer = 0.0;
+                motion::spawn_dust_puffs(
+                    &mut commands,
+                    Vec3::new(p.x, p.y - 30.0, 9.1),
+                    move_dir,
+                    2,
+                    Color::srgba(0.82, 0.78, 0.68, 0.42),
+                    AppState::Explore,
+                );
+            }
         } else {
             *trail_timer = 0.0;
+            *dust_timer = 0.0;
         }
     }
     if let Ok(mut t) = lights.single_mut() {

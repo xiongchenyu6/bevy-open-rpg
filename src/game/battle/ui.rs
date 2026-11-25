@@ -22,11 +22,28 @@ pub(super) struct PageControls;
 pub(super) struct PageButton(bool);
 #[derive(Component)]
 pub(super) struct PageText;
+#[derive(Component)]
+pub(super) struct MotionBadgePanel;
+type MotionBadgeNodeQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Node,
+    (
+        With<MotionBadgePanel>,
+        Without<PageControls>,
+        Without<MenuCard>,
+        Without<EnemyHpFill>,
+        Without<PlayerHpFill>,
+        Without<PlayerMpFill>,
+        Without<PressureFill>,
+    ),
+>;
 #[derive(Component, Clone, Copy)]
 pub(super) enum BattleLabel {
     Enemy,
     Intent,
     Tactics,
+    MotionBadge,
     Party,
     Vitals,
     Momentum,
@@ -82,6 +99,28 @@ pub(super) fn spawn(commands: &mut Commands, font: &GameFont, assets: &AssetServ
                 font.text_font(13.0),
                 TextColor(theme::GOLD),
             ));
+            p.spawn((
+                MotionBadgePanel,
+                Node {
+                    margin: UiRect::top(Val::Px(3.0)),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    align_self: AlignSelf::FlexStart,
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.14, 0.12, 0.08, 0.90)),
+                BorderColor::all(theme::GOLD),
+            ))
+            .with_children(|badge| {
+                badge.spawn((
+                    BattleLabel::MotionBadge,
+                    Text::new(""),
+                    font.text_font(12.5),
+                    TextColor(theme::GOLD),
+                ));
+            });
         });
     commands
         .spawn((
@@ -508,6 +547,7 @@ pub(super) fn update(
             Without<PlayerMpFill>,
             Without<PressureFill>,
             Without<PageControls>,
+            Without<MotionBadgePanel>,
         ),
     >,
     mut page: ResMut<SkillPage>,
@@ -520,8 +560,12 @@ pub(super) fn update(
             Without<PlayerHpFill>,
             Without<PlayerMpFill>,
             Without<PressureFill>,
+            Without<MotionBadgePanel>,
         ),
     >,
+    mut badge_panel: MotionBadgeNodeQuery,
+    enemy_motion: Query<&MotionState2d, (With<BattleEnemy>, Without<BattleHero>)>,
+    hero_motion: Query<&MotionState2d, (With<BattleHero>, Without<BattleEnemy>)>,
     mut page_text: Query<&mut Text, (With<PageText>, Without<BattleLabel>)>,
     mut icons: Query<(&MenuIcon, &mut ImageNode)>,
     assets: Res<AssetServer>,
@@ -596,6 +640,25 @@ pub(super) fn update(
     if !bonuses.is_empty() {
         detail.push_str(&format!("\n{}", bonuses.join(" · ")));
     }
+    let mut badge_parts = Vec::new();
+    if let Ok(ms) = enemy_motion.single()
+        && let Some(label) = ms.badge_text()
+    {
+        badge_parts.push(format!("敌势 {label}"));
+    }
+    if let Ok(ms) = hero_motion.single()
+        && let Some(label) = ms.badge_text()
+    {
+        badge_parts.push(format!("己势 {label}"));
+    }
+    let motion_badge_text = badge_parts.join("  |  ");
+    if let Ok(mut node) = badge_panel.single_mut() {
+        node.display = if motion_badge_text.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
     for (label, mut text, mut color) in &mut labels {
         text.0 = match *label {
             BattleLabel::Enemy => format!(
@@ -650,6 +713,7 @@ pub(super) fn update(
                     )
                 }
             }
+            BattleLabel::MotionBadge => motion_badge_text.clone(),
             BattleLabel::Party => battle_party_summary(&quest, run),
             BattleLabel::Vitals => format!(
                 "气血 {}/{}   灵力 {}/{}",

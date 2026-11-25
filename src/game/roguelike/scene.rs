@@ -23,6 +23,7 @@ use super::super::explore::{
     ExploreAssets, MapData, MapKind, TerrainMaterial, Tile, spawn_terrain_map,
 };
 use super::super::lighting::{self, LightingAssets};
+use super::super::motion::{self, MotionId, MotionState2d};
 use super::super::paperdoll::PaperdollAssets;
 use super::super::quest::Companion;
 use super::event::RunDialogue;
@@ -1208,7 +1209,9 @@ pub(crate) fn spawn_run_scene(
         Vec2::splat(82.0),
         AppState::RunScene,
     );
-    commands.entity(hero).insert(SceneHero);
+    commands
+        .entity(hero)
+        .insert((SceneHero, MotionState2d::new(MotionId::IdleCalm, 1.0)));
     let shadow = theme::contact_shadow(
         &mut commands,
         &asset_server,
@@ -2182,25 +2185,45 @@ pub fn run_scene_movement(
 /// Glide the hero sprite toward its logical tile and swap between the walk
 /// and idle sheets, so movement reads as animation instead of a sliding
 /// still image.
+#[allow(clippy::type_complexity)]
 pub fn animate_hero(
+    mut commands: Commands,
     time: Res<Time>,
     anims: Res<AnimationAssets>,
     scene: Option<Res<RunSceneState>>,
-    mut hero: Query<(&mut Transform, &mut Sprite, &mut SpriteAnimation), With<SceneHero>>,
+    mut dust_timer: Local<f32>,
+    mut hero: Query<
+        (
+            &mut Transform,
+            &mut Sprite,
+            &mut SpriteAnimation,
+            Option<&mut MotionState2d>,
+        ),
+        With<SceneHero>,
+    >,
 ) {
     let Some(scene) = scene else { return };
     if scene.col < 0 {
         return;
     }
-    let Ok((mut transform, mut sprite, mut animation)) = hero.single_mut() else {
+    let Ok((mut transform, mut sprite, mut animation, mut motion_state)) = hero.single_mut() else {
         return;
     };
+    let dt = time.delta_secs();
     let target = tile_to_world(scene.col, scene.row);
     let pos = transform.translation.truncate();
     let delta = Vec2::new(target.x, target.y) - pos;
     let distance = delta.length();
     // Match the grid cadence: one tile (40u) per 0.14s cooldown.
-    let step = (TILE / 0.14) * time.delta_secs();
+    let step = (TILE / 0.14) * dt;
+    let moving = distance > step || scene.cooldown > 0.02;
+    let move_dir = if distance > f32::EPSILON {
+        delta.normalize_or_zero()
+    } else if scene.facing_left {
+        -Vec2::X
+    } else {
+        Vec2::X
+    };
     if distance > step {
         let next = pos + delta.normalize_or_zero() * step;
         transform.translation.x = next.x;
@@ -2214,6 +2237,37 @@ pub fn animate_hero(
         }
     }
     sprite.flip_x = scene.facing_left;
+    if let Some(ms) = motion_state.as_deref_mut() {
+        let pose = ms.step_locomotion(moving, move_dir, dt);
+        transform.rotation = Quat::from_rotation_z(pose.rotation * 0.7);
+        transform.scale = Vec3::new(pose.scale.x, pose.scale.y, 1.0);
+        if ms.skid_triggered {
+            motion::spawn_dust_puffs(
+                &mut commands,
+                Vec3::new(transform.translation.x, transform.translation.y - 28.0, 9.2),
+                ms.last_move_dir,
+                5,
+                Color::srgba(0.86, 0.82, 0.72, 0.56),
+                AppState::RunScene,
+            );
+        }
+    }
+    if moving {
+        *dust_timer += dt;
+        if *dust_timer >= 0.18 {
+            *dust_timer = 0.0;
+            motion::spawn_dust_puffs(
+                &mut commands,
+                Vec3::new(transform.translation.x, transform.translation.y - 28.0, 9.1),
+                move_dir,
+                2,
+                Color::srgba(0.82, 0.78, 0.68, 0.42),
+                AppState::RunScene,
+            );
+        }
+    } else {
+        *dust_timer = 0.0;
+    }
 }
 
 fn run_companion_tint(companion: Companion, pulse: f32) -> Color {

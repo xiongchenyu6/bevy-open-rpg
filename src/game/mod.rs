@@ -8,6 +8,7 @@ pub mod cutout;
 pub mod explore;
 pub mod fog;
 pub mod lighting;
+pub mod motion;
 pub mod paperdoll;
 pub mod quest;
 pub mod roguelike;
@@ -63,6 +64,7 @@ impl Plugin for GamePlugin {
             .init_resource::<EncounterRate>()
             .init_resource::<QuestLog>()
             .add_plugins(animation::AnimationPlugin)
+            .add_plugins(motion::MotionPlugin)
             .add_plugins(paperdoll::PaperdollRuntimePlugin)
             .add_plugins(explore::ExplorePlugin)
             .add_plugins(skill_vfx::SkillVfxPlugin)

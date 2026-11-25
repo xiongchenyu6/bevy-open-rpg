@@ -33,7 +33,9 @@ pub(super) const SHAKE_MAX_PX: f32 = 9.0;
 const SHAKE_DECAY_SECS: f32 = 0.30;
 /// A second impact inside this window cannot restart the shake.
 const SHAKE_MIN_GAP_SECS: f32 = 0.09;
-const FLASH_SECS: f32 = 0.11;
+const FLASH_SECS: f32 = 0.085;
+const ZOOM_RECOVERY_SECS: f32 = 0.28;
+const ZOOM_PUNCH_MAX: f32 = 0.088;
 const FOLLOWUP_GAP_SECS: f32 = 0.14;
 const REACTION_SECS: f32 = 0.36;
 const RECOIL_PX: f32 = 26.0;
@@ -73,6 +75,15 @@ impl Weight {
             Self::Normal => 0.80,
             Self::Heavy => 1.10,
             Self::Crit => 1.35,
+        }
+    }
+
+    fn zoom_punch(self) -> f32 {
+        match self {
+            Self::Light => 0.0,
+            Self::Normal => 0.018,
+            Self::Heavy => 0.036,
+            Self::Crit => 0.058,
         }
     }
 }
@@ -117,8 +128,10 @@ impl Default for Reaction {
 pub(super) struct Pose {
     /// Distance pushed away from the attacker, in pixels (always >= 0).
     pub recoil: f32,
+    /// High-frequency (62.5 Hz) zero-drift 2D micro-tremor during hitstop/flash.
+    pub tremor: Vec2,
     pub squash: Vec2,
-    /// 0..1 brightness pop on the contact frame.
+    /// 0..1 brightness pop on the contact frame (85ms bright hit-flash).
     pub flash: f32,
     /// 0..1 lingering hurt tint that follows the recoil.
     pub hurt: f32,
@@ -127,15 +140,26 @@ pub(super) struct Pose {
 impl Pose {
     pub const REST: Self = Self {
         recoil: 0.0,
+        tremor: Vec2::ZERO,
         squash: Vec2::ONE,
         flash: 0.0,
         hurt: 0.0,
     };
 }
 
+/// Emitted on the exact contact frame so VFX juice spawns with zero drift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct FiredImpact {
+    pub target: Target,
+    pub weight: Weight,
+    pub damage: i32,
+    pub kill: bool,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct BattleFeel {
     pending: Vec<HitCue>,
+    fired_impacts: Vec<FiredImpact>,
     hit_stop: f32,
     stop_gap: f32,
     /// Battle-timeline seconds advanced this frame (real dt minus hit-stop).
@@ -143,6 +167,9 @@ pub(crate) struct BattleFeel {
     trauma: f32,
     shake_clock: f32,
     shake_gap: f32,
+    zoom_peak: f32,
+    zoom_age: f32,
+    zoom_punch: f32,
     enemy: Reaction,
     hero: Reaction,
     /// Enemy and hero HP seen last frame; `None` until the first battle frame.
@@ -153,6 +180,18 @@ impl BattleFeel {
     /// Seconds every battle animation, effect and phase timer should advance.
     pub(crate) fn dt(&self) -> f32 {
         self.dt
+    }
+
+    pub(super) fn is_hit_stopped(&self) -> bool {
+        self.hit_stop > 0.0
+    }
+
+    pub(super) fn take_fired_impacts(&mut self) -> Vec<FiredImpact> {
+        std::mem::take(&mut self.fired_impacts)
+    }
+
+    pub(super) fn camera_zoom_scale(&self) -> f32 {
+        (1.0 - self.zoom_punch).clamp(1.0 - ZOOM_PUNCH_MAX, 1.0)
     }
 
     pub(super) fn queue(&mut self, cue: HitCue) {
@@ -178,6 +217,18 @@ impl BattleFeel {
         self.shake_gap = (self.shake_gap - real_dt).max(0.0);
         self.stop_gap = (self.stop_gap - real_dt).max(0.0);
         self.trauma = (self.trauma - real_dt / SHAKE_DECAY_SECS).max(0.0);
+        if self.zoom_peak > 0.0 {
+            self.zoom_age += real_dt;
+            let u = (self.zoom_age / ZOOM_RECOVERY_SECS).clamp(0.0, 1.0);
+            if u >= 1.0 {
+                self.zoom_peak = 0.0;
+                self.zoom_punch = 0.0;
+            } else {
+                let decay = (1.0 - u).powi(2);
+                let elastic = (u * std::f32::consts::PI * 1.5).cos();
+                self.zoom_punch = (self.zoom_peak * decay * (0.74 + 0.26 * elastic)).max(0.0);
+            }
+        }
         self.enemy.flash_age += real_dt;
         self.hero.flash_age += real_dt;
 
@@ -225,9 +276,11 @@ impl BattleFeel {
     fn contact(&mut self, cue: HitCue) {
         let mut stop = cue.weight.hit_stop();
         let mut trauma = cue.weight.trauma();
+        let mut zoom = cue.weight.zoom_punch();
         if cue.kill && cue.weight > Weight::Light {
             stop += KILL_EXTRA_STOP_SECS;
             trauma = trauma.max(KILL_TRAUMA);
+            zoom = zoom.max(0.082);
         }
         // Overlapping impacts take the strongest value instead of adding up,
         // and a burst of hits cannot keep re-freezing the scene.
@@ -239,6 +292,17 @@ impl BattleFeel {
             self.trauma = self.trauma.max(trauma).min(1.0);
             self.shake_gap = SHAKE_MIN_GAP_SECS;
         }
+        if zoom > 0.0 {
+            self.zoom_peak = self.zoom_peak.max(zoom).min(ZOOM_PUNCH_MAX);
+            self.zoom_age = 0.0;
+            self.zoom_punch = self.zoom_peak;
+        }
+        self.fired_impacts.push(FiredImpact {
+            target: cue.target,
+            weight: cue.weight,
+            damage: cue.damage,
+            kill: cue.kill,
+        });
         let reaction = match cue.target {
             Target::Enemy => &mut self.enemy,
             Target::Hero => &mut self.hero,
@@ -251,11 +315,15 @@ impl BattleFeel {
     }
 
     pub(super) fn shake_offset(&self) -> Vec2 {
+        if self.trauma <= 0.0 {
+            return Vec2::ZERO;
+        }
         let amplitude = SHAKE_MAX_PX * self.trauma;
-        Vec2::new(
-            (self.shake_clock * 83.0).sin(),
-            (self.shake_clock * 97.0 + 1.3).sin() * 0.6,
-        ) * amplitude
+        // Damped multi-harmonic 2D shake (primary + secondary overtones), bounded <= amplitude.
+        let t = self.shake_clock;
+        let hx = (t * 83.0).sin() * 0.68 + (t * 137.0 + 0.7).sin() * 0.32;
+        let hy = (t * 97.0 + 1.3).sin() * 0.65 + (t * 163.0 + 2.4).cos() * 0.35;
+        Vec2::new(hx, hy * 0.62) * amplitude
     }
 
     pub(super) fn pose(&self, target: Target) -> Pose {
@@ -269,13 +337,26 @@ impl BattleFeel {
         let k = reaction.age / REACTION_SECS;
         let settle = (1.0 - k).powi(2);
         let wobble = settle * (k * 9.0).cos();
+        // 62.5 Hz zero-drift 2D micro-tremor active through hit-stop & 85ms flash window.
+        let flash = (1.0 - reaction.flash_age / FLASH_SECS).clamp(0.0, 1.0);
+        let tremor_env = if self.hit_stop > 0.0 { 1.0 } else { flash };
+        let tremor_amp = (3.8 * reaction.strength).min(6.0) * tremor_env;
+        let tremor = if tremor_amp > 0.01 {
+            Vec2::new(
+                (reaction.flash_age * 62.5 * std::f32::consts::TAU + 0.55).sin() * tremor_amp,
+                (reaction.flash_age * 64.0 * std::f32::consts::TAU + 1.1).cos() * tremor_amp * 0.45,
+            )
+        } else {
+            Vec2::ZERO
+        };
         Pose {
             recoil: RECOIL_PX * reaction.strength * settle,
+            tremor,
             squash: Vec2::new(
-                1.0 - 0.10 * reaction.strength * wobble,
-                1.0 + 0.07 * reaction.strength * wobble,
+                1.0 - 0.12 * reaction.strength * wobble,
+                1.0 + 0.09 * reaction.strength * wobble,
             ),
-            flash: (1.0 - reaction.flash_age / FLASH_SECS).clamp(0.0, 1.0),
+            flash,
             hurt: settle,
         }
     }
@@ -452,27 +533,34 @@ pub(super) fn observe(
 
 pub(super) fn shake_camera(
     feel: Res<BattleFeel>,
-    mut cameras: Query<&mut Transform, With<Camera2d>>,
+    mut cameras: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
     let offset = feel.shake_offset();
-    for mut transform in &mut cameras {
+    let zoom_scale = feel.camera_zoom_scale();
+    for (mut transform, mut projection) in &mut cameras {
         transform.translation.x = offset.x;
         transform.translation.y = offset.y;
+        if let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scale = zoom_scale;
+        }
     }
 }
 
 /// Battle entry and exit both start from a clean slate: no queued contact,
-/// frozen clock or camera offset may leak into another battle or screen.
+/// frozen clock or camera offset/zoom may leak into another battle or screen.
 pub(super) fn reset(
     mut feel: ResMut<BattleFeel>,
     mut hold: ResMut<AnimationHold>,
-    mut cameras: Query<&mut Transform, With<Camera2d>>,
+    mut cameras: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
     feel.clear();
     hold.0 = 0.0;
-    for mut transform in &mut cameras {
+    for (mut transform, mut projection) in &mut cameras {
         transform.translation.x = 0.0;
         transform.translation.y = 0.0;
+        if let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scale = 1.0;
+        }
     }
 }
 
@@ -746,5 +834,55 @@ mod tests {
         assert_eq!(feel.shake_offset(), Vec2::ZERO);
         assert_eq!(feel.pose(Target::Enemy), Pose::REST);
         assert!(feel.seen_hp.is_none());
+    }
+
+    #[test]
+    fn camera_zoom_punch_zooms_in_on_impact_and_recovers_zero_drift() {
+        let mut feel = BattleFeel::default();
+        assert_eq!(feel.camera_zoom_scale(), 1.0);
+        feel.queue(HitCue {
+            kill: true,
+            ..cue(Weight::Crit, 0.0)
+        });
+        feel.advance(1.0 / 120.0);
+        assert!(
+            feel.camera_zoom_scale() < 0.94,
+            "expected camera punch-in, got {}",
+            feel.camera_zoom_scale()
+        );
+        for _ in 0..40 {
+            feel.advance(1.0 / 60.0);
+        }
+        assert_eq!(feel.camera_zoom_scale(), 1.0, "zoom must settle zero-drift");
+    }
+
+    #[test]
+    fn hitstop_victim_micro_tremor_vibrates_at_high_frequency_and_clears_at_rest() {
+        let mut feel = BattleFeel::default();
+        feel.queue(cue(Weight::Crit, 0.0));
+        // Trigger contact on frame 1, then step 4ms and 8ms inside hit-stop.
+        feel.advance(0.001);
+        feel.advance(0.003);
+        let p1 = feel.pose(Target::Enemy);
+        feel.advance(0.008);
+        let p2 = feel.pose(Target::Enemy);
+        assert!(feel.is_hit_stopped());
+        assert!(
+            p1.tremor.x.abs() > 2.0,
+            "expected strong tremor: {:?}",
+            p1.tremor
+        );
+        assert!(
+            p1.tremor.x * p2.tremor.x < 0.0,
+            "62.5 Hz tremor should flip polarity within 8ms: {:?} vs {:?}",
+            p1.tremor,
+            p2.tremor
+        );
+        // Settle completely -> exact zero tremor.
+        for _ in 0..60 {
+            feel.advance(1.0 / 60.0);
+        }
+        assert_eq!(feel.pose(Target::Enemy).tremor, Vec2::ZERO);
+        assert_eq!(feel.pose(Target::Enemy), Pose::REST);
     }
 }

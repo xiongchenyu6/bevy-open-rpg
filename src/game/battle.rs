@@ -14,6 +14,7 @@ use super::animation::{self, AnimationAssets, AnimationClip, AnimationSystems, S
 use super::core::{GameFont, Intent, PlayerStats, Rng};
 use super::cutout::{COMPANION_BATTLE_SIZE, companion_cutout_path};
 use super::lighting::{self, LightingAssets};
+use super::motion::{self, MotionId, MotionState2d};
 use super::quest::{
     BondBonus, BondScene, BossKind, CampBonus, CampScene, Chapter, Companion, CompanionScene,
     QuestLog, ShrineBlessing, SideQuest,
@@ -507,6 +508,7 @@ struct FloatingCombatText {
     age: f32,
     duration: f32,
     velocity: Vec2,
+    gravity: f32,
     color: Color,
     /// Extra scale on the first frames; bigger for critical numbers.
     pop: f32,
@@ -606,6 +608,7 @@ impl Plugin for BattlePlugin {
                     battle_input,
                     battle_tick,
                     feel::observe,
+                    spawn_contact_impact_juice,
                     sync_status_vfx_state,
                     update_tactical_feedback,
                     update_battle_animations,
@@ -813,6 +816,13 @@ fn spawn_battle(
         ..default()
     });
     sprite.color = enemy_primary_color(Phase::Menu, feel::Pose::REST);
+    let enemy_initial_motion = if matches!(kind, EncounterKind::Boss(_)) {
+        MotionId::BossEntranceRoar
+    } else {
+        MotionId::IdleCombat
+    };
+    let mut enemy_motion = MotionState2d::new(enemy_initial_motion, -1.0);
+    enemy_motion.set_base(MotionId::IdleCombat);
     let enemy_entity = commands
         .spawn((
             BattleEnemy,
@@ -821,6 +831,7 @@ fn spawn_battle(
                 origin: ENEMY_POS,
                 age: rng.range(0, 100) as f32 * 0.07,
             },
+            enemy_motion,
             Transform::from_translation(ENEMY_POS),
             DespawnOnExit(AppState::Battle),
         ))
@@ -848,7 +859,9 @@ fn spawn_battle(
         Vec2::splat(220.0),
         AppState::Battle,
     );
-    commands.entity(hero).insert(BattleHero);
+    commands
+        .entity(hero)
+        .insert((BattleHero, MotionState2d::new(MotionId::IdleCombat, 1.0)));
     let shadow = super::ui::contact_shadow(
         &mut commands,
         &asset_server,
@@ -883,11 +896,14 @@ fn spawn_battle(
             Companion::Linger,
             LINGER_POS,
         );
-        commands.entity(companion).insert(BattleCompanion {
-            kind: BattleCompanionKind::Linger,
-            origin: LINGER_POS,
-            age: 0.0,
-        });
+        commands.entity(companion).insert((
+            BattleCompanion {
+                kind: BattleCompanionKind::Linger,
+                origin: LINGER_POS,
+                age: 0.0,
+            },
+            MotionState2d::new(MotionId::IdleCombat, 1.0),
+        ));
     }
 
     if battle_companion_visible(&quest, run_ref, Companion::SwordSister) {
@@ -905,11 +921,14 @@ fn spawn_battle(
             Companion::SwordSister,
             SWORD_SISTER_POS,
         );
-        commands.entity(companion).insert(BattleCompanion {
-            kind: BattleCompanionKind::SwordSister,
-            origin: SWORD_SISTER_POS,
-            age: 0.0,
-        });
+        commands.entity(companion).insert((
+            BattleCompanion {
+                kind: BattleCompanionKind::SwordSister,
+                origin: SWORD_SISTER_POS,
+                age: 0.0,
+            },
+            MotionState2d::new(MotionId::IdleCombat, 1.0),
+        ));
     }
 
     if battle_companion_visible(&quest, run_ref, Companion::SpiritWitch) {
@@ -927,11 +946,14 @@ fn spawn_battle(
             Companion::SpiritWitch,
             SPIRIT_WITCH_POS,
         );
-        commands.entity(companion).insert(BattleCompanion {
-            kind: BattleCompanionKind::SpiritWitch,
-            origin: SPIRIT_WITCH_POS,
-            age: 0.0,
-        });
+        commands.entity(companion).insert((
+            BattleCompanion {
+                kind: BattleCompanionKind::SpiritWitch,
+                origin: SPIRIT_WITCH_POS,
+                age: 0.0,
+            },
+            MotionState2d::new(MotionId::IdleCombat, 1.0),
+        ));
     }
 
     ui::spawn(&mut commands, &font, &asset_server);
@@ -2705,8 +2727,17 @@ fn spawn_enemy_strike_impact(
 const DAMAGE_POP: f32 = 0.45;
 const CRIT_POP: f32 = 0.95;
 
-/// Damage number shown at `contact`: critical blows are larger, gold and
-/// punctuated so they read apart from ordinary hits at a glance.
+/// Deterministic fan scatter in `[-1.0, 1.0]` so stacked damage numbers spread cleanly.
+fn damage_fan_scatter(amount: i32, pos: Vec3, crit: bool) -> f32 {
+    let seed = (amount as u32).wrapping_mul(2_654_435_761)
+        ^ (pos.x.to_bits().rotate_left(7))
+        ^ (pos.y.to_bits().rotate_right(5))
+        ^ if crit { 0x9E37_79B9 } else { 0 };
+    ((seed >> 24) as f32 / 255.0) * 2.0 - 1.0
+}
+
+/// Damage number shown at `contact`: ballistic crit-pop with fan scatter,
+/// gravity arc, overshoot pop scale, and late snap-fade.
 fn spawn_damage_text(
     commands: &mut Commands,
     font: &GameFont,
@@ -2714,12 +2745,14 @@ fn spawn_damage_text(
     amount: i32,
     contact: Contact,
 ) {
+    let fan = damage_fan_scatter(amount, pos, contact.crit);
+    let scatter_pos = pos + Vec3::new(fan * 18.0, 6.0, 0.0);
     let text = if contact.crit {
         FloatText {
             label: format!("{amount}!"),
-            pos,
-            color: Color::srgb(1.0, 0.86, 0.30),
-            velocity: Vec2::new(10.0, 64.0),
+            pos: scatter_pos,
+            color: Color::srgb(1.0, 0.88, 0.32),
+            velocity: Vec2::new(14.0 + fan * 56.0, 158.0),
             size: 52.0,
             delay: contact.delay,
             pop: CRIT_POP,
@@ -2727,9 +2760,9 @@ fn spawn_damage_text(
     } else {
         FloatText {
             label: format!("-{amount}"),
-            pos,
-            color: Color::srgb(1.0, 0.42, 0.30),
-            velocity: Vec2::new(8.0, 78.0),
+            pos: scatter_pos,
+            color: Color::srgb(1.0, 0.44, 0.32),
+            velocity: Vec2::new(10.0 + fan * 42.0, 144.0),
             size: 36.0,
             delay: contact.delay,
             pop: DAMAGE_POP,
@@ -2755,11 +2788,17 @@ fn spawn_heal_text(commands: &mut Commands, font: &GameFont, pos: Vec3, amount: 
 }
 
 fn spawn_floating_combat_text(commands: &mut Commands, font: &GameFont, text: FloatText) {
+    let gravity = if text.pop > 0.0 {
+        225.0 + text.pop * 55.0
+    } else {
+        0.0
+    };
     commands.spawn((
         FloatingCombatText {
             age: -text.delay,
-            duration: 0.92,
+            duration: 0.96,
             velocity: text.velocity,
+            gravity,
             color: text.color,
             pop: text.pop,
         },
@@ -4220,12 +4259,278 @@ fn update_tactical_feedback(
     *seen = (state.tactics.breaks, state.tactics.counters);
 }
 
+/// Spawns directional 2D razor hit-sparks, impact flash star, tapered slash arc
+/// smears, crit cross-glint, kill finisher ring, and knockback dust on exact
+/// contact frames drained from `BattleFeel`.
+fn spawn_contact_impact_juice(mut commands: Commands, mut feel: ResMut<BattleFeel>) {
+    for impact in feel.take_fired_impacts() {
+        let (origin, feet, dir, facing, accent) = match impact.target {
+            Target::Enemy => (
+                ENEMY_POS + Vec3::new(-14.0, 20.0, 0.0),
+                ENEMY_POS + Vec3::new(0.0, -72.0, 0.0),
+                Vec2::new(1.0, 0.28),
+                1.0,
+                match impact.weight {
+                    feel::Weight::Crit => Color::srgba(1.0, 0.86, 0.28, 0.96),
+                    feel::Weight::Heavy => Color::srgba(1.0, 0.56, 0.24, 0.94),
+                    _ => Color::srgba(0.76, 0.94, 1.0, 0.92),
+                },
+            ),
+            Target::Hero => (
+                HERO_POS + Vec3::new(14.0, 26.0, 0.0),
+                HERO_POS + Vec3::new(0.0, -84.0, 0.0),
+                Vec2::new(-1.0, 0.24),
+                -1.0,
+                match impact.weight {
+                    feel::Weight::Crit | feel::Weight::Heavy => Color::srgba(1.0, 0.34, 0.22, 0.96),
+                    _ => Color::srgba(1.0, 0.64, 0.36, 0.92),
+                },
+            ),
+        };
+        let is_crit = impact.weight == feel::Weight::Crit;
+        let is_heavy = impact.weight >= feel::Weight::Heavy;
+        let spark_count = match impact.weight {
+            feel::Weight::Light => 5,
+            feel::Weight::Normal => 8,
+            feel::Weight::Heavy => 11,
+            feel::Weight::Crit => 14,
+        };
+        motion::spawn_hit_sparks(
+            &mut commands,
+            origin,
+            dir,
+            spark_count,
+            accent,
+            is_crit,
+            AppState::Battle,
+        );
+        motion::spawn_impact_flash_star(
+            &mut commands,
+            origin,
+            if is_crit {
+                122.0
+            } else if is_heavy {
+                96.0
+            } else {
+                72.0
+            },
+            accent,
+            AppState::Battle,
+        );
+        if impact.weight >= feel::Weight::Normal {
+            motion::spawn_slash_arc_smear(
+                &mut commands,
+                origin,
+                facing,
+                if is_crit { 112.0 } else { 88.0 },
+                accent,
+                is_heavy,
+                AppState::Battle,
+            );
+            motion::spawn_dust_puffs(
+                &mut commands,
+                feet,
+                -dir,
+                if is_heavy { 5 } else { 3 },
+                Color::srgba(0.84, 0.78, 0.68, 0.56),
+                AppState::Battle,
+            );
+        }
+        if is_crit {
+            motion::spawn_crit_cross_glint(&mut commands, origin, accent, AppState::Battle);
+        }
+        if impact.kill {
+            motion::spawn_kill_finisher_ring(&mut commands, origin, accent, AppState::Battle);
+        }
+    }
+}
+
+fn select_hero_motion(
+    state: &BattleState,
+    stats: &PlayerStats,
+    pose: feel::Pose,
+    hit_stopped: bool,
+    combo_step: u32,
+) -> MotionId {
+    if state.phase == Phase::Lost {
+        return MotionId::DefeatCollapse;
+    }
+    if state.phase == Phase::Won {
+        return MotionId::VictoryFlourish;
+    }
+    if pose.hurt > 0.0 {
+        if hit_stopped {
+            return MotionId::HitstopFreeze;
+        }
+        if state.guarding || state.tactics.riposte {
+            return MotionId::GuardImpact;
+        }
+        return if pose.recoil > 22.0 {
+            MotionId::HitstunHeavy
+        } else {
+            MotionId::HitstunFront
+        };
+    }
+    if state.phase == Phase::PlayerActing {
+        return match state.player_action {
+            Some(PlayerAction::Attack) => {
+                if state.tactics.last_hit.counter {
+                    MotionId::CounterRiposte
+                } else if state.tactics.last_hit.broke {
+                    MotionId::BreakerStrike
+                } else if state.tactics.last_hit.exposed {
+                    MotionId::PursuitFinisher
+                } else {
+                    match combo_step % 3 {
+                        0 => MotionId::SlashCombo1,
+                        1 => MotionId::SlashCombo2,
+                        _ => MotionId::SlashCombo3,
+                    }
+                }
+            }
+            Some(PlayerAction::Combo) => MotionId::DualCoopSlash,
+            Some(PlayerAction::Spell) => {
+                if state.spell_contact_secs <= 0.01 {
+                    MotionId::CastWardShield
+                } else {
+                    MotionId::CastBolt
+                }
+            }
+            Some(PlayerAction::Guard) => MotionId::GuardBrace,
+            Some(PlayerAction::Item) => MotionId::UsePotion,
+            Some(PlayerAction::Flee) => MotionId::FleeDash,
+            None => MotionId::IdleCombat,
+        };
+    }
+    if state.guarding {
+        MotionId::GuardBrace
+    } else if state.tactics.riposte {
+        MotionId::ParryReady
+    } else if stats.hp * 10 <= stats.max_hp.max(1) * 3 {
+        MotionId::IdleInjured
+    } else {
+        MotionId::IdleCombat
+    }
+}
+
+fn select_enemy_motion(
+    state: &BattleState,
+    pose: feel::Pose,
+    hit_stopped: bool,
+    phase2_just_shifted: bool,
+) -> MotionId {
+    if state.phase == Phase::Won || state.enemy.hp <= 0 {
+        return MotionId::EnemyDissolve;
+    }
+    if phase2_just_shifted {
+        return MotionId::BossPhaseShift;
+    }
+    if pose.hurt > 0.0 {
+        if hit_stopped {
+            return MotionId::HitstopFreeze;
+        }
+        if state.tactics.broken {
+            return MotionId::EnemyStaggerCollapse;
+        }
+        return if pose.recoil > 22.0 {
+            MotionId::HitstunHeavy
+        } else {
+            MotionId::HitstunFront
+        };
+    }
+    if state.phase == Phase::EnemyActing && state.enemy_attacked {
+        return match state.executing_intent {
+            EnemyIntent::Special => MotionId::EnemySpecialUnleash,
+            EnemyIntent::Heavy | EnemyIntent::Strike => MotionId::EnemyLungeBite,
+            EnemyIntent::Drain => MotionId::EnemyDrainHex,
+            EnemyIntent::Brace => MotionId::EnemyIronBrace,
+            EnemyIntent::Charge => MotionId::BossTelegraph,
+            EnemyIntent::Gather => MotionId::GatherQi,
+        };
+    }
+    if state.tactics.broken {
+        return MotionId::EnemyStaggerCollapse;
+    }
+    if state.statuses.frozen {
+        return MotionId::AilmentFrozen;
+    }
+    if state.statuses.stunned {
+        return MotionId::AilmentFeared;
+    }
+    if state.statuses.burn.turns > 0 {
+        return MotionId::AilmentBurning;
+    }
+    if state.statuses.poison.turns > 0 {
+        return MotionId::AilmentPoisoned;
+    }
+    if state.tactics.exposed {
+        return MotionId::AilmentVulnerable;
+    }
+    match state.intent {
+        EnemyIntent::Charge => {
+            if matches!(state.encounter_kind, EncounterKind::Boss(_)) {
+                MotionId::BossTelegraph
+            } else {
+                MotionId::EnemyHeavyWindup
+            }
+        }
+        EnemyIntent::Special | EnemyIntent::Heavy => MotionId::EnemyHeavyWindup,
+        EnemyIntent::Brace => MotionId::EnemyIronBrace,
+        EnemyIntent::Gather => MotionId::GatherQi,
+        EnemyIntent::Drain => MotionId::ChannelSpell,
+        EnemyIntent::Strike => {
+            if state.boss_phase2 {
+                MotionId::EnemyEnragePulse
+            } else {
+                MotionId::IdleCombat
+            }
+        }
+    }
+}
+
+fn select_companion_motion(
+    kind: BattleCompanionKind,
+    phase: Phase,
+    action: Option<PlayerAction>,
+) -> MotionId {
+    match phase {
+        Phase::Won => MotionId::EmoteCheer,
+        Phase::EnemyActing => MotionId::EmoteGuardAlly,
+        Phase::PlayerActing => match (kind, action) {
+            (BattleCompanionKind::Linger, Some(PlayerAction::Combo | PlayerAction::Item)) => {
+                MotionId::EmoteHealAssist
+            }
+            (
+                BattleCompanionKind::SwordSister,
+                Some(PlayerAction::Attack | PlayerAction::Spell | PlayerAction::Combo),
+            ) => MotionId::EmoteFollowupReady,
+            (BattleCompanionKind::SpiritWitch, Some(PlayerAction::Spell | PlayerAction::Combo)) => {
+                MotionId::CastBuffAura
+            }
+            _ => MotionId::IdleCombat,
+        },
+        _ => MotionId::IdleCombat,
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_battle_animations(
+    mut commands: Commands,
+    time: Res<Time>,
     feel: Res<BattleFeel>,
     state: Res<BattleState>,
+    stats: Res<PlayerStats>,
     anims: Res<AnimationAssets>,
+    mut combo_step: Local<u32>,
+    mut last_phase: Local<Option<Phase>>,
+    mut seen_phase2: Local<bool>,
     mut hero: Query<
-        (&mut Sprite, &mut SpriteAnimation, &mut Transform),
+        (
+            &mut Sprite,
+            &mut SpriteAnimation,
+            &mut Transform,
+            Option<&mut MotionState2d>,
+        ),
         (
             With<BattleHero>,
             Without<BattleCompanion>,
@@ -4233,7 +4538,12 @@ fn update_battle_animations(
         ),
     >,
     mut companions: Query<
-        (&mut BattleCompanion, &mut Transform, &mut Sprite),
+        (
+            &mut BattleCompanion,
+            &mut Transform,
+            &mut Sprite,
+            Option<&mut MotionState2d>,
+        ),
         (
             With<BattleCompanion>,
             Without<BattleHero>,
@@ -4246,6 +4556,7 @@ fn update_battle_animations(
             &mut BattleEnemyMotion,
             &mut Sprite,
             Option<&enemy_animation::EnemyAtlas>,
+            Option<&mut MotionState2d>,
         ),
         (
             With<BattleEnemy>,
@@ -4254,7 +4565,37 @@ fn update_battle_animations(
         ),
     >,
 ) {
-    if let Ok((mut sprite, mut animation, mut transform)) = hero.single_mut() {
+    let real_dt = time.delta_secs().max(0.0);
+    let battle_dt = feel.dt();
+    let hit_stopped = feel.is_hit_stopped();
+    let phase_entered = *last_phase != Some(state.phase);
+    if phase_entered && state.phase == Phase::PlayerActing {
+        *combo_step = combo_step.wrapping_add(1);
+        if matches!(
+            state.player_action,
+            Some(PlayerAction::Attack | PlayerAction::Combo)
+        ) {
+            motion::spawn_dust_puffs(
+                &mut commands,
+                HERO_POS + Vec3::new(-18.0, -86.0, 0.0),
+                Vec2::X,
+                4,
+                Color::srgba(0.86, 0.82, 0.72, 0.52),
+                AppState::Battle,
+            );
+        }
+    }
+    *last_phase = Some(state.phase);
+
+    if !state.boss_phase2 {
+        *seen_phase2 = false;
+    }
+    let phase2_just_shifted = state.boss_phase2 && !*seen_phase2;
+    if phase2_just_shifted {
+        *seen_phase2 = true;
+    }
+
+    if let Ok((mut sprite, mut animation, mut transform, mut motion_state)) = hero.single_mut() {
         let clip = if state.phase == Phase::PlayerActing
             && matches!(
                 state.player_action,
@@ -4277,18 +4618,42 @@ fn update_battle_animations(
         let step = if attacking { hero_attack_step(p) } else { 0.0 };
         // Struck only on the enemy's contact frame, pushed away from it.
         let pose = feel.pose(Target::Hero);
-        transform.translation.x = HERO_POS.x + step - pose.recoil * 0.8;
-        transform.translation.y = HERO_POS.y;
-        transform.scale = pose.squash.extend(1.0);
-        sprite.color = if pose.hurt > 0.0 && state.tactics.riposte {
+        let m_pose = if let Some(ms) = motion_state.as_deref_mut() {
+            let desired = select_hero_motion(&state, &stats, pose, hit_stopped, *combo_step);
+            ms.set_base(MotionId::IdleCombat);
+            if desired == MotionId::HitstopFreeze || phase_entered || desired.meta().looping {
+                ms.force(desired);
+            } else {
+                ms.request(desired);
+            }
+            let dt = if desired == MotionId::HitstopFreeze {
+                real_dt
+            } else {
+                battle_dt
+            };
+            ms.advance(dt)
+        } else {
+            motion::Pose2d::IDENTITY
+        };
+        transform.translation.x =
+            HERO_POS.x + step - pose.recoil * 0.8 + pose.tremor.x + m_pose.offset.x * 0.65;
+        transform.translation.y = HERO_POS.y + pose.tremor.y + m_pose.offset.y * 0.65;
+        transform.rotation = Quat::from_rotation_z(m_pose.rotation);
+        transform.scale = Vec3::new(
+            pose.squash.x * m_pose.scale.x,
+            pose.squash.y * m_pose.scale.y,
+            1.0,
+        );
+        let base_color = if pose.hurt > 0.0 && state.tactics.riposte {
             Color::srgb(1.0, 0.94, 0.72)
         } else {
             hit_tint(pose, 1.0)
         };
+        sprite.color = motion::blend_pose_tint(base_color, m_pose.tint_flash);
     }
 
-    for (mut companion, mut transform, mut sprite) in &mut companions {
-        companion.age += feel.dt();
+    for (mut companion, mut transform, mut sprite, mut motion_state) in &mut companions {
+        companion.age += battle_dt;
         let visual_phase = if (state.phase == Phase::EnemyActing && !state.enemy_attacked)
             || (state.phase == Phase::PlayerActing && state.tactics.last_hit.damage == 0)
         {
@@ -4309,16 +4674,32 @@ fn update_battle_animations(
             motion_timer,
             companion.age,
         );
+        let m_pose = if let Some(ms) = motion_state.as_deref_mut() {
+            let desired =
+                select_companion_motion(companion.kind, visual_phase, state.player_action);
+            ms.set_base(MotionId::IdleCombat);
+            if desired.meta().looping {
+                ms.force(desired);
+            } else {
+                ms.request(desired);
+            }
+            ms.advance(battle_dt)
+        } else {
+            motion::Pose2d::IDENTITY
+        };
 
-        transform.translation.x = companion.origin.x + offset.x;
-        transform.translation.y = companion.origin.y + offset.y;
-        transform.scale = Vec3::splat(scale);
-        sprite.color = tint;
+        transform.translation.x = companion.origin.x + offset.x + m_pose.offset.x * 0.55;
+        transform.translation.y = companion.origin.y + offset.y + m_pose.offset.y * 0.55;
+        transform.rotation = Quat::from_rotation_z(m_pose.rotation * 0.75);
+        transform.scale = Vec3::new(scale * m_pose.scale.x, scale * m_pose.scale.y, 1.0);
+        sprite.color = motion::blend_pose_tint(tint, m_pose.tint_flash);
     }
 
-    if let Ok((mut transform, mut motion, mut sprite, atlas)) = enemy.single_mut() {
-        motion.age += feel.dt();
-        let breath = (motion.age * 2.0).sin();
+    if let Ok((mut transform, mut motion_comp, mut sprite, atlas, mut motion_state)) =
+        enemy.single_mut()
+    {
+        motion_comp.age += battle_dt;
+        let breath = (motion_comp.age * 2.0).sin();
         let visual_phase = if state.phase == Phase::EnemyActing && !state.enemy_attacked {
             Phase::Menu
         } else {
@@ -4328,19 +4709,44 @@ fn update_battle_animations(
         let (x, y, scale) = enemy_phase_motion(visual_phase, p);
         // The hit reaction starts on the visible contact, never at the command.
         let pose = feel.pose(Target::Enemy);
-        transform.translation.x = motion.origin.x + x + pose.recoil;
-        transform.translation.y = motion.origin.y + y + pose.recoil * 0.15;
+        let m_pose = if let Some(ms) = motion_state.as_deref_mut() {
+            let desired = select_enemy_motion(&state, pose, hit_stopped, phase2_just_shifted);
+            ms.set_base(MotionId::IdleCombat);
+            if desired == MotionId::HitstopFreeze
+                || phase2_just_shifted
+                || desired == MotionId::EnemyDissolve
+                || desired.meta().looping
+            {
+                ms.force(desired);
+            } else {
+                ms.request(desired);
+            }
+            let dt = if desired == MotionId::HitstopFreeze {
+                real_dt
+            } else {
+                battle_dt
+            };
+            ms.advance(dt)
+        } else {
+            motion::Pose2d::IDENTITY
+        };
+        transform.translation.x =
+            motion_comp.origin.x + x + pose.recoil + pose.tremor.x + m_pose.offset.x * 0.75;
+        transform.translation.y =
+            motion_comp.origin.y + y + pose.recoil * 0.15 + pose.tremor.y + m_pose.offset.y * 0.75;
+        transform.rotation = Quat::from_rotation_z(m_pose.rotation * 0.85);
         transform.scale = Vec3::new(
-            scale * pose.squash.x,
-            (scale + breath * 0.008) * pose.squash.y,
+            scale * pose.squash.x * m_pose.scale.x,
+            (scale + breath * 0.008) * pose.squash.y * m_pose.scale.y,
             1.0,
         );
-        sprite.color = enemy_primary_color(state.phase, pose);
+        let base_color = enemy_primary_color(state.phase, pose);
+        sprite.color = motion::blend_pose_tint(base_color, m_pose.tint_flash);
         if atlas.is_some() {
             enemy_animation::update(
                 &mut sprite,
                 &state,
-                motion.age,
+                motion_comp.age,
                 feel.reaction_progress(Target::Enemy),
             );
         }
@@ -4558,12 +4964,13 @@ fn update_floating_combat_text(
         }
         floating.age = floating.age.max(0.0);
         visibility.set_if_neq(Visibility::Inherited);
+        floating.velocity.y -= floating.gravity * dt;
         transform.translation.x += floating.velocity.x * dt;
         transform.translation.y += floating.velocity.y * dt;
         transform.scale = Vec3::splat(float_text_scale(floating.pop, floating.age));
 
         let p = (floating.age / floating.duration).clamp(0.0, 1.0);
-        let fade = 1.0 - p.powi(2);
+        let fade = float_text_alpha(p);
         *color = TextColor(floating.color.with_alpha(floating.color.alpha() * fade));
         shadow.color.set_alpha(0.85 * fade);
 
@@ -4573,9 +4980,38 @@ fn update_floating_combat_text(
     }
 }
 
-/// Numbers appear oversized on the contact frame and settle within 0.16s.
+/// Ballistic overshoot pop: snaps past `1.0 + pop * 1.18` in 45ms, then
+/// settles elastically back to `1.0` within 0.22s.
 fn float_text_scale(pop: f32, age: f32) -> f32 {
-    1.0 + pop * (1.0 - age / 0.16).clamp(0.0, 1.0).powi(2)
+    if pop <= 0.0 {
+        return 1.0;
+    }
+    let age = age.max(0.0);
+    if age < 0.045 {
+        let u = age / 0.045;
+        1.0 + pop * 1.18 * (1.0 - (1.0 - u).powi(3))
+    } else if age < 0.22 {
+        let u = (age - 0.045) / 0.175;
+        let settle = (1.0 - u).powi(2);
+        let rebound = (u * std::f32::consts::PI * 1.5).cos();
+        (1.0 + pop * 1.18 * settle * (0.78 + 0.22 * rebound)).max(0.92)
+    } else {
+        1.0
+    }
+}
+
+/// Late snap-fade: damage numbers remain fully crisp through 72% of their arc,
+/// then snap cleanly out in the final 28%.
+fn float_text_alpha(progress: f32) -> f32 {
+    let p = progress.clamp(0.0, 1.0);
+    if p <= 0.72 {
+        1.0
+    } else if p >= 1.0 {
+        0.0
+    } else {
+        let u = (p - 0.72) / 0.28;
+        (1.0 - u * u).clamp(0.0, 1.0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6222,5 +6658,55 @@ mod tests {
         let bonded =
             sword_sister_followup(&bonded_quest, None, &stats, &mut enemy_b, &mut rng_b).unwrap();
         assert_eq!(bonded, base + 1);
+    }
+
+    #[test]
+    fn ballistic_crit_pop_overshoots_then_settles_with_late_snap_fade() {
+        let start = float_text_scale(CRIT_POP, 0.0);
+        let peak = float_text_scale(CRIT_POP, 0.045);
+        let settled = float_text_scale(CRIT_POP, 0.25);
+        assert!(peak > 1.0 + CRIT_POP, "crit pop should overshoot: {peak}");
+        assert!(peak > start);
+        assert!((settled - 1.0).abs() < 1e-5);
+        assert_eq!(float_text_scale(0.0, 0.045), 1.0);
+        // Late snap-fade stays fully legible until 72% of flight then drops quickly.
+        assert_eq!(float_text_alpha(0.0), 1.0);
+        assert_eq!(float_text_alpha(0.70), 1.0);
+        assert!(float_text_alpha(0.90) < 0.65);
+        assert_eq!(float_text_alpha(1.0), 0.0);
+        // Fan scatter produces distinct lateral velocities across hits.
+        let a = damage_fan_scatter(24, ENEMY_POS, false);
+        let b = damage_fan_scatter(39, ENEMY_POS, true);
+        assert!((-1.0..=1.0).contains(&a) && (-1.0..=1.0).contains(&b));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn battle_motion_selection_covers_charge_stagger_and_ailments() {
+        let mut state = status_test_state(EncounterKind::Boss(BossKind::MoonWraith));
+        state.intent = EnemyIntent::Charge;
+        assert_eq!(
+            select_enemy_motion(&state, feel::Pose::REST, false, false),
+            MotionId::BossTelegraph
+        );
+        state.statuses.burn.turns = 2;
+        assert_eq!(
+            select_enemy_motion(&state, feel::Pose::REST, false, false),
+            MotionId::AilmentBurning
+        );
+        state.statuses.frozen = true;
+        assert_eq!(
+            select_enemy_motion(&state, feel::Pose::REST, false, false),
+            MotionId::AilmentFrozen
+        );
+        state.tactics.broken = true;
+        assert_eq!(
+            select_enemy_motion(&state, feel::Pose::REST, false, false),
+            MotionId::EnemyStaggerCollapse
+        );
+        assert_eq!(
+            select_enemy_motion(&state, feel::Pose::REST, false, true),
+            MotionId::BossPhaseShift
+        );
     }
 }
